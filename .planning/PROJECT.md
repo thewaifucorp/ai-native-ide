@@ -40,6 +40,10 @@ Transformar intenção em software real e continuamente controlável, mantendo i
 - [ ] Usar um contrato de capacidades para agentes e explorar ACP como protocolo preferencial sem tornar a arquitetura dependente de uma implementação alpha específica.
 - [ ] Permitir configuração de permissões por projeto e recurso, incluindo um modo irrestrito explícito, sem depender apenas de regras universais.
 - [ ] Sustentar o uso contínuo do software após sua criação, incluindo evolução, manutenção e compreensão do estado em produção.
+- [ ] Incluir um Local Truth Registry baseado em arquivos, com autoridade, escopo, precedência, consumidores, provenance e detecção de divergência.
+- [ ] Compor o harness default em quatro camadas: invariantes universais, semântica geral, packs de domínio e avaliações profundas por checkpoint.
+- [ ] Sustentar o harness com cinco partes inseparáveis: Local Truth Registry, Lifecycle Hook Bus, AAG/graph provider, Context Compiler e Semantic Evaluators/Reconciler.
+- [ ] Permitir providers opcionais de conhecimento, grafo, compressão, roteamento e guardrails sem reduzir a capacidade local gratuita nem criar dependência obrigatória da Katsui.
 
 ### Out of Scope
 
@@ -81,6 +85,17 @@ ACP parece uma base promissora para integrar agentes externos estruturadamente; 
 | Tratar agentes completos e modelos brutos como integrações distintas | Agentes possuem autenticação, ferramentas, sessões e capacidades que não cabem honestamente numa API uniforme de chat | — Pending |
 | Preferir um núcleo aberto, sem escolher ainda a licença | Transparência e extensibilidade favorecem distribuição; a fronteira do moat e dos serviços comerciais ainda precisa ser definida | — Pending |
 | Manter integração Katsui opcional até validação | A IDE pode distribuir o ecossistema ShinAI sem comprometer neutralidade ou sobrepor produtos prematuramente | — Pending |
+| Organizar o harness em quatro camadas de avaliação | Separa invariantes baratas, hipóteses semânticas, conhecimento de domínio e scans profundos, evitando custo/ruído constante | — Pending |
+| Adotar cinco subsistemas inseparáveis no harness | SoTs, hooks, grafo/evidência, contexto e evaluators precisam cooperar sem virar um agente monolítico | — Pending |
+| Incluir Local Truth Registry gratuito e manter Company Brain organizacional | Reconciliação local é necessária ao core da IDE; ingestão, retrieval, registries, ontology e governança organizacionais permanecem produto Katsui | — Pending |
+| Usar AAG como primeiro graph/evidence provider, não como SoT | AAG já fornece fatos estruturais determinísticos e incrementais; intenção e autoridade permanecem no domínio da IDE | — Pending |
+| Separar compressão de apresentação, tool output e contexto do agente | Verbosidade humana, RTK e memória possuem riscos e objetivos diferentes; autoridade/evidência não pode ser comprimida silenciosamente | — Pending |
+| Usar Hybrid, permissões balanced e progressive disclosure como defaults | A experiência média precisa funcionar antes de configuração; poder avançado permanece acessível just-in-time e por arquivo | — Pending |
+| Capturar decisões de sessão como candidates | Evita perder decisões em transcripts sem conceder autoridade silenciosa ao agente | — Pending |
+| Usar microsaaS de leaderboard/leilão como primeiro benchmark | Exercita UI, estado, pagamento, concorrência, abuso, analytics, deploy e reconciliação num produto pequeno e compreensível | — Pending |
+| Estruturar a UI ao redor do estado do produto | Project Rail, Navigator, Work Surface, Context Dock e Activity Strip evitam tanto o chat-container quanto o file-tree como única organização | — Pending |
+| Tratar Game Mode como feedback opcional por outcomes | Preserva a experiência completa, evita incentivar gasto/ruído e adapta o princípio cosmético e não punitivo validado no Bastion | — Pending |
+| Adotar GPL para o editor e Apache para contratos/SDKs como direção provisória | Mantém forks distribuídos abertos e maximiza interoperabilidade dos protocolos; exige revisão jurídica antes do release | — Pending |
 
 ## Evolution
 
@@ -100,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-22 after initialization*
+*Last updated: 2026-08-22 after Gate 0 harness design, requirements and roadmap*

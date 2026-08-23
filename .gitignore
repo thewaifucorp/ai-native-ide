@@ -1,0 +1,12 @@
+# Generated code-intelligence index
+.aag/
+.aag.lock
+
+# Local dependencies and build artifacts
+node_modules/
+target/
+dist/
+*.log
+
+# Rebuildable planning research cache
+.planning/research/.cache/

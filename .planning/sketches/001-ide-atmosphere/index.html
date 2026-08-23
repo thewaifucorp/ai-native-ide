@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sketch 001 — Instrumento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Chivo+Mono:wght@400;500&family=DM+Mono:wght@400;500&family=Fragment+Mono&family=Geologica:wght@400;500;600;700&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   FUNDAÇÃO MONOCROMÁTICA. Nenhuma cor de marca.
+   Cor só entra carregando significado:
+     --step  etapa / progressão      --need  precisa de você
+     --ok    verificado              --bad   quebrou
+   ============================================================ */
+:root{
+  --bg:#101113;
+  --panel:#151619;
+  --panel-2:#1b1c20;
+  --raise:#24262b;
+  --raise-2:#2e3138;
+  --line:rgba(255,255,255,.07);
+  --line-2:rgba(255,255,255,.14);
+  --text:#e9eaec;
+  --mut:#9b9da4;
+  --faint:#85888f;
+  --step:#79a3d0;
+  --ok:#58b287;
+  --need:#d9a03c;
+  --bad:#e3655b;
+
+  /* raios apertados — escala de chrome de IDE, não de página web */
+  --r1:4px;   /* controles, badges, chips */
+  --r2:7px;   /* cards e painéis */
+  --r3:10px;  /* o produto no preview */
+
+  /* alturas de controle fixas, não derivadas de padding */
+  --h-ctl:26px;
+  --h-ctl-lg:30px;
+
+  /* tipografia — trocável pelo switcher do sketch */
+  --ui:"Geologica",system-ui,sans-serif;
+  --mono:"DM Mono",ui-monospace,monospace;
+  --mono-w:500;
+}
+body[data-type="b"]{--ui:"Archivo",system-ui,sans-serif;--mono:"Chivo Mono",ui-monospace,monospace;--mono-w:500}
+body[data-type="c"]{--ui:"Schibsted Grotesk",system-ui,sans-serif;--mono:"Fragment Mono",ui-monospace,monospace;--mono-w:400}
+
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{
+  font:400 13px/1.5 var(--ui);
+  background:var(--bg);color:var(--text);
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::selection{background:rgba(255,255,255,.16)}
+input{caret-color:var(--text)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--raise);border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+
+svg.i{width:14px;height:14px;flex:none;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* etiquetas de região */
+.tag{
+  font:600 10px/1 var(--ui);
+  letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+}
+
+/* ============================================================
+   CONTROLES — padrão de IDE: secundário é fantasma (sem borda),
+   só um primário sólido por contexto, altura fixa, raio apertado.
+   ============================================================ */
+.btn{
+  height:var(--h-ctl);display:inline-flex;align-items:center;gap:7px;
+  padding:0 9px;border-radius:var(--r1);
+  font:500 12px var(--ui);color:var(--mut);
+  background:transparent;white-space:nowrap;
+  transition:background .12s,color .12s;
+}
+.btn:hover{background:var(--raise);color:var(--text)}
+.btn:active{background:var(--raise-2)}
+.btn.pri{
+  background:var(--text);color:var(--bg);font-weight:600;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.16);
+}
+.btn.pri:hover{background:#fff}
+.btn.lg{height:var(--h-ctl-lg);padding:0 12px;font-size:12.5px}
+.kbd{font:var(--mono-w) 10px var(--mono);opacity:.5;letter-spacing:0}
+
+/* ============ JANELA ============ */
+.window{
+  position:relative;
+  height:100vh;min-height:660px;
+  display:grid;
+  grid-template-columns:56px 240px minmax(0,1fr) 288px;
+  grid-template-rows:44px minmax(0,1fr) auto 42px;
+}
+
+/* ============ TITLEBAR ============ */
+.titlebar{
+  grid-column:1/-1;
+  display:flex;align-items:center;gap:16px;padding:0 16px;
+  border-bottom:1px solid var(--line);background:var(--panel);
+}
+.traffic{display:flex;gap:7px}
+.traffic i{width:11px;height:11px;border-radius:50%;background:var(--raise)}
+.crumb{display:flex;align-items:baseline;gap:8px;margin:0 auto}
+.crumb .proj{font-weight:600;font-size:12.5px}
+.crumb .sep{color:var(--faint)}
+.crumb .sess{font-size:12.5px;color:var(--mut)}
+.tb-right{display:flex;align-items:center;gap:8px}
+.pill{
+  display:flex;align-items:center;gap:6px;height:24px;
+  font:var(--mono-w) 10.5px var(--mono);letter-spacing:.02em;
+  padding:0 8px;border:1px solid var(--line);border-radius:var(--r1);color:var(--mut);
+}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.gm-toggle{
+  display:flex;align-items:center;gap:8px;height:24px;
+  font:600 10px var(--ui);letter-spacing:.1em;text-transform:uppercase;
+  padding:0 7px;border:1px solid var(--line);border-radius:var(--r1);color:var(--faint);
+  transition:color .2s,border-color .2s;
+}
+.gm-toggle .sw{
+  width:22px;height:12px;border-radius:999px;background:var(--raise);position:relative;transition:background .2s;
+}
+.gm-toggle .sw::after{
+  content:"";position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%;
+  background:var(--faint);transition:transform .2s,background .2s;
+}
+body.game .gm-toggle{color:var(--text);border-color:var(--line-2)}
+body.game .gm-toggle .sw{background:rgba(255,255,255,.22)}
+body.game .gm-toggle .sw::after{transform:translateX(10px);background:var(--text)}
+
+/* ============ RAIL ============ */
+.rail{
+  grid-column:1;grid-row:2/4;
+  display:flex;flex-direction:column;align-items:center;gap:5px;
+  padding:14px 0;border-right:1px solid var(--line);background:var(--panel);
+}
+.rail .logo{
+  width:32px;height:32px;border-radius:var(--r1);margin-bottom:11px;
+  display:grid;place-items:center;
+  background:var(--raise);border:1px solid var(--line-2);
+  color:var(--text);font:var(--mono-w) 13px var(--mono);
+}
+.rail-btn{
+  width:34px;height:34px;border-radius:var(--r1);display:grid;place-items:center;
+  font:600 11px var(--ui);letter-spacing:.02em;color:var(--faint);position:relative;
+  transition:background .12s,color .12s;
+}
+.rail-btn:hover{background:var(--raise);color:var(--text)}
+.rail-btn.on{background:var(--raise);color:var(--text)}
+.rail-btn.on::before{
+  content:"";position:absolute;left:-11px;top:8px;bottom:8px;width:2px;background:var(--text);
+}
+.rail-btn .hb{position:absolute;right:4px;top:4px;width:5px;height:5px;border-radius:50%}
+.rail-btn .hb.run{background:var(--text)}
+.rail-btn .hb.need{background:var(--need)}
+.rail .sp{flex:1}
+.avatar{
+  width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  background:var(--raise);font:var(--mono-w) 10px var(--mono);color:var(--mut);position:relative;
+}
+body.game .avatar::before{ /* anel = progresso do nível, cosmético */
+  content:"";position:absolute;inset:-3px;border-radius:50%;
+  border:1.5px solid var(--raise-2);
+  border-top-color:var(--step);border-right-color:var(--step);
+  transform:rotate(52deg);
+}
+.lvl-badge{
+  display:none;position:absolute;right:-6px;bottom:-5px;
+  min-width:14px;height:14px;padding:0 3px;border-radius:var(--r1);
+  background:var(--step);color:#0f1620;
+  font:600 9px/14px var(--mono);text-align:center;
+}
+body.game .lvl-badge{display:block}
+
+/* ============ NAVIGATOR ============ */
+.nav{
+  grid-column:2;grid-row:2/3;overflow-y:auto;
+  padding:18px 12px;border-right:1px solid var(--line);background:var(--panel);
+}
+.proj-head{padding:0 4px}
+.proj-head .name{font:600 16px/1.2 var(--ui);letter-spacing:-.01em}
+.proj-head .meta{margin-top:5px;font:400 10.5px var(--mono);color:var(--faint)}
+.nav-sec{margin-top:22px}
+.nav-sec>.tag{display:block;padding:0 6px 8px}
+.nav-item{
+  width:100%;display:flex;align-items:center;gap:10px;text-align:left;
+  height:28px;padding:0 6px;border-radius:var(--r1);font-size:12.5px;color:var(--mut);
+  transition:background .12s,color .12s;
+}
+.nav-item:hover{color:var(--text);background:var(--panel-2)}
+.nav-item.on{color:var(--text);background:var(--raise)}
+.nav-item svg.i{color:var(--faint)}
+.nav-item.on svg.i{color:var(--text)}
+.nav-item .n{
+  margin-left:auto;font:var(--mono-w) 10px var(--mono);padding:1px 5px;border-radius:3px;
+  background:var(--raise-2);color:var(--mut);
+}
+.nav-item.on .n{background:rgba(0,0,0,.3)}
+.nav-item .n.warn{color:var(--need)}
+.res{
+  padding:8px 8px;margin-top:4px;border-radius:var(--r1);
+  border-left:1px solid var(--line-2);
+  transition:background .12s;
+}
+.res:hover{background:var(--panel-2)}
+.res b{display:block;font-weight:500;font-size:12px}
+.res small{display:flex;align-items:center;gap:6px;margin-top:3px;font:400 10.5px var(--mono);color:var(--faint)}
+.res small .st{width:5px;height:5px;border-radius:50%;flex:none}
+.st.run{background:var(--text)}.st.ok{background:var(--ok)}.st.idle{background:var(--faint)}
+
+/* ============ WORK SURFACE ============ */
+.work{grid-column:3;grid-row:2/3;min-width:0;display:grid;grid-template-rows:40px minmax(0,1fr);background:var(--bg)}
+.tabs{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--panel)}
+.tab{
+  height:100%;padding:0 14px;display:flex;align-items:center;gap:8px;
+  font-size:12px;color:var(--faint);border-radius:0;
+  border-right:1px solid var(--line);
+  transition:color .12s,background .12s;
+}
+.tab:hover{color:var(--mut);background:var(--panel-2)}
+.tab.on{background:var(--bg);color:var(--text);box-shadow:inset 0 2px 0 var(--text)}
+.tab .mod{width:6px;height:6px;border-radius:50%;background:var(--mut)}
+.tab.file{font:400 11px var(--mono)}
+.tab.new{border-right:0;color:var(--faint);padding:0 11px}
+
+/* -------- vista HOME (página de situação) -------- */
+.view{display:none;min-height:0}
+.view.on{display:grid}
+#view-home{grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:1px;background:var(--line)}
+#view-home>*{background:var(--bg);overflow-y:auto}
+.home-main{padding:32px 36px 28px}
+.home-side{padding:32px 24px 28px;background:var(--panel) !important}
+
+.h-sec{margin-bottom:34px}
+.h-sec>.tag{display:block;margin-bottom:14px}
+
+.continue .goal{
+  font:600 27px/1.3 var(--ui);letter-spacing:-.02em;max-width:560px;text-wrap:balance;
+}
+.continue .goal em{font-style:normal;color:var(--mut)}
+.continue .next{
+  margin-top:16px;display:flex;align-items:center;gap:14px;font-size:12.5px;color:var(--mut);
+}
+.continue .next .btn{flex:none}
+
+/* "Agora" — linhas de estado, não cards */
+.now-list{max-width:640px;border-top:1px solid var(--line)}
+.now-row{
+  display:flex;align-items:baseline;gap:12px;padding:11px 2px;
+  border-bottom:1px solid var(--line);
+}
+.now-row .live{width:7px;height:7px;border-radius:50%;background:var(--text);flex:none;
+  align-self:flex-start;margin-top:5px;animation:breathe 2.4s ease-in-out infinite}
+.now-row .live.ok{background:var(--ok);animation:none}
+.now-row .who{font-weight:500;font-size:12.5px;flex:none;width:158px;line-height:1.4}
+.now-row .what{font-size:12px;color:var(--mut);flex:1}
+.now-row .meta{font:400 10px var(--mono);color:var(--faint);flex:none;text-align:right}
+
+/* "Precisa de você" — barras de decisão, densas, com ação inline */
+.need{max-width:640px}
+.need-item{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 12px;margin-bottom:6px;border-radius:var(--r1);
+  background:var(--panel);
+  box-shadow:inset 2px 0 0 var(--need);
+}
+.need-item .txt{min-width:0}
+.need-item .txt b{display:block;font-weight:500;font-size:12.5px}
+.need-item .txt small{display:block;margin-top:2px;font-size:11.5px;color:var(--mut)}
+.need-item .acts{margin-left:auto;display:flex;gap:2px;flex:none}
+
+.prod-map{display:grid}
+.prod-row{
+  display:flex;align-items:center;gap:10px;height:30px;padding:0 6px;border-radius:var(--r1);
+  font-size:12.5px;transition:background .12s;
+}
+.prod-row:hover{background:var(--panel-2)}
+.prod-row .st{width:6px;height:6px;border-radius:50%;flex:none}
+.prod-row .st.run{background:var(--step)}
+.prod-row .nm{color:var(--text);font-weight:500}
+.prod-row .ds{color:var(--faint);font-size:11px;margin-left:2px}
+.prod-row .lb{margin-left:auto;font:400 10px var(--mono);color:var(--faint)}
+.prod-row .lb.ok{color:var(--ok)}
+.prod-row .lb.run{color:var(--step)}
+.prod-row .lb.warn{color:var(--need)}
+
+.recent{margin-top:28px}
+.recent>.tag{display:block;margin-bottom:6px}
+.recent .r{
+  display:flex;gap:12px;padding:8px 0;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--mut);
+}
+.recent .r time{font:400 10px var(--mono);color:var(--faint);flex:none;width:42px;padding-top:2px}
+.recent .r em{font-style:normal;color:var(--text)}
+
+/* -------- vista BUILD (intenção | preview) -------- */
+#view-build{grid-template-columns:minmax(340px,.9fr) minmax(380px,1.1fr);gap:1px;background:var(--line)}
+#view-build>*{background:var(--bg);min-height:0}
+
+.conv{display:flex;flex-direction:column;overflow:hidden}
+.conv-scroll{flex:1;overflow-y:auto;padding:26px 28px 10px}
+.conv .goal{
+  margin:0 0 24px;font:600 19px/1.35 var(--ui);letter-spacing:-.015em;max-width:420px;text-wrap:balance;
+}
+.msg{margin-bottom:18px;max-width:92%}
+.msg.user{margin-left:auto}
+.msg.user .bubble{
+  font:400 13px/1.5 var(--ui);color:var(--text);
+  padding:11px 14px;border-radius:var(--r2) var(--r2) 2px var(--r2);
+  background:var(--panel-2);
+}
+.msg.agent .head{
+  display:flex;align-items:center;gap:8px;margin-bottom:8px;
+  font:var(--mono-w) 10.5px var(--mono);letter-spacing:.04em;color:var(--mut);
+}
+.msg.agent .head .live{width:6px;height:6px;border-radius:50%;background:var(--text);
+  animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.3}}
+.msg.agent .body{font-size:12.5px;line-height:1.55;color:var(--mut)}
+.msg.agent .body strong{color:var(--text);font-weight:500}
+
+/* etapas — o único lugar onde o azul é a regra */
+.steps{margin-top:12px;border-left:1px solid var(--line-2);padding-left:14px;display:grid;gap:8px}
+.step{display:flex;align-items:center;gap:9px;font:400 11px var(--mono);color:var(--faint)}
+.step svg.i{width:12px;height:12px}
+.step.done{color:var(--mut)}
+.step.done svg.i{color:var(--ok)}
+.step.run{color:var(--step)}
+.step.run svg.i{animation:breathe 1.6s infinite}
+
+.composer{
+  margin:10px 20px 18px;padding:12px 13px;
+  border:1px solid var(--line-2);border-radius:var(--r2);background:var(--panel);
+  transition:border-color .2s;
+}
+.composer:focus-within{border-color:var(--faint)}
+.composer input{
+  width:100%;border:0;outline:0;background:none;color:var(--text);
+  font:400 13px var(--ui);
+}
+.composer input::placeholder{color:var(--faint)}
+.composer .foot{
+  display:flex;justify-content:space-between;gap:14px;margin-top:10px;
+  font:400 10px var(--mono);color:var(--faint);
+}
+.composer .foot .hint em{color:var(--mut);font-style:normal}
+
+/* preview = o produto real, claro, dentro da IDE escura */
+.preview{display:grid;grid-template-rows:40px minmax(0,1fr) auto}
+.pv-bar{display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line);color:var(--faint)}
+.pv-url{
+  flex:1;padding:5px 9px;border-radius:var(--r1);background:var(--panel-2);
+  font:400 10.5px var(--mono);color:var(--faint);
+}
+.pv-body{overflow-y:auto;padding:26px;background:var(--panel)}
+.site{
+  max-width:520px;margin:0 auto;border-radius:var(--r3);overflow:hidden;
+  background:#f7f7f5;color:#1c1d1f;
+  box-shadow:0 16px 40px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.25);
+  font-family:var(--ui);
+}
+.site-nav{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid #e3e3df}
+.site-brand{font:600 12px var(--ui);letter-spacing:.1em}
+.site-cta{padding:7px 14px;border-radius:6px;background:#1c1d1f;color:#f7f7f5;font:600 11.5px var(--ui)}
+.site-hero{padding:30px 22px 8px}
+.site-hero h2{font:600 25px/1.15 var(--ui);letter-spacing:-.025em}
+.site-hero p{margin-top:8px;font-size:12.5px;color:#71716c;max-width:340px}
+.bids{padding:18px 22px 24px;display:grid;gap:8px}
+.bid{
+  display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:12px;
+  padding:11px 12px;border:1px solid #e3e3df;border-radius:8px;background:#fff;
+}
+.bid .rk{font:var(--mono-w) 13px var(--mono);color:#b0b0aa;text-align:center}
+.bid b{display:block;font-size:13px;font-weight:600}
+.bid small{color:#8f8f89;font-size:11px}
+.bid .pr{font:var(--mono-w) 13px var(--mono)}
+.bid.first{border-color:#1c1d1f}
+.bid.first .rk{color:#1c1d1f}
+.pv-foot{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border-top:1px solid var(--line);background:var(--panel);
+  box-shadow:inset 2px 0 0 var(--need);
+  font-size:11.5px;color:var(--mut);
+}
+.pv-foot b{color:var(--text);font-weight:500}
+.pv-foot .btn{margin-left:auto}
+
+/* ============ CONTEXT DOCK ============ */
+.dock{
+  grid-column:4;grid-row:2/3;overflow-y:auto;
+  padding:18px 14px;border-left:1px solid var(--line);background:var(--panel);
+}
+.dock>.tag{display:block;margin-bottom:12px;padding:0 2px}
+.agent-card{border-radius:var(--r2);background:var(--panel-2);padding:12px}
+.agent-top{display:flex;align-items:center;gap:10px}
+.agent-orb{
+  width:30px;height:30px;border-radius:var(--r1);display:grid;place-items:center;
+  background:var(--raise);font:var(--mono-w) 12px var(--mono);color:var(--text);
+}
+.agent-top .nm{font-weight:600;font-size:13px}
+.agent-top small{display:block;font:400 10px var(--mono);color:var(--faint);margin-top:2px}
+.krow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:9px;font-size:11px;color:var(--faint)}
+.krow b{font:var(--mono-w) 10.5px var(--mono);color:var(--mut);text-align:right}
+.krow b.em{color:var(--text)}
+.meter{height:3px;border-radius:2px;background:var(--raise);overflow:hidden;margin-top:5px}
+.meter i{display:block;height:100%;background:var(--mut)}
+
+.decision{
+  margin-top:12px;padding:12px;border-radius:var(--r2);
+  background:var(--panel-2);box-shadow:inset 2px 0 0 var(--need);
+}
+.decision .st-row{display:flex;align-items:center;gap:7px;font:var(--mono-w) 10px var(--mono);letter-spacing:.04em;color:var(--need)}
+.decision h4{margin:8px 0 5px;font:600 13.5px/1.35 var(--ui)}
+.decision p{font-size:11.5px;line-height:1.5;color:var(--mut)}
+.decision .acts{display:flex;justify-content:flex-end;gap:2px;margin-top:10px}
+.decision.resolved{box-shadow:inset 2px 0 0 var(--ok)}
+.decision.resolved .st-row{color:var(--ok)}
+
+/* ============ GAME MODE: nível com recibo ============ */
+.prog{display:none;margin-top:12px;padding:12px;border-radius:var(--r2);background:var(--panel-2)}
+body.game .prog{display:block}
+.prog-top{display:flex;align-items:center;gap:10px}
+.prog-lvl{
+  width:32px;height:32px;border-radius:var(--r1);display:grid;place-items:center;
+  background:rgba(121,163,208,.14);color:var(--step);
+  font:600 15px var(--mono);
+}
+.prog-top .who b{display:block;font-weight:600;font-size:13px}
+.prog-top .who small{display:block;margin-top:1px;font:400 10px var(--mono);color:var(--faint)}
+.prog-bar{margin-top:11px;height:3px;border-radius:2px;background:var(--raise);overflow:hidden}
+.prog-bar i{display:block;height:100%;background:var(--step)}
+.prog-next{margin-top:6px;font:400 10px var(--mono);color:var(--faint)}
+.prog-earn{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.prog-earn>.tag{display:block;margin-bottom:7px}
+.prog-earn .e{display:flex;gap:8px;font-size:11px;color:var(--mut);padding:2px 0}
+.prog-earn .e em{font:var(--mono-w) 10px var(--mono);font-style:normal;color:var(--step);flex:none;width:16px}
+.prog-never{
+  margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
+  font:400 9.5px/1.5 var(--mono);color:var(--faint);
+}
+.prog-never b{color:var(--mut);font-weight:400}
+.prog-arch{margin-top:9px;font:400 9.5px var(--mono);color:var(--faint)}
+.prog-arch button{color:var(--mut);text-decoration:underline;text-underline-offset:2px}
+
+/* marco atual — pareia com o nível */
+.quest{display:none;margin-top:24px;padding:12px;border-radius:var(--r2);background:var(--panel-2)}
+body.game .quest{display:block}
+.quest .tag{color:var(--step)}
+.quest p{margin-top:8px;font:500 13px/1.45 var(--ui);color:var(--text)}
+.quest .qbar{margin-top:10px;height:3px;border-radius:2px;background:var(--raise);overflow:hidden}
+.quest .qbar i{display:block;height:100%;width:60%;background:var(--step)}
+.quest small{display:block;margin-top:7px;font:400 10px var(--mono);color:var(--faint)}
+
+/* ============ PULSE LINE (assinatura — trilha de etapas) ============ */
+/* desliza sobre a Work Surface em vez de empurrar o layout —
+   translate só, nada de propriedade de layout animada */
+.drawer{
+  position:absolute;z-index:40;left:56px;right:0;bottom:42px;height:190px;
+  background:var(--panel);border-top:1px solid var(--line);
+  box-shadow:0 -12px 28px rgba(0,0,0,.4);
+  transform:translateY(calc(100% + 42px));opacity:0;pointer-events:none;
+  transition:transform .26s cubic-bezier(.2,.8,.2,1),opacity .2s ease;
+}
+.drawer.open{transform:translateY(0);opacity:1;pointer-events:auto}
+.drawer-in{padding:14px 22px;display:grid;gap:7px;height:100%;overflow-y:auto;align-content:start}
+.tl{display:flex;align-items:baseline;gap:14px;font-size:11.5px;color:var(--mut)}
+.tl time{font:400 10px var(--mono);color:var(--faint);width:44px;flex:none}
+.tl .k{font:var(--mono-w) 10px var(--mono);width:86px;flex:none;letter-spacing:.04em;color:var(--faint)}
+.tl .k.ck{color:var(--ok)}.tl .k.ed{color:var(--step)}.tl .k.dc{color:var(--need)}.tl .k.ev{color:var(--need)}
+.tl .undo{margin-left:auto;font:400 10px var(--mono);color:var(--faint);text-decoration:underline;text-underline-offset:2px}
+
+.strip{
+  grid-row:4;grid-column:2/-1;display:flex;align-items:center;gap:18px;
+  padding:0 16px;border-top:1px solid var(--line);background:var(--panel);
+  cursor:pointer;user-select:none;
+}
+.strip .now{
+  display:flex;align-items:center;gap:8px;flex:none;
+  font:400 10.5px var(--mono);color:var(--text);
+}
+.strip .now .live{width:6px;height:6px;border-radius:50%;background:var(--text);animation:breathe 1.8s infinite}
+
+/* o fio: passado à esquerda, "agora" na cabeça, espaço à direita */
+.strand{flex:1;position:relative;height:100%}
+.strand .wire{
+  position:absolute;left:0;right:0;top:50%;height:1px;
+  background:linear-gradient(90deg,var(--line-2) 0%,rgba(121,163,208,.6) 72%,transparent 72%);
+}
+.notch{position:absolute;top:50%;transform:translate(-50%,-50%)}
+.notch.ck{width:7px;height:7px;border-radius:50%;background:var(--bg);border:1.5px solid var(--ok)}
+.notch.ed{width:4px;height:4px;border-radius:50%;background:var(--faint)}
+.notch.dc{width:8px;height:8px;background:var(--need);border-radius:1px;transform:translate(-50%,-50%) rotate(45deg);
+  animation:breathe 1.6s infinite}
+.notch.dc.done{background:var(--ok);animation:none}
+.strand .head{
+  position:absolute;left:72%;top:50%;transform:translate(-50%,-50%);
+  width:9px;height:9px;border-radius:50%;background:var(--step);
+}
+.strand .head::after{
+  content:"";position:absolute;inset:-5px;border-radius:50%;
+  border:1px solid rgba(121,163,208,.55);animation:ripple 2s ease-out infinite;
+}
+@keyframes ripple{from{transform:scale(.5);opacity:1}to{transform:scale(1.6);opacity:0}}
+
+/* companion: só existe no game mode, mora na cabeça do fio */
+.buddy{display:none;position:absolute;left:72%;top:50%;transform:translate(-50%,-58%)}
+body.game .buddy{display:block}
+body.game .strand .head{opacity:0}
+.buddy .bod{
+  width:18px;height:15px;border-radius:8px 8px 5px 5px;
+  background:var(--step);
+  animation:bob 2.2s ease-in-out infinite;position:relative;
+}
+@keyframes bob{50%{transform:translateY(-2.5px)}}
+.buddy .bod::before,.buddy .bod::after{
+  content:"";position:absolute;top:5px;width:2.5px;height:4px;border-radius:2px;background:#141c26;
+  animation:blink 4.6s infinite;
+}
+.buddy .bod::before{left:5px}.buddy .bod::after{right:5px}
+@keyframes blink{0%,94%,100%{transform:scaleY(1)}97%{transform:scaleY(.1)}}
+.buddy .stage{
+  position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);
+  font:var(--mono-w) 8.5px var(--mono);letter-spacing:.08em;color:var(--step);white-space:nowrap;
+}
+
+.strip .stats{display:flex;align-items:center;gap:14px;flex:none;font:400 10.5px var(--mono);color:var(--faint)}
+.strip .stats .ok{color:var(--ok)}
+.strip .stats .warn{color:var(--need)}
+.strip .lvl-strip{display:none;color:var(--step)}
+body.game .strip .lvl-strip{display:inline}
+.strip .open-hint{font:400 10px var(--mono);color:var(--faint)}
+
+/* ============ TOAST ============ */
+.toast{
+  position:fixed;right:22px;bottom:104px;z-index:50;
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px;border-radius:var(--r2);
+  background:var(--raise);border:1px solid var(--line-2);
+  box-shadow:0 12px 32px rgba(0,0,0,.45);
+  font-size:12.5px;
+  opacity:0;transform:translateY(8px);pointer-events:none;
+  transition:opacity .2s,transform .2s;
+}
+.toast.show{opacity:1;transform:none}
+.toast .st{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+
+/* ============ ANDAIME DO SKETCH — não faz parte do produto ============ */
+#type-switch{
+  position:fixed;right:20px;bottom:52px;z-index:60;
+  display:flex;align-items:center;gap:3px;
+  padding:4px;border-radius:var(--r1);
+  background:rgba(20,21,24,.94);border:1px solid var(--line-2);
+  opacity:.45;transition:opacity .2s;
+}
+#type-switch:hover{opacity:1}
+#type-switch button{
+  height:22px;padding:0 9px;border-radius:3px;font-size:11px;color:var(--mut);transition:.12s;
+}
+#type-switch button:hover{color:var(--text)}
+#type-switch button[aria-pressed="true"]{background:var(--raise);color:var(--text)}
+
+@media(max-width:1180px){
+  .window{grid-template-columns:56px 220px minmax(0,1fr)}
+  .dock{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body class="game" data-type="a">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="ic-overview" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></symbol>
+    <symbol id="ic-build" viewBox="0 0 16 16"><path d="M8 1.5 9.5 6.5 14.5 8 9.5 9.5 8 14.5 6.5 9.5 1.5 8 6.5 6.5Z"/></symbol>
+    <symbol id="ic-resources" viewBox="0 0 16 16"><path d="M2 5.5 8 2.5l6 3v5l-6 3-6-3Z"/><path d="M2 5.5 8 8.5l6-3M8 8.5v6"/></symbol>
+    <symbol id="ic-evidence" viewBox="0 0 16 16"><path d="M8 1.8 13.5 4v4c0 3.2-2.3 5.4-5.5 6.2C4.8 13.4 2.5 11.2 2.5 8V4Z"/><path d="M5.8 8l1.6 1.6L10.6 6.4"/></symbol>
+    <symbol id="ic-ship" viewBox="0 0 16 16"><path d="M4 12 12 4M6 4h6v6"/></symbol>
+    <symbol id="ic-session" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></symbol>
+    <symbol id="ic-history" viewBox="0 0 16 16"><path d="M2.5 8a5.5 5.5 0 1 1 1.6 3.9M2.5 8V4.8M2.5 8h3.2"/></symbol>
+    <symbol id="ic-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4"/></symbol>
+    <symbol id="ic-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="ic-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 3.5v2.7h-2.7"/></symbol>
+    <symbol id="ic-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r=".9" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-check" viewBox="0 0 16 16"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></symbol>
+    <symbol id="ic-dot" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/></symbol>
+    <symbol id="ic-warn" viewBox="0 0 16 16"><path d="M8 2.2 14.4 13.4H1.6Z"/><path d="M8 6.4v3.1M8 11.4v.1"/></symbol>
+  </defs>
+</svg>
+
+<div class="window">
+
+  <!-- TITLEBAR -->
+  <header class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="crumb">
+      <span class="proj">Melhor Lance</span>
+      <span class="sep">·</span>
+      <span class="sess">campanha pública com lances seguros</span>
+    </div>
+    <div class="tb-right">
+      <span class="pill"><span class="dot"></span>Hybrid · local</span>
+      <button class="gm-toggle" id="gm" aria-pressed="true">Game mode<span class="sw"></span></button>
+    </div>
+  </header>
+
+  <!-- PROJECT RAIL -->
+  <aside class="rail">
+    <div class="logo">/i</div>
+    <button class="rail-btn on" title="Melhor Lance — agente ativo">ML<span class="hb run"></span></button>
+    <button class="rail-btn" title="Loja Aurora — precisa de você">LA<span class="hb need"></span></button>
+    <button class="rail-btn" title="Novo projeto"><svg class="i"><use href="#ic-plus"/></svg></button>
+    <div class="sp"></div>
+    <button class="rail-btn" title="Configurações"><svg class="i"><use href="#ic-gear"/></svg></button>
+    <div class="avatar">MA<span class="lvl-badge">7</span></div>
+  </aside>
+
+  <!-- PROJECT NAVIGATOR -->
+  <nav class="nav">
+    <div class="proj-head">
+      <div class="name">Melhor Lance</div>
+      <div class="meta">3 recursos · preview vivo</div>
+    </div>
+    <div class="nav-sec">
+      <span class="tag">Produto</span>
+      <button class="nav-item on" data-view="home"><svg class="i"><use href="#ic-overview"/></svg>Overview</button>
+      <button class="nav-item" data-view="build"><svg class="i"><use href="#ic-build"/></svg>Build<span class="n">1</span></button>
+      <button class="nav-item"><svg class="i"><use href="#ic-resources"/></svg>Resources<span class="n">3</span></button>
+      <button class="nav-item"><svg class="i"><use href="#ic-evidence"/></svg>Evidence<span class="n warn">2</span></button>
+      <button class="nav-item"><svg class="i"><use href="#ic-ship"/></svg>Ship</button>
+    </div>
+    <div class="nav-sec">
+      <span class="tag">Recursos ativos</span>
+      <div class="res"><b>app-web</b><small><span class="st run"></span>Next.js · Codex editando agora</small></div>
+      <div class="res"><b>product-intent.md</b><small><span class="st ok"></span>autoridade sobre o ranking</small></div>
+      <div class="res"><b>preview local</b><small><span class="st ok"></span>localhost:3000 · saudável</small></div>
+    </div>
+    <div class="nav-sec">
+      <span class="tag">Sessões</span>
+      <button class="nav-item"><svg class="i"><use href="#ic-session"/></svg>Campanha patrocinada</button>
+      <button class="nav-item"><svg class="i"><use href="#ic-history"/></svg>Histórico</button>
+    </div>
+  </nav>
+
+  <!-- WORK SURFACE -->
+  <main class="work">
+    <div class="tabs">
+      <button class="tab on" data-view="home">Overview</button>
+      <button class="tab" data-view="build"><span class="mod"></span>Build</button>
+      <button class="tab file">product-intent.md</button>
+      <button class="tab file">auction.ts</button>
+      <button class="tab new" title="Nova aba"><svg class="i" style="width:12px;height:12px"><use href="#ic-plus"/></svg></button>
+    </div>
+
+    <!-- HOME: página de situação -->
+    <section class="view on" id="view-home">
+      <div class="home-main">
+
+        <div class="h-sec continue">
+          <h1 class="goal">Permitir que aplicações disputem a primeira posição <em>sem ver o lance vencedor</em>.</h1>
+          <div class="next">
+            <button class="btn pri lg act" data-view="build">Retomar a sessão<span class="kbd">⏎</span></button>
+            <span>próximo resultado: ranking à prova de concorrência, testável no preview</span>
+          </div>
+        </div>
+
+        <div class="h-sec">
+          <span class="tag">Agora</span>
+          <div class="now-list">
+            <div class="now-row">
+              <span class="live"></span>
+              <span class="who">Codex · app-web</span>
+              <span class="what">Verificando se dois lances simultâneos podem furar a reserva.</span>
+              <span class="meta">passo 3 de 4</span>
+            </div>
+            <div class="now-row">
+              <span class="live ok"></span>
+              <span class="who">Preview · localhost:3000</span>
+              <span class="what">Refletindo a última alteração. A campanha já aceita lances de teste.</span>
+              <span class="meta">agora</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="h-sec">
+          <span class="tag">Precisa de você</span>
+          <div class="need">
+            <div class="need-item" id="need-migration">
+              <div class="txt">
+                <b>Executar migration no banco local?</b>
+                <small>Altera dados de desenvolvimento. Um checkpoint reversível é criado antes.</small>
+              </div>
+              <div class="acts">
+                <button class="btn act" data-toast="Diff da migration aberto na Work Surface">Ver o que muda</button>
+                <button class="btn pri act" data-focus-decision>Revisar no contexto</button>
+              </div>
+            </div>
+            <div class="need-item">
+              <div class="txt">
+                <b>Empate entre lances usa ordem de criação</b>
+                <small>Sua intenção não define desempate. Isso pode favorecer quem chegou antes.</small>
+              </div>
+              <div class="acts">
+                <button class="btn act" data-toast="Divergência aberta ao lado do preview">Entender</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="home-side">
+
+        <div class="h-sec">
+          <span class="tag">Produto</span>
+          <div class="prod-map">
+            <div class="prod-row"><span class="st ok"></span><span class="nm">Campanhas</span><span class="ds">criar e listar</span><span class="lb ok">verificado</span></div>
+            <div class="prod-row"><span class="st run"></span><span class="nm">Lances</span><span class="ds">reserva segura</span><span class="lb run">em construção</span></div>
+            <div class="prod-row"><span class="st" style="background:var(--need)"></span><span class="nm">Ranking</span><span class="ds">desempate</span><span class="lb warn">divergência</span></div>
+            <div class="prod-row"><span class="st idle"></span><span class="nm">Pagamentos</span><span class="ds">ainda não iniciado</span><span class="lb">planejado</span></div>
+          </div>
+        </div>
+
+        <div class="quest">
+          <span class="tag">Marco atual</span>
+          <p>Um lance disputado por duas pessoas ao mesmo tempo termina com um único vencedor.</p>
+          <div class="qbar"><i></i></div>
+          <small>3 de 5 critérios verificados</small>
+        </div>
+
+        <div class="recent">
+          <span class="tag">Recentes</span>
+          <div class="r"><time>14:32</time><span>Você pediu: <em>“ninguém pode pagar depois de ver o lance vencedor”</em></span></div>
+          <div class="r"><time>14:35</time><span>Codex protegeu o endpoint de lances por sessão</span></div>
+          <div class="r"><time>14:41</time><span>Checkpoint criado antes da mudança no schema</span></div>
+          <div class="r"><time>14:44</time><span>Preview atualizado com a lista de campanhas</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- BUILD: intenção ao lado do preview -->
+    <section class="view" id="view-build">
+      <div class="conv">
+        <div class="conv-scroll">
+          <h2 class="goal">Aplicações disputam a primeira posição sem ver o lance vencedor.</h2>
+
+          <div class="msg user">
+            <div class="bubble">Quero que a maior oferta fique em primeiro, mas ninguém pode pagar depois de ver o lance vencedor.</div>
+          </div>
+
+          <div class="msg agent">
+            <div class="head"><span class="live"></span>CODEX · APP-WEB</div>
+            <div class="body">
+              Entendi como <strong>leilão selado</strong>: o valor de cada lance fica reservado e escondido até o fechamento.
+              Implementei a reserva e agora estou verificando o que acontece se duas pessoas derem lances no mesmo instante.
+              <div class="steps">
+                <div class="step done"><svg class="i"><use href="#ic-check"/></svg>schema de lances com valor selado</div>
+                <div class="step done"><svg class="i"><use href="#ic-check"/></svg>endpoint protegido por sessão</div>
+                <div class="step run"><svg class="i"><use href="#ic-dot"/></svg>teste de concorrência em andamento</div>
+                <div class="step"><svg class="i"><use href="#ic-circle"/></svg>reconciliar desempate com sua intenção</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="composer">
+          <input placeholder="Peça uma mudança ou pergunte o porquê…">
+          <div class="foot">
+            <span class="hint"><em>Tab</em> completa o que falta decidir</span>
+            <span>Hybrid · efeitos locais liberados</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview">
+        <div class="pv-bar">
+          <svg class="i"><use href="#ic-refresh"/></svg>
+          <span class="pv-url">localhost:3000/campanhas</span>
+          <svg class="i"><use href="#ic-more"/></svg>
+        </div>
+        <div class="pv-body">
+          <div class="site">
+            <div class="site-nav">
+              <span class="site-brand">MELHOR/LANCE</span>
+              <button class="site-cta">Anunciar aplicação</button>
+            </div>
+            <div class="site-hero">
+              <h2>Descubra o que estão construindo.</h2>
+              <p>Aplicações independentes disputam visibilidade de forma transparente.</p>
+            </div>
+            <div class="bids">
+              <div class="bid first"><span class="rk">1</span><span><b>Fluxo Fiscal</b><small>Automação para pequenas empresas</small></span><span class="pr">R$ 84</span></div>
+              <div class="bid"><span class="rk">2</span><span><b>Agenda Clara</b><small>Reservas sem mensalidade</small></span><span class="pr">R$ 61</span></div>
+              <div class="bid"><span class="rk">3</span><span><b>Pedido Zap</b><small>Catálogo e pedidos locais</small></span><span class="pr">R$ 43</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="pv-foot">
+          <span><b>Divergência.</b> O empate ainda usa ordem de criação — sua intenção não define isso.</span>
+          <button class="btn act" data-toast="Divergência explicada: opções de desempate propostas">Entender</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- CONTEXT DOCK -->
+  <aside class="dock">
+    <span class="tag">Contexto ativo</span>
+    <div class="agent-card">
+      <div class="agent-top">
+        <div class="agent-orb">C</div>
+        <div><span class="nm">Codex</span><small>CLI · sessão retomável</small></div>
+      </div>
+      <div class="krow"><span>Escopo</span><b>app-web apenas</b></div>
+      <div class="krow"><span>Efeitos permitidos</span><b>locais e reversíveis</b></div>
+      <div class="krow"><span>Contexto usado</span><b class="em">68%</b></div>
+      <div class="meter"><i style="width:68%"></i></div>
+      <div class="krow"><span>Budget da sessão</span><b class="em">dentro do limite</b></div>
+      <button class="btn act" data-toast="Detalhes de uso: R$ 0,84 · 1.8k tokens · nenhuma inferência em idle">Ver uso detalhado</button>
+    </div>
+
+    <div class="decision" id="decision-card">
+      <div class="st-row">AGUARDANDO VOCÊ</div>
+      <h4>Executar migration no banco local?</h4>
+      <p>Altera dados de desenvolvimento. Um checkpoint reversível é criado antes — dá para desfazer em um clique.</p>
+      <div class="acts">
+        <button class="btn act" data-toast="Diff da migration aberto na Work Surface">Ver o que muda</button>
+        <button class="btn pri act" data-approve>Permitir<span class="kbd">⏎</span></button>
+      </div>
+    </div>
+
+    <div class="prog">
+      <div class="prog-top">
+        <div class="prog-lvl" id="lvl-num">7</div>
+        <div class="who">
+          <b>Explorer</b>
+          <small>nível 7 · leitura descritiva</small>
+        </div>
+      </div>
+      <div class="prog-bar"><i style="width:64%" id="lvl-bar"></i></div>
+      <div class="prog-next" id="lvl-next">3 marcos verificados para o nível 8</div>
+      <div class="prog-earn">
+        <span class="tag">Rendeu hoje</span>
+        <div class="e"><em>+1</em>intenção esclarecida</div>
+        <div class="e"><em>+2</em>hipóteses testadas no preview</div>
+        <div class="e"><em>+1</em>finding resolvido sem regressão</div>
+      </div>
+      <div class="prog-never">nunca rende: <b>tokens, horas, linhas, prompts</b></div>
+      <div class="prog-arch">também presente: Architect · <button>ocultar leitura</button></div>
+    </div>
+  </aside>
+
+  <!-- TIMELINE (expansão da pulse line) -->
+  <div class="drawer" id="drawer">
+    <div class="drawer-in">
+      <div class="tl"><time>14:32</time><span class="k">INTENÇÃO</span><span>“ninguém pode pagar depois de ver o lance vencedor” incorporada ao product-intent.md</span></div>
+      <div class="tl"><time>14:35</time><span class="k ed">EDIÇÃO</span><span>auction.ts, bids.schema.ts — endpoint protegido por sessão</span></div>
+      <div class="tl"><time>14:41</time><span class="k ck">CHECKPOINT</span><span>antes da mudança no schema de lances</span><button class="undo act" data-toast="Projeto voltaria para 14:41 — nada foi desfeito neste sketch">restaurar</button></div>
+      <div class="tl"><time>14:42</time><span class="k ed">EDIÇÃO</span><span>migration 0042_sealed_bids preparada, aguardando permissão</span></div>
+      <div class="tl" id="tl-decision"><time>14:44</time><span class="k dc">DECISÃO</span><span>migration no banco local aguardando você</span></div>
+      <div class="tl"><time>14:44</time><span class="k ev">EVIDENCE</span><span>empate entre lances usa ordem de criação — divergente da intenção</span></div>
+    </div>
+  </div>
+
+  <!-- PULSE LINE -->
+  <footer class="strip" id="strip" title="Clique para abrir a timeline">
+    <span class="now"><span class="live"></span><span id="now-text">codex · testando concorrência</span></span>
+    <div class="strand">
+      <div class="wire"></div>
+      <span class="notch ed" style="left:12%"></span>
+      <span class="notch ed" style="left:19%"></span>
+      <span class="notch ck" style="left:30%" title="Checkpoint 14:41"></span>
+      <span class="notch ed" style="left:41%"></span>
+      <span class="notch dc" id="notch-decision" style="left:54%" title="Decisão pendente"></span>
+      <span class="head"></span>
+      <div class="buddy"><span class="stage" id="stage">VERIFICANDO</span><div class="bod"></div></div>
+    </div>
+    <div class="stats">
+      <span>3 arquivos</span>
+      <span class="ok">checks 4/5</span>
+      <span class="ok">preview ✓</span>
+      <span class="warn" id="pending-count">1 decisão</span>
+      <span class="lvl-strip" id="lvl-strip">nv 7</span>
+      <span class="open-hint">timeline ▴</span>
+    </div>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"><span class="st"></span><span id="toast-text"></span></div>
+
+<!-- andaime do sketch: comparar tipografia ao vivo. Sai na implementação. -->
+<div id="type-switch" role="group" aria-label="Tipografia do sketch" title="Tipografia do sketch">
+  <button data-type="a" aria-pressed="true" title="Geologica + DM Mono">Geologica</button>
+  <button data-type="b" aria-pressed="false" title="Archivo + Chivo Mono">Archivo</button>
+  <button data-type="c" aria-pressed="false" title="Schibsted Grotesk + Fragment Mono">Schibsted</button>
+</div>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+
+/* navegação entre Overview e Build */
+function go(view){
+  $$('.view').forEach(v=>v.classList.toggle('on',v.id==='view-'+view));
+  $$('[data-view]').forEach(b=>{
+    if(b.classList.contains('nav-item')||b.classList.contains('tab'))
+      b.classList.toggle('on',b.dataset.view===view);
+  });
+}
+$$('[data-view]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
+
+/* game mode liga e desliga sem perder nada */
+$('#gm').addEventListener('click',()=>{
+  const on=document.body.classList.toggle('game');
+  $('#gm').setAttribute('aria-pressed',on);
+});
+
+/* pulse line expande em timeline */
+$('#strip').addEventListener('click',e=>{
+  if(e.target.closest('.act'))return;
+  $('#drawer').classList.toggle('open');
+});
+
+/* switcher de tipografia (andaime do sketch) */
+$$('#type-switch button').forEach(b=>b.addEventListener('click',()=>{
+  document.body.dataset.type=b.dataset.type;
+  $$('#type-switch button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+}));
+
+/* toasts */
+let tmr;
+function toast(msg){
+  $('#toast-text').textContent=msg;
+  $('#toast').classList.add('show');
+  clearTimeout(tmr);tmr=setTimeout(()=>$('#toast').classList.remove('show'),2200);
+}
+$$('[data-toast]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();toast(b.dataset.toast)}));
+
+/* a Home resume a pendência; o Dock é a superfície canônica da decisão */
+$$('[data-focus-decision]').forEach(b=>b.addEventListener('click',()=>{
+  $('#decision-card').scrollIntoView({behavior:'smooth',block:'center'});
+  $('#decision-card').animate(
+    [{background:'var(--panel-2)'},{background:'rgba(217,160,60,.14)'},{background:'var(--panel-2)'}],
+    {duration:700}
+  );
+}));
+
+/* aprovar a migration: a decisão resolve em todos os lugares ao mesmo tempo */
+$$('[data-approve]').forEach(b=>b.addEventListener('click',()=>{
+  toast('Permissão registrada · executando migration após checkpoint');
+  const card=$('#decision-card');
+  card.classList.add('resolved');
+  card.innerHTML='<div class="st-row" style="color:var(--step)">EXECUTANDO</div><h4>Aplicando migration local</h4><p>Checkpoint 14:45 criado. O progresso só será concedido depois dos checks e do preview saudável.</p>';
+  const need=$('#need-migration');if(need)need.remove();
+  $('#notch-decision').classList.add('done');
+  $('#pending-count').textContent='0 decisões';
+  $('#pending-count').classList.remove('warn');
+  $('#tl-decision').innerHTML='<time>14:45</time><span class="k ck">CHECKPOINT</span><span>permissão concedida; migration em execução com restauração disponível</span>';
+  $('#now-text').textContent='codex · aplicando migration';
+  $('#stage').textContent='CONSTRUINDO';
+  /* autorização não rende progresso; somente efeito concluído + evidência */
+  setTimeout(()=>{
+    card.classList.add('resolved');
+    card.innerHTML='<div class="st-row">VERIFICADA</div><h4>Migration aplicada com segurança</h4><p>Checks passaram e o preview voltou saudável. Checkpoint 14:45 permanece restaurável.</p>';
+    $('#now-text').textContent='codex · migration verificada';
+    $('#stage').textContent='VERIFICADO';
+    $('#lvl-bar').style.width='72%';
+    $('#lvl-next').textContent='2 outcomes verificados para o nível 8';
+    toast('Outcome verificado · progresso +1');
+  },1400);
+}));
+</script>
+</body>
+</html>

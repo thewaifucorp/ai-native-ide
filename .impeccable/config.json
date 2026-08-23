@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          ".planning/sketches/001-ide-atmosphere/index.html"
+        ],
+        "createdAt": "2026-08-22T19:36:28.809Z",
+        "reason": "Claude: chrome de IDE e denso por natureza — passos de 10-13px no chrome sao intencionais; hierarquia vem de peso (600) e escala (27/19/16/13)"
+      }
+    ]
+  }
+}
