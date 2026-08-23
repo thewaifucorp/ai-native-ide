@@ -17,6 +17,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+mod semantic;
+
+pub use semantic::{
+    ChangeCause, CreateProject, ProjectRecord, Resource, ResourceKind, ResourceRevision,
+    SemanticProjectStore, SessionScope,
+};
+
 /// Stable identity belongs to a semantic project, never to a chat transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectId(pub String);
