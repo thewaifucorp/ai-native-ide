@@ -171,14 +171,14 @@ async fn start_benchmark_preview(
 async fn stop_benchmark_preview(
     previews: State<'_, BenchmarkPreviewHost>,
     runtime: State<'_, HostRuntime>,
-) -> Option<BenchmarkPreviewStatus> {
+) -> Result<Option<BenchmarkPreviewStatus>, String> {
     let status = previews.stop().await;
     if status.is_some() {
         runtime.publish(HostEvent::PreviewHealth {
             health: PreviewHealth::Stopped,
         });
     }
-    status
+    Ok(status)
 }
 
 #[tauri::command]
