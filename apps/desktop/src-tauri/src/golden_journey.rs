@@ -1,10 +1,17 @@
+use super::host::OutputStream;
 use super::{
     benchmark_preview::{BenchmarkPreviewHost, PreviewReconciliationAction},
     bridge::{DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection, WorkspaceWriteRequest},
+    registered_git_executable, HostEvent, HostExtension, HostRuntime, TrustedProcessSpec,
+    WatchScope,
 };
 use ide_domain::ResourceKind;
 use std::{
+    collections::VecDeque,
     fs,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -43,6 +50,14 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     let root = temporary_directory("golden-workspace");
     let data = temporary_directory("golden-data");
     fs::create_dir_all(&root).expect("create workspace");
+    std::process::Command::new(registered_git_executable().expect("find host Git"))
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status()
+        .expect("initialize benchmark workspace as a Git resource")
+        .success()
+        .then_some(())
+        .expect("Git initialized benchmark workspace");
     let bridge = DesktopBridge::open(&data, "golden.owner").expect("open desktop bridge");
     let project = bridge
         .create_project(ProjectIntentInput {
@@ -82,6 +97,60 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
         .expect("execute approved effect");
     assert_eq!(written["written"], true);
     assert!(root.join("benchmark.intent.md").is_file());
+
+    let terminal_events = Arc::new(Mutex::new(VecDeque::new()));
+    let terminal_sink = Arc::clone(&terminal_events);
+    let terminal_runtime = HostRuntime::new(Arc::new(move |event| {
+        terminal_sink
+            .lock()
+            .expect("terminal event lock")
+            .push_back(event);
+    }));
+    let terminal_scope = WatchScope::from_project_resource(&root).expect("scope workspace PTY");
+    let terminal_spec = TrustedProcessSpec::for_registered_extension(
+        registered_git_executable().expect("find registered Git"),
+        ["status", "--short"],
+        &terminal_scope,
+    )
+    .expect("construct fixed workspace inspection");
+    let _terminal = terminal_runtime
+        .spawn_pty(terminal_spec, 24, 120)
+        .expect("start host-owned workspace PTY");
+    for _ in 0..30 {
+        if terminal_events
+            .lock()
+            .expect("terminal event lock")
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    HostEvent::ProcessOutput {
+                        extension: HostExtension::Pty,
+                        stream: OutputStream::Pty,
+                        line,
+                    } if line.contains("benchmark.intent.md")
+                )
+            })
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        terminal_events
+            .lock()
+            .expect("terminal event lock")
+            .iter()
+            .any(|event| matches!(
+                event,
+                HostEvent::ProcessOutput {
+                    extension: HostExtension::Pty,
+                    stream: OutputStream::Pty,
+                    line,
+                } if line.contains("benchmark.intent.md")
+            )),
+        "host PTY must stream the fixed workspace inspection"
+    );
 
     let previews = BenchmarkPreviewHost::open(data.join("previews")).expect("open preview host");
     let started = previews
