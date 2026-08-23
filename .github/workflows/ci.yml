@@ -49,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ai-native-ide-linux-${{ github.sha }}
-          path: apps/desktop/src-tauri/target/release/bundle/
+          path: target/release/bundle/
           if-no-files-found: error
