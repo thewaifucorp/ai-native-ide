@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -195,7 +196,7 @@ struct ManagedSession {
 
 /// An ACPX-backed, host-neutral facade. It does no credential discovery and never logs input.
 pub struct AcpxAgentFacade {
-    runtime: AcpxAgentRuntime,
+    runtime: Arc<dyn AgentRuntime>,
     sessions: Mutex<HashMap<AgentSessionId, ManagedSession>>,
     next_session_id: AtomicU64,
 }
@@ -204,11 +205,15 @@ impl AcpxAgentFacade {
     /// Resolves the `acpx` executable using the runtime's own validated resolver.
     pub fn new(agent: impl Into<String>) -> Result<Self, AgentFacadeError> {
         let runtime = AcpxAgentRuntime::new(agent).map_err(map_runtime_error)?;
-        Ok(Self {
-            runtime,
+        Ok(Self::from_runtime(runtime))
+    }
+
+    fn from_runtime(runtime: impl AgentRuntime + 'static) -> Self {
+        Self {
+            runtime: Arc::new(runtime),
             sessions: Mutex::new(HashMap::new()),
             next_session_id: AtomicU64::new(1),
-        })
+        }
     }
 
     pub fn descriptor(&self) -> AgentDescriptor {
@@ -609,7 +614,114 @@ fn sanitize_runtime_error(error: &RuntimeError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bastion_agent_runtime::{RuntimeSupports, Transport};
+    use bastion_agent_runtime::{RuntimeSupports, SessionHandle, TaskId, Transport};
+
+    #[derive(Clone, Default)]
+    struct TestProbe {
+        starts: Arc<Mutex<Vec<SessionSpec>>>,
+        submissions: Arc<Mutex<Vec<TaskInput>>>,
+        cancellations: Arc<Mutex<Vec<CancelMode>>>,
+    }
+
+    struct TestRuntime {
+        probe: TestProbe,
+        ready: bool,
+    }
+
+    struct TestSession {
+        probe: TestProbe,
+        status: SessionStatus,
+        next_task: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRuntime for TestRuntime {
+        fn descriptor(&self) -> RuntimeDescriptor {
+            descriptor(PolicyCoverage {
+                tool_visibility: ToolVisibility::DeclaredOnly,
+                approvals: ApprovalCoverage::HarnessOwned,
+                egress: EgressCoverage::HarnessOwned,
+                budget: BudgetCoverage::Reported,
+                sandbox: SandboxCoverage::None,
+            })
+        }
+
+        async fn health(&self) -> Result<RuntimeHealth, RuntimeError> {
+            Ok(RuntimeHealth {
+                detected_version: "test-runtime 1.0".to_string(),
+                ready: self.ready,
+                detail: (!self.ready).then(|| "test runtime unavailable".to_string()),
+            })
+        }
+
+        async fn start(&self, spec: SessionSpec) -> Result<Box<dyn RuntimeSession>, RuntimeError> {
+            self.probe.starts.lock().await.push(spec);
+            Ok(Box::new(TestSession {
+                probe: self.probe.clone(),
+                status: SessionStatus::Idle,
+                next_task: 1,
+            }))
+        }
+
+        async fn resume(
+            &self,
+            _handle: &SessionHandle,
+            _spec: bastion_agent_runtime::ResumeSpec,
+        ) -> Result<Box<dyn RuntimeSession>, RuntimeError> {
+            Err(RuntimeError::NotResumable(
+                "test runtime cannot resume".to_string(),
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSession for TestSession {
+        fn handle(&self) -> SessionHandle {
+            SessionHandle {
+                runtime_id: "test-runtime".to_string(),
+                owner: "test-owner".to_string(),
+                external_ref: "never-exposed".to_string(),
+            }
+        }
+
+        async fn submit(&mut self, input: TaskInput) -> Result<TaskId, RuntimeError> {
+            self.probe.submissions.lock().await.push(input);
+            self.status = SessionStatus::Running;
+            let task = TaskId(self.next_task);
+            self.next_task += 1;
+            Ok(task)
+        }
+
+        async fn next_event(&mut self) -> Option<RuntimeEvent> {
+            None
+        }
+
+        async fn steer(&mut self, _text: &str) -> Result<(), RuntimeError> {
+            Err(RuntimeError::Protocol(
+                "steering unavailable in test runtime".to_string(),
+            ))
+        }
+
+        async fn cancel(&mut self, mode: CancelMode) -> Result<(), RuntimeError> {
+            self.probe.cancellations.lock().await.push(mode);
+            self.status = SessionStatus::Cancelled;
+            Ok(())
+        }
+
+        async fn respond_permission(
+            &mut self,
+            _id: bastion_agent_runtime::PermissionRequestId,
+            _decision: bastion_agent_runtime::PermissionDecision,
+        ) -> Result<(), RuntimeError> {
+            Err(RuntimeError::Protocol(
+                "permission bridge unavailable in test runtime".to_string(),
+            ))
+        }
+
+        async fn status(&self) -> Result<SessionStatus, RuntimeError> {
+            Ok(self.status)
+        }
+    }
 
     fn descriptor(policy_coverage: PolicyCoverage) -> RuntimeDescriptor {
         RuntimeDescriptor {
@@ -626,6 +738,22 @@ mod tests {
                 concurrent_sessions: true,
             },
             policy_coverage,
+        }
+    }
+
+    fn session_request() -> StartAgentSession {
+        StartAgentSession {
+            owner: "local-user".to_string(),
+            workspace_root: PathBuf::from("/tmp/example"),
+            home_dir: PathBuf::from("/tmp/local-user-home"),
+            read_only: false,
+            denied_paths: vec![PathBuf::from(".env")],
+            sandbox: AgentSandbox::Isolated,
+            auth_profile_ref: "external-profile-ref".to_string(),
+            runtime_id: "claude".to_string(),
+            allowed_actions: Vec::new(),
+            task_timeout_ms: 5_000,
+            idle_timeout_ms: 30_000,
         }
     }
 
@@ -690,5 +818,68 @@ mod tests {
                 outcome: IdeTaskOutcome::Cancelled,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn routes_start_submit_cancel_and_status_without_a_provider_call() {
+        let probe = TestProbe::default();
+        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: true,
+        });
+
+        let session_id = facade.start_session(session_request()).await.unwrap();
+        assert_eq!(session_id, AgentSessionId("agent-1".to_string()));
+        let starts = probe.starts.lock().await;
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].env.allow.len(), 1);
+        assert!(starts[0].env.allow.contains_key("HOME"));
+        drop(starts);
+
+        let task_id = facade
+            .submit_task(
+                &session_id,
+                AgentTask {
+                    prompt: "describe the change".to_string(),
+                    expectation: AgentExpectation::CodeChange,
+                    model_hint: Some("model-selected-by-user".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(task_id, 1);
+        assert_eq!(
+            facade.session_status(&session_id).await.unwrap(),
+            SessionStatus::Running
+        );
+
+        facade.cancel(&session_id, false).await.unwrap();
+        assert_eq!(
+            facade.session_status(&session_id).await.unwrap(),
+            SessionStatus::Cancelled
+        );
+        assert_eq!(
+            probe.cancellations.lock().await.as_slice(),
+            &[CancelMode::Kill]
+        );
+        let submitted = probe.submissions.lock().await;
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(
+            submitted[0].model_hint.as_deref(),
+            Some("model-selected-by-user")
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_runtime_never_starts_a_session() {
+        let probe = TestProbe::default();
+        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: false,
+        });
+
+        let error = facade.start_session(session_request()).await.unwrap_err();
+        assert!(matches!(error, AgentFacadeError::Unavailable { .. }));
+        assert!(probe.starts.lock().await.is_empty());
     }
 }
