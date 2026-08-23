@@ -7,6 +7,8 @@
 
 mod benchmark_preview;
 mod bridge;
+#[cfg(test)]
+mod golden_journey;
 mod host;
 mod model;
 mod surface;
