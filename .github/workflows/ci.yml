@@ -55,3 +55,35 @@ jobs:
           name: ai-native-ide-linux-${{ github.sha }}
           path: target/release/bundle/
           if-no-files-found: error
+
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Frontend checks
+        run: npm run check
+      - name: Rust format
+        run: cargo fmt --check
+      - name: Rust lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Build Windows installers
+        run: npm run build
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-native-ide-windows-${{ github.sha }}
+          path: |
+            target/release/bundle/msi/**
+            target/release/bundle/nsis/**
+          if-no-files-found: error
