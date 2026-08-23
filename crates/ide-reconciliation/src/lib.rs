@@ -165,6 +165,7 @@ pub struct PreviewFailure {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum PreviewFailureKind {
     ProcessExited { process_id: String, exit_code: i32 },
+    HealthCheckFailed { url: String, detail: String },
 }
 
 impl PreviewFailure {
@@ -204,6 +205,27 @@ pub struct PreviewProcessExit {
     pub process_id: String,
     pub exit_code: i32,
     pub message: String,
+    pub causal_links: CausalLinks,
+    pub observed_at_ms: u64,
+}
+
+/// An observation supplied by the host after it actually runs a health check.
+/// This separates a clean response from a failed probe before either can become
+/// evidence in the ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum PreviewHealthCheckObservation {
+    Healthy,
+    Failed { detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewHealthCheck {
+    pub id: String,
+    pub preview_id: String,
+    pub evidence_id: String,
+    pub url: String,
+    pub observation: PreviewHealthCheckObservation,
     pub causal_links: CausalLinks,
     pub observed_at_ms: u64,
 }
@@ -250,6 +272,52 @@ impl PreviewEvidenceLedger {
             .expect("failure was inserted into this ledger"))
     }
 
+    /// Records a failed health observation without making any claim about the
+    /// preview process. A process can still be alive while its HTTP health check
+    /// fails, so callers must use this distinct evidence kind.
+    pub fn record_failed_health_check(
+        &mut self,
+        check: PreviewHealthCheck,
+    ) -> Result<&PreviewFailure, PreviewEvidenceError> {
+        if check.id.trim().is_empty()
+            || check.preview_id.trim().is_empty()
+            || check.evidence_id.trim().is_empty()
+            || check.url.trim().is_empty()
+        {
+            return Err(PreviewEvidenceError::MissingRequiredField);
+        }
+        let PreviewHealthCheckObservation::Failed { detail } = check.observation else {
+            return Err(PreviewEvidenceError::HealthyHealthCheck);
+        };
+        if detail.trim().is_empty() {
+            return Err(PreviewEvidenceError::MissingRequiredField);
+        }
+        check.causal_links.validate()?;
+        if self.failures.contains_key(&check.id) {
+            return Err(PreviewEvidenceError::DuplicateFailure(check.id));
+        }
+
+        self.failures.insert(
+            check.id.clone(),
+            PreviewFailure {
+                id: check.id.clone(),
+                preview_id: check.preview_id,
+                evidence_id: check.evidence_id,
+                message: format!("health check failed for {}: {detail}", check.url),
+                kind: PreviewFailureKind::HealthCheckFailed {
+                    url: check.url,
+                    detail,
+                },
+                causal_links: check.causal_links,
+                observed_at_ms: check.observed_at_ms,
+            },
+        );
+        Ok(self
+            .failures
+            .get(&check.id)
+            .expect("failure was inserted into this ledger"))
+    }
+
     pub fn failure(&self, id: &str) -> Option<&PreviewFailure> {
         self.failures.get(id)
     }
@@ -261,6 +329,7 @@ pub enum PreviewEvidenceError {
     MissingCausalLinks,
     InvalidCausalLink,
     CleanProcessExit,
+    HealthyHealthCheck,
     DuplicateFailure(String),
 }
 
@@ -274,6 +343,9 @@ impl std::fmt::Display for PreviewEvidenceError {
             Self::InvalidCausalLink => write!(formatter, "preview causal link cannot be blank"),
             Self::CleanProcessExit => {
                 write!(formatter, "a clean process exit is not a preview failure")
+            }
+            Self::HealthyHealthCheck => {
+                write!(formatter, "a healthy health check is not a preview failure")
             }
             Self::DuplicateFailure(id) => write!(formatter, "preview failure already exists: {id}"),
         }

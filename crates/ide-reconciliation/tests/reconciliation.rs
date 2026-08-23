@@ -34,6 +34,22 @@ fn failed_exit(id: &str, exit_code: i32, causal_links: CausalLinks) -> PreviewPr
     }
 }
 
+fn failed_health_check(id: &str, observation: PreviewHealthCheckObservation) -> PreviewHealthCheck {
+    PreviewHealthCheck {
+        id: id.to_owned(),
+        preview_id: "preview-benchmark".to_owned(),
+        evidence_id: format!("evidence-{id}"),
+        url: "http://127.0.0.1:4317/health".to_owned(),
+        observation,
+        causal_links: CausalLinks {
+            effect_ids: vec!["effect-start-benchmark".to_owned()],
+            activity_ids: vec!["activity-health-check".to_owned()],
+            file_paths: vec!["crates/benchmark-service/src/lib.rs".to_owned()],
+        },
+        observed_at_ms: 31,
+    }
+}
+
 #[test]
 fn preview_lifecycle_is_explicit_and_monotonic() {
     let mut preview = PreviewSupervisor::starting(10);
@@ -183,6 +199,50 @@ fn clean_exit_blank_traces_and_duplicate_failure_cannot_be_represented_as_eviden
             .record_nonzero_process_exit(failed_exit("failure-duplicate", 2, links))
             .unwrap_err(),
         PreviewEvidenceError::DuplicateFailure("failure-duplicate".to_owned())
+    );
+}
+
+#[test]
+fn failed_health_check_is_distinct_causal_evidence() {
+    let mut ledger = PreviewEvidenceLedger::default();
+    let failure = ledger
+        .record_failed_health_check(failed_health_check(
+            "health-failure-1",
+            PreviewHealthCheckObservation::Failed {
+                detail: "connection refused".to_owned(),
+            },
+        ))
+        .unwrap();
+
+    assert_eq!(
+        failure.kind,
+        PreviewFailureKind::HealthCheckFailed {
+            url: "http://127.0.0.1:4317/health".to_owned(),
+            detail: "connection refused".to_owned(),
+        }
+    );
+    assert!(!matches!(
+        failure.kind,
+        PreviewFailureKind::ProcessExited { .. }
+    ));
+    assert_eq!(
+        failure.causal_links.activity_ids,
+        vec!["activity-health-check"]
+    );
+    assert_eq!(failure.evidence_id, "evidence-health-failure-1");
+}
+
+#[test]
+fn healthy_check_cannot_be_recorded_as_failure_evidence() {
+    let mut ledger = PreviewEvidenceLedger::default();
+    assert_eq!(
+        ledger
+            .record_failed_health_check(failed_health_check(
+                "health-healthy-1",
+                PreviewHealthCheckObservation::Healthy,
+            ))
+            .unwrap_err(),
+        PreviewEvidenceError::HealthyHealthCheck
     );
 }
 
