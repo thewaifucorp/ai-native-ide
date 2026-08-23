@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/ide-domain",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/thewaifucorp/ai-native-ide"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
