@@ -12,6 +12,42 @@ Esta é a única fila operacional do projeto. Trabalhe de cima para baixo, salvo
 
 Não é necessário rodar GSD. `.planning/` preserva pesquisa e histórico, mas não governa a execução.
 
+## Decisão operacional — execução do Gate 1
+
+**Decidido em 2026-08-23.** O usuário não é o operador de QA de cada task. A
+equipe executa e valida o Gate autonomamente; o usuário recebe somente builds
+utilizáveis, evidência consolidada ou bloqueios que exijam credencial/decisão
+externa.
+
+### Regra de conclusão
+
+Uma task só recebe `[x]` quando seu comportamento funciona no artifact Tauri,
+além de passar os checks automatizados relevantes. Código parcialmente ligado,
+mock, contrato estático, preview web e teste unitário não contam como aceitação
+do aplicativo instalado.
+
+### Ondas de execução
+
+1. **Onda A — aplicação operável:** T02 e T03. A UI deixa de ser shell estático:
+   intenção, projeto, diretório, orientação, Essential/Raw e host Tauri funcionam
+   no artifact.
+2. **Onda B — workspace controlado:** T04, T05 e T06. Persistência e mudanças
+   externas, PTY, agente ACPX, effects, aprovação e rollback atravessam o host.
+3. **Onda C — prova da categoria:** T07, T08 e T09. Benchmark transacional,
+   preview, evidência, reconciliação e Game Mode completam a jornada.
+
+Cada onda inclui implementação, testes, build/artifact e smoke test do host.
+Autenticação de um provider externo pode exigir a conta do usuário; ausência de
+autorização deve degradar explicitamente e nunca bloquear os demais fluxos.
+
+### Estado de partida auditado
+
+- T01 está concluída.
+- T02–T09 possuem código exploratório e/ou testes de contrato, mas **nenhuma**
+  está aceita ainda.
+- O Gate 1 permanece aberto até as três ondas acima concluírem no aplicativo
+  instalado.
+
 ## Fase 1 — Provar a categoria
 
 **Objetivo:** provar a jornada intenção → orientação → construção → preview → evidência → reconciliação e resolver a arquitetura desktop por evidência.
