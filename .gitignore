@@ -6,6 +6,7 @@
 node_modules/
 target/
 dist/
+.local-install/
 *.log
 
 # Rebuildable planning research cache

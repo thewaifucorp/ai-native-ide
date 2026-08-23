@@ -18,19 +18,21 @@ Não é necessário rodar GSD. `.planning/` preserva pesquisa e histórico, mas 
 
 ### T01 — Fundação segura
 
-- [ ] Confirmar versões, licenças e legitimidade das dependências candidatas.
-- [ ] Criar workspace TypeScript/Rust, scripts `dev`, `lint`, `typecheck` e `test`.
-- [ ] Definir contratos tipados shell-neutral para projeto, atividade, efeito, evidência e host.
-- [ ] Pinçar por revisão/release os crates necessários do `bastion-core` e registrar política de atualização.
-- [ ] Criar um embedding-host slice offline usando runtime, memory e capability registry reais.
-- [ ] Mapear requisitos da IDE para contratos existentes, extensões upstream e adapters exclusivos do host.
-- [ ] Criar GitHub Actions para fmt, lint, testes Rust/TypeScript, build Tauri e artifact Linux instalável.
-- [ ] Criar script de download/instalação atômica do artifact aprovado, substituindo somente o build local anterior e preservando dados.
-- [ ] Criar preflight de espaço e limpeza escopada para `target/`, staging e downloads do projeto.
-- [ ] Permitir build/test Rust local completo ou por package e executar limpeza segura de artifacts locais depois do uso.
-- [ ] Criar golden journey failing-first que falha somente por comportamento ainda ausente.
+- [x] Confirmar versões, licenças e legitimidade das dependências candidatas.
+- [x] Criar workspace TypeScript/Rust, scripts `dev`, `lint`, `typecheck` e `test`.
+- [x] Definir contratos tipados shell-neutral para projeto, atividade, efeito, evidência e host.
+- [x] Pinçar por revisão/release os crates necessários do `bastion-core` e registrar política de atualização.
+- [x] Criar um embedding-host slice offline usando runtime, memory e capability registry reais.
+- [x] Mapear requisitos da IDE para contratos existentes, extensões upstream e adapters exclusivos do host.
+- [x] Criar GitHub Actions para fmt, lint, testes Rust/TypeScript, build Tauri e artifact Linux instalável.
+- [x] Criar script de download/instalação atômica do artifact aprovado, substituindo somente o build local anterior e preservando dados.
+- [x] Criar preflight de espaço e limpeza escopada para `target/`, staging e downloads do projeto.
+- [x] Permitir build/test Rust local completo ou por package e executar limpeza segura de artifacts locais depois do uso.
+- [x] Criar golden journey failing-first que falha somente por comportamento ainda ausente.
 
 **Pronto quando:** workspace valida de forma reproduzível no GitHub; o artifact aprovado substitui atomicamente a única instalação local; limpeza não alcança caminhos externos; golden journey reconhece a falha esperada e rejeita falhas acidentais.
+
+**Evidência (2026-08-23):** [CI 32627109548](https://github.com/thewaifucorp/ai-native-ide/actions/runs/32627109548) passou todos os checks, gerou e publicou o artifact Linux. O artifact foi baixado, instalado atomicamente em `.local-install`, validado via `--appimage-version` e os diretórios de download/staging foram removidos.
 
 ### T02 — Intent + Instrument inicial
 
