@@ -17,6 +17,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+mod effects;
+
+pub use effects::{BrokerActivity, WorkspaceEffectBroker, WorkspaceWrite};
+
 mod semantic;
 
 pub use semantic::{
