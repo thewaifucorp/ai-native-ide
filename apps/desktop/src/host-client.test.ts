@@ -96,16 +96,19 @@ describe("host client", () => {
 
   it("captures a stopped preview only through its governed effect scope", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
-      id: "preview-health:auction:1",
-      previewId: "auction",
-      evidenceId: "evidence:preview-health:auction:1",
-      message: "health check failed",
-      causalLinks: {
-        effectIds: ["benchmark-plan-v1"],
-        activityIds: ["activity:revision-1"],
-        filePaths: ["benchmark.intent.md"],
+      failure: {
+        id: "preview-health:auction:1",
+        previewId: "auction",
+        evidenceId: "evidence:preview-health:auction:1",
+        message: "health check failed",
+        causalLinks: {
+          effectIds: ["benchmark-plan-v1"],
+          activityIds: ["activity:revision-1"],
+          filePaths: ["benchmark.intent.md"],
+        },
+        observedAtMs: 1,
       },
-      observedAtMs: 1,
+      divergence: { id: "intent:auction::observation:1", intentId: "intent:auction", observationId: "observation:1", subject: "preview:auction", evidenceIds: ["evidence:preview-health:auction:1"] },
     });
     const client = createHostClient({
       isNativeHost: () => true,
@@ -114,7 +117,7 @@ describe("host client", () => {
 
     await expect(
       client.stopAndCaptureBenchmarkPreviewFailure("auction", "auction-local", "benchmark-plan-v1"),
-    ).resolves.toMatchObject({ state: "available", value: { previewId: "auction" } });
+    ).resolves.toMatchObject({ state: "available", value: { failure: { previewId: "auction" } } });
     expect(invoke).toHaveBeenCalledWith("stop_and_capture_benchmark_preview_failure", {
       projectId: "auction",
       resourceId: "auction-local",

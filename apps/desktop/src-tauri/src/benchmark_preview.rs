@@ -7,8 +7,8 @@
 use anyhow::Context;
 use benchmark_service::{router, BenchmarkStore};
 use ide_reconciliation::{
-    CausalLinks, PreviewEvidenceLedger, PreviewFailure, PreviewHealthCheck,
-    PreviewHealthCheckObservation,
+    CausalLinks, Divergence, IntentSpecRecord, PreviewEvidenceLedger, PreviewFailure,
+    PreviewHealthCheck, PreviewHealthCheckObservation, ReconciliationStore,
 };
 use serde::Serialize;
 use std::{
@@ -31,6 +31,13 @@ pub struct BenchmarkPreviewStatus {
     pub state: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFailureReport {
+    pub failure: PreviewFailure,
+    pub divergence: Divergence,
+}
+
 struct RunningPreview {
     status: BenchmarkPreviewStatus,
     shutdown: oneshot::Sender<()>,
@@ -40,6 +47,7 @@ struct RunningPreview {
 pub struct BenchmarkPreviewHost {
     data_directory: PathBuf,
     running: Mutex<Option<RunningPreview>>,
+    reconciliation: Mutex<ReconciliationStore>,
 }
 
 impl BenchmarkPreviewHost {
@@ -53,6 +61,7 @@ impl BenchmarkPreviewHost {
         Ok(Self {
             data_directory,
             running: Mutex::new(None),
+            reconciliation: Mutex::new(ReconciliationStore::default()),
         })
     }
 
@@ -109,7 +118,8 @@ impl BenchmarkPreviewHost {
     pub async fn stop_and_capture_health_failure(
         &self,
         causal_links: CausalLinks,
-    ) -> anyhow::Result<Option<PreviewFailure>> {
+        declared_intent: &str,
+    ) -> anyhow::Result<Option<PreviewFailureReport>> {
         let Some(status) = self.stop().await else {
             return Ok(None);
         };
@@ -133,7 +143,30 @@ impl BenchmarkPreviewHost {
                 observed_at_ms,
             })?
             .clone();
-        Ok(Some(failure))
+        let intent_id = format!("intent:benchmark-preview:{}", status.project_id);
+        let observation_id = format!("observation:{}", failure.id);
+        let subject = format!("benchmark-preview:{}", status.project_id);
+        let mut reconciliation = self.reconciliation.lock().await;
+        reconciliation.record_intent(IntentSpecRecord {
+            id: intent_id.clone(),
+            subject: subject.clone(),
+            expected: serde_json::json!({ "health": "healthy" }),
+            source_path: "benchmark.intent.md".to_owned(),
+            revision: declared_intent.to_owned(),
+        });
+        reconciliation.record_observation(failure.as_observation(
+            observation_id.clone(),
+            subject,
+            serde_json::json!({ "health": "broken" }),
+        ));
+        let divergence = reconciliation
+            .detect(&intent_id, &observation_id)
+            .cloned()
+            .context("failed preview did not yield an evidenced intent divergence")?;
+        Ok(Some(PreviewFailureReport {
+            failure,
+            divergence,
+        }))
     }
 }
 
@@ -173,20 +206,30 @@ mod tests {
         host.start("auction").await.expect("start preview");
 
         let failure = host
-            .stop_and_capture_health_failure(CausalLinks {
-                effect_ids: vec!["benchmark-plan-v1".to_owned()],
-                activity_ids: vec!["activity:revision-1".to_owned()],
-                file_paths: vec!["benchmark.intent.md".to_owned()],
-            })
+            .stop_and_capture_health_failure(
+                CausalLinks {
+                    effect_ids: vec!["benchmark-plan-v1".to_owned()],
+                    activity_ids: vec!["activity:revision-1".to_owned()],
+                    file_paths: vec!["benchmark.intent.md".to_owned()],
+                },
+                "# Benchmark intent",
+            )
             .await
             .expect("capture failed health")
             .expect("a running preview should yield evidence");
 
-        assert_eq!(failure.causal_links.effect_ids, ["benchmark-plan-v1"]);
+        assert_eq!(
+            failure.failure.causal_links.effect_ids,
+            ["benchmark-plan-v1"]
+        );
         assert!(matches!(
-            failure.kind,
+            failure.failure.kind,
             ide_reconciliation::PreviewFailureKind::HealthCheckFailed { .. }
         ));
+        assert_eq!(
+            failure.divergence.evidence_ids,
+            [failure.failure.evidence_id]
+        );
         fs::remove_dir_all(directory).expect("remove preview test directory");
     }
 }

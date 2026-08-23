@@ -13,7 +13,7 @@ mod surface;
 
 use std::sync::Arc;
 
-use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus};
+use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus, PreviewFailureReport};
 use bridge::{
     AcpxTarget, AgentCapabilityCard, AgentTaskRequest, DesktopBridge, ProjectIntentInput,
     StartedAgentSession, TrustedWorkspaceSelection, WorkspaceWriteRequest,
@@ -191,13 +191,17 @@ async fn stop_and_capture_benchmark_preview_failure(
     project_id: String,
     resource_id: String,
     effect_id: String,
-) -> Result<Option<ide_reconciliation::PreviewFailure>, String> {
+) -> Result<Option<PreviewFailureReport>, String> {
+    let project = bridge
+        .open_project(&project_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "the requested semantic project does not exist".to_owned())?;
     let causal_links = bridge
         .effect_causal_links(&project_id, &resource_id, &effect_id)
         .await
         .map_err(|error| error.to_string())?;
     let failure = previews
-        .stop_and_capture_health_failure(causal_links)
+        .stop_and_capture_health_failure(causal_links, &project.intent)
         .await
         .map_err(|error| error.to_string())?;
     if failure.is_some() {

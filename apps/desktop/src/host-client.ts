@@ -71,6 +71,17 @@ export interface PreviewFailure {
   observedAtMs: number;
 }
 
+export interface PreviewFailureReport {
+  failure: PreviewFailure;
+  divergence: {
+    id: string;
+    intentId: string;
+    observationId: string;
+    subject: string;
+    evidenceIds: string[];
+  };
+}
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -138,7 +149,7 @@ interface HostCommandMap {
   stop_benchmark_preview: { args: undefined; result: BenchmarkPreviewStatus | null };
   stop_and_capture_benchmark_preview_failure: {
     args: { projectId: string; resourceId: string; effectId: string };
-    result: PreviewFailure | null;
+    result: PreviewFailureReport | null;
   };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
@@ -173,7 +184,7 @@ export interface HostClient {
   attachWorkspaceFromPicker(projectId: string, resourceId: string): Promise<HostCall<WorkspaceResource | null>>;
   startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
-  stopAndCaptureBenchmarkPreviewFailure(projectId: string, resourceId: string, effectId: string): Promise<HostCall<PreviewFailure | null>>;
+  stopAndCaptureBenchmarkPreviewFailure(projectId: string, resourceId: string, effectId: string): Promise<HostCall<PreviewFailureReport | null>>;
   proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
   approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
