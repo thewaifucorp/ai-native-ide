@@ -9,6 +9,14 @@ import {
   type IntentSignal,
 } from "./instrument";
 import {
+  createGameModeState,
+  readArchetypes,
+  recordOutcome,
+  setGameModeEnabled,
+  verifiedProgress,
+  type GameModeState,
+} from "./game-mode";
+import {
   hostClient,
   type BenchmarkPreviewStatus,
   type HostCall,
@@ -83,6 +91,9 @@ function App() {
   const [hostActivity, setHostActivity] = useState<string[]>([]);
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
+  );
+  const [gameMode, setGameMode] = useState<GameModeState>(() =>
+    createGameModeState(),
   );
   const signals = useMemo(() => analyzeIntent(intent), [intent]);
   const nextStep = nextStepFor(intent, signals);
@@ -165,6 +176,28 @@ function App() {
           ? "Exceção limitada registrada; a evidência continua acessível."
           : "Reconciliação registrada e pendente de nova verificação independente.",
       );
+      const transition = recordOutcome(
+        gameMode,
+        {
+          id: `reconciliation:${previewFailure.divergence.id}`,
+          category: "divergence-reconciled",
+          summary: "Divergência de preview recebeu uma decisão explícita.",
+          proposedBy: "user:local",
+          evidence: [
+            {
+              id: previewFailure.failure.evidenceId,
+              source: "reconciliation-engine",
+              verifiedBy: "host:reconciliation",
+              observedAt: new Date(
+                previewFailure.failure.observedAtMs,
+              ).toISOString(),
+              summary: previewFailure.failure.message,
+            },
+          ],
+        },
+        new Date().toISOString(),
+      );
+      setGameMode(transition.state);
     }
   }
   async function proposeBenchmarkPlan() {
@@ -767,9 +800,41 @@ function App() {
                 : "Nenhum efeito é autorizado por esta interface."}
           </p>
         </section>
+        <section className="dock-section">
+          <span className="dock-label">GAME MODE</span>
+          <strong>
+            {gameMode.enabled
+              ? `${verifiedProgress(gameMode)} outcomes verificados`
+              : "Oculto; receipts continuam ativos"}
+          </strong>
+          <p>
+            {readArchetypes(gameMode).length
+              ? readArchetypes(gameMode)
+                  .map((reading) => reading.archetype)
+                  .join(" · ")
+              : "Progresso só aparece após uma evidência independente."}
+          </p>
+          <button
+            className="text-button"
+            onClick={() =>
+              setGameMode((current) =>
+                setGameModeEnabled(current, !current.enabled),
+              )
+            }
+            type="button"
+          >
+            {gameMode.enabled ? "Ocultar Game Mode" : "Mostrar Game Mode"}{" "}
+            <span>→</span>
+          </button>
+        </section>
       </aside>
       <footer className="activity-strip" aria-label="Atividade do projeto">
-        <span className="activity-title">ATIVIDADE</span>
+        <span className="activity-title">
+          ATIVIDADE
+          {gameMode.enabled
+            ? ` · ${verifiedProgress(gameMode)} VERIFICADOS`
+            : ""}
+        </span>
         {initialActivity.map((item, index) => (
           <div
             className={`activity-item activity-item--${item.state}`}
