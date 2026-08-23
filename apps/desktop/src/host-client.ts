@@ -141,6 +141,20 @@ export interface StartedAgentSession {
   policyNote: string;
 }
 
+/** Opaque structured output from the externally owned ACPX session. */
+export type AgentEvent =
+  | { Started: { session_id: string } }
+  | { MessageDelta: { task_id: number; text: string } }
+  | { Thinking: { task_id: number; summary: string } }
+  | { ToolCall: { task_id: number; name: string } }
+  | { ToolResult: { task_id: number; name: string; is_error: boolean } }
+  | { PermissionRequested: { task_id: number; action: string; detail: string } }
+  | { Diff: { task_id: number; path: string; added: number; removed: number } }
+  | { Artifact: { task_id: number; kind: string; path: string } }
+  | { Usage: { task_id: number; input_tokens: number; output_tokens: number } }
+  | { Warning: { task_id: number; code: string; detail: string } }
+  | { Ended: { task_id: number; outcome: unknown } };
+
 export interface TerminalRunStatus {
   terminalId: string;
   state: "running";
@@ -215,6 +229,7 @@ interface HostCommandMap {
     };
     result: number;
   };
+  next_agent_event: { args: { sessionId: string }; result: AgentEvent | null };
   cancel_agent_session: { args: { sessionId: string }; result: void };
   start_workspace_inspection: {
     args: { projectId: string; resourceId: string };
@@ -290,6 +305,7 @@ export interface HostClient {
     prompt: string,
     codeChange: boolean,
   ): Promise<HostCall<number>>;
+  nextAgentEvent(sessionId: string): Promise<HostCall<AgentEvent | null>>;
   cancelAgentSession(sessionId: string): Promise<HostCall<void>>;
   startWorkspaceInspection(
     projectId: string,
@@ -386,6 +402,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("start_read_only_agent_session", { target, projectId, resourceId }),
     submitAgentTask: (sessionId, prompt, codeChange) =>
       call("submit_agent_task", { request: { sessionId, prompt, codeChange } }),
+    nextAgentEvent: (sessionId) => call("next_agent_event", { sessionId }),
     cancelAgentSession: (sessionId) =>
       call("cancel_agent_session", { sessionId }),
     startWorkspaceInspection: (projectId, resourceId) =>

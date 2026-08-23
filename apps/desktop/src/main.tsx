@@ -18,6 +18,8 @@ import {
 } from "./game-mode";
 import {
   hostClient,
+  type AgentCapabilityCard,
+  type AgentEvent,
   type BenchmarkPreviewStatus,
   type HostCall,
   type PreviewFailureReport,
@@ -58,6 +60,22 @@ function SignalCard({
   );
 }
 
+function describeAgentEvent(event: AgentEvent): string {
+  if ("MessageDelta" in event) return `Agente: ${event.MessageDelta.text}`;
+  if ("Thinking" in event) return `Agente: ${event.Thinking.summary}`;
+  if ("ToolCall" in event) return `Agente pediu ${event.ToolCall.name}`;
+  if ("ToolResult" in event)
+    return `Agente recebeu ${event.ToolResult.name}${event.ToolResult.is_error ? " com erro" : ""}`;
+  if ("PermissionRequested" in event)
+    return `Permissão externa: ${event.PermissionRequested.action}`;
+  if ("Diff" in event) return `Diff externo: ${event.Diff.path}`;
+  if ("Artifact" in event) return `Artefato do agente: ${event.Artifact.path}`;
+  if ("Warning" in event) return `Agente: ${event.Warning.detail}`;
+  if ("Ended" in event) return "Sessão do agente terminou";
+  if ("Started" in event) return "Sessão do agente iniciada";
+  return "Uso do agente foi registrado fora da pontuação";
+}
+
 function App() {
   const [intent, setIntent] = useState(starterIntent);
   const [mode, setMode] = useState<BuildMode>("hybrid");
@@ -81,6 +99,8 @@ function App() {
   );
   const [agentCall, setAgentCall] =
     useState<HostCall<StartedAgentSession> | null>(null);
+  const [agentCapability, setAgentCapability] =
+    useState<HostCall<AgentCapabilityCard> | null>(null);
   const [agentPrompt, setAgentPrompt] = useState(
     "Revise a intenção e aponte o próximo risco verificável.",
   );
@@ -116,6 +136,28 @@ function App() {
       });
     return () => unsubscribe?.();
   }, []);
+  useEffect(() => {
+    if (!resource) return;
+    void hostClient.agentCapabilityCard("claude").then(setAgentCapability);
+  }, [resource]);
+  useEffect(() => {
+    if (!agentSession) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void hostClient.nextAgentEvent(agentSession.sessionId).then((result) => {
+        if (!active || result.state !== "available") return;
+        const event = result.value;
+        if (!event) return;
+        setHostActivity((current) =>
+          [describeAgentEvent(event), ...current].slice(0, 4),
+        );
+      });
+    }, 500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [agentSession]);
   function useSignal(signal: IntentSignal) {
     setActiveSignal(signal);
     setSection("Build");
@@ -692,15 +734,27 @@ function App() {
               : "Não conectado"}
           </strong>
           <p>
-            {agentCall?.state === "failed"
-              ? `O adapter recusou a sessão: ${agentCall.message}`
-              : agentSession
-                ? agentSession.policyNote
-                : "Conecte um adapter só depois de escolher o recurso. A IDE mantém efeitos de escrita fora do agente."}
+            {agentCapability?.state === "available"
+              ? agentCapability.value.health.availability === "Unavailable"
+                ? (agentCapability.value.health.detail ??
+                  "O adapter ACPX não está pronto neste computador.")
+                : agentCapability.value.descriptor?.degradations.join(" ") ||
+                  "O adapter declarou todas as limitações disponíveis."
+              : agentCall?.state === "failed"
+                ? `O adapter recusou a sessão: ${agentCall.message}`
+                : agentSession
+                  ? agentSession.policyNote
+                  : "Conecte um adapter só depois de escolher o recurso. A IDE mantém efeitos de escrita fora do agente."}
           </p>
           <button
             className="text-button"
-            disabled={!project || !resource}
+            disabled={
+              !project ||
+              !resource ||
+              (!agentSession &&
+                agentCapability?.state === "available" &&
+                agentCapability.value.health.availability === "Unavailable")
+            }
             onClick={() =>
               void (agentSession ? cancelAgentSession() : startAgentSession())
             }

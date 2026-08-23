@@ -202,6 +202,32 @@ describe("host client", () => {
     });
   });
 
+  it("reads streamed agent events only through an opaque IDE-owned session", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
+      MessageDelta: {
+        task_id: 7,
+        text: "A intenção ainda precisa de um critério.",
+      },
+    });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(client.nextAgentEvent("session-opaque")).resolves.toEqual({
+      state: "available",
+      value: {
+        MessageDelta: {
+          task_id: 7,
+          text: "A intenção ainda precisa de um critério.",
+        },
+      },
+    });
+    expect(invoke).toHaveBeenCalledWith("next_agent_event", {
+      sessionId: "session-opaque",
+    });
+  });
+
   it("requests rollback by opaque project, resource and effect identifiers", async () => {
     const invoke = vi
       .fn<HostTransport["invoke"]>()
