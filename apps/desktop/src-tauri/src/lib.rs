@@ -11,7 +11,14 @@ mod host;
 mod model;
 mod surface;
 
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+};
 
 use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus, PreviewFailureReport};
 use bridge::{
@@ -30,6 +37,100 @@ pub use host::{
 pub use model::{HostSurface, PreviewHealth, ViabilityGate, ViabilityGateStatus};
 
 const HOST_EVENT: &str = "ide://host-event";
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalRunStatus {
+    terminal_id: String,
+    state: &'static str,
+    detail: &'static str,
+}
+
+/// Retains host-created PTYs so an explicit cancel always reaches the child.
+/// The renderer sees only an opaque ID and cannot provide an executable/path.
+struct TerminalRegistry {
+    next_id: AtomicU64,
+    sessions: Mutex<BTreeMap<String, ManagedPty>>,
+}
+
+impl TerminalRegistry {
+    fn new() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[tauri::command]
+async fn start_workspace_inspection(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    terminals: State<'_, TerminalRegistry>,
+    project_id: String,
+    resource_id: String,
+) -> Result<TerminalRunStatus, String> {
+    let root = bridge
+        .workspace_root(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let scope = WatchScope::from_project_resource(root).map_err(|error| error.to_string())?;
+    let executable = registered_git_executable().map_err(|error| error.to_string())?;
+    let spec =
+        TrustedProcessSpec::for_registered_extension(executable, ["status", "--short"], &scope)
+            .map_err(|error| error.to_string())?;
+    let pty = runtime
+        .spawn_pty(spec, 24, 120)
+        .map_err(|error| error.to_string())?;
+    let terminal_id = format!(
+        "terminal-{}",
+        terminals.next_id.fetch_add(1, Ordering::Relaxed)
+    );
+    terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned")
+        .insert(terminal_id.clone(), pty);
+    Ok(TerminalRunStatus {
+        terminal_id,
+        state: "running",
+        detail: "A inspeção usa um PTY do host e git status --short no recurso anexado.",
+    })
+}
+
+#[tauri::command]
+fn cancel_workspace_inspection(
+    terminals: State<'_, TerminalRegistry>,
+    terminal_id: String,
+) -> Result<(), String> {
+    let mut terminal = terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned")
+        .remove(&terminal_id)
+        .ok_or_else(|| "unknown IDE-owned terminal session".to_owned())?;
+    terminal.stop().map_err(|error| error.to_string())
+}
+
+fn registered_git_executable() -> std::io::Result<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["git.exe"]
+    } else {
+        &["git"]
+    };
+    for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        for name in names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return candidate.canonicalize();
+            }
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "registered Git executable was not found in PATH",
+    ))
+}
 
 #[tauri::command]
 fn host_status() -> HostStatus {
@@ -281,6 +382,7 @@ pub fn run() {
                 data_directory,
                 "local.owner",
             )?));
+            app.manage(TerminalRegistry::new());
             surface::install_menu(app)?;
             let handle = app.handle().clone();
             app.manage(HostRuntime::new(Arc::new(move |event| {
@@ -308,7 +410,9 @@ pub fn run() {
             start_read_only_agent_session,
             submit_agent_task,
             next_agent_event,
-            cancel_agent_session
+            cancel_agent_session,
+            start_workspace_inspection,
+            cancel_workspace_inspection
         ])
         .run(tauri::generate_context!())
         .expect("failed to run AI-Native IDE desktop host");

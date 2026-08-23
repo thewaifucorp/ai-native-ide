@@ -136,6 +136,12 @@ export interface StartedAgentSession {
   policyNote: string;
 }
 
+export interface TerminalRunStatus {
+  terminalId: string;
+  state: "running";
+  detail: string;
+}
+
 interface HostCommandMap {
   host_status: { args: undefined; result: HostStatus };
   host_viability_report: { args: undefined; result: TauriViabilityReport };
@@ -165,6 +171,11 @@ interface HostCommandMap {
     result: StartedAgentSession;
   };
   cancel_agent_session: { args: { sessionId: string }; result: void };
+  start_workspace_inspection: {
+    args: { projectId: string; resourceId: string };
+    result: TerminalRunStatus;
+  };
+  cancel_workspace_inspection: { args: { terminalId: string }; result: void };
 }
 
 type HostCommand = keyof HostCommandMap;
@@ -190,6 +201,8 @@ export interface HostClient {
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
   startReadOnlyAgentSession(target: AgentTarget, projectId: string, resourceId: string): Promise<HostCall<StartedAgentSession>>;
   cancelAgentSession(sessionId: string): Promise<HostCall<void>>;
+  startWorkspaceInspection(projectId: string, resourceId: string): Promise<HostCall<TerminalRunStatus>>;
+  cancelWorkspaceInspection(terminalId: string): Promise<HostCall<void>>;
 }
 
 export interface HostClientOptions {
@@ -254,6 +267,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
     startReadOnlyAgentSession: (target, projectId, resourceId) => call("start_read_only_agent_session", { target, projectId, resourceId }),
     cancelAgentSession: (sessionId) => call("cancel_agent_session", { sessionId }),
+    startWorkspaceInspection: (projectId, resourceId) => call("start_workspace_inspection", { projectId, resourceId }),
+    cancelWorkspaceInspection: (terminalId) => call("cancel_workspace_inspection", { terminalId }),
   };
 }
 

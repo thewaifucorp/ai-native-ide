@@ -138,7 +138,9 @@ impl BenchmarkPreviewHost {
                     status.project_id
                 ),
                 url: status.url,
-                observation: PreviewHealthCheckObservation::Failed { detail },
+                observation: PreviewHealthCheckObservation::Failed {
+                    detail: detail.to_string(),
+                },
                 causal_links,
                 observed_at_ms,
             })?

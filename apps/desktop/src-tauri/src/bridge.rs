@@ -32,6 +32,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 use tokio::sync::Mutex;
 
@@ -262,7 +263,7 @@ impl DesktopBridge {
         drop(workspaces);
         if result["written"] == serde_json::Value::Bool(true) {
             if let Some(revision) = self.projects.record_ide_revision(
-                &ResourceId(request.resource_id),
+                &ResourceId(request.resource_id.clone()),
                 &request.relative_path,
                 &request.effect_id,
             )? {
@@ -458,6 +459,21 @@ impl DesktopBridge {
             .cancel(&AgentSessionId(session_id.to_owned()), true)
             .await
             .map_err(anyhow::Error::from)
+    }
+
+    /// Resolves the host-owned root for a project resource. The path is kept
+    /// native-only and is never returned through a renderer DTO.
+    pub async fn workspace_root(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+    ) -> anyhow::Result<PathBuf> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", resource_id)?;
+        let workspaces = self.workspaces.lock().await;
+        Ok(workspace_for(&workspaces, project_id, resource_id)?
+            .root
+            .clone())
     }
 
     async fn agent_for(&self, session_id: &str) -> anyhow::Result<Arc<AcpxAgentFacade>> {
