@@ -127,15 +127,160 @@ impl CausalLinks {
     pub fn is_empty(&self) -> bool {
         self.effect_ids.is_empty() && self.activity_ids.is_empty() && self.file_paths.is_empty()
     }
+
+    /// Causal identifiers come from independent owners, but a host must not turn
+    /// empty or whitespace-only values into a traceable failure.
+    pub fn validate(&self) -> Result<(), PreviewEvidenceError> {
+        let values = self
+            .effect_ids
+            .iter()
+            .chain(self.activity_ids.iter())
+            .chain(self.file_paths.iter());
+
+        if self.is_empty() {
+            return Err(PreviewEvidenceError::MissingCausalLinks);
+        }
+        if values.into_iter().any(|value| value.trim().is_empty()) {
+            return Err(PreviewEvidenceError::InvalidCausalLink);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreviewFailure {
     pub id: String,
+    pub preview_id: String,
+    pub evidence_id: String,
+    pub message: String,
+    pub kind: PreviewFailureKind,
+    pub causal_links: CausalLinks,
+    pub observed_at_ms: u64,
+}
+
+/// The source of a preview failure is deliberately explicit. In particular, a
+/// process exit is evidence only when its exit code is non-zero; a host cannot
+/// manufacture a failed preview from a clean exit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PreviewFailureKind {
+    ProcessExited { process_id: String, exit_code: i32 },
+}
+
+impl PreviewFailure {
+    /// Converts a persisted failure into an observation that can participate in
+    /// literal intent-vs-behavior reconciliation. The evidence id, rather than a
+    /// host assertion, is what makes the observation eligible for detection.
+    pub fn as_observation(
+        &self,
+        id: impl Into<String>,
+        subject: impl Into<String>,
+        actual: Value,
+    ) -> ObservedBehavior {
+        ObservedBehavior {
+            id: id.into(),
+            subject: subject.into(),
+            actual,
+            evidence_ids: vec![self.evidence_id.clone()],
+            observed_at_ms: self.observed_at_ms,
+        }
+    }
+}
+
+/// In-memory deterministic evidence ledger. Persistence belongs to the host's
+/// project store; keeping this type shell- and network-neutral makes the causal
+/// rules directly testable and prevents a preview failure from becoming a UI-only
+/// message.
+#[derive(Debug, Default)]
+pub struct PreviewEvidenceLedger {
+    failures: BTreeMap<String, PreviewFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewProcessExit {
+    pub id: String,
+    pub preview_id: String,
+    pub evidence_id: String,
+    pub process_id: String,
+    pub exit_code: i32,
     pub message: String,
     pub causal_links: CausalLinks,
     pub observed_at_ms: u64,
 }
+
+impl PreviewEvidenceLedger {
+    pub fn record_nonzero_process_exit(
+        &mut self,
+        exit: PreviewProcessExit,
+    ) -> Result<&PreviewFailure, PreviewEvidenceError> {
+        if exit.id.trim().is_empty()
+            || exit.preview_id.trim().is_empty()
+            || exit.evidence_id.trim().is_empty()
+            || exit.process_id.trim().is_empty()
+            || exit.message.trim().is_empty()
+        {
+            return Err(PreviewEvidenceError::MissingRequiredField);
+        }
+        if exit.exit_code == 0 {
+            return Err(PreviewEvidenceError::CleanProcessExit);
+        }
+        exit.causal_links.validate()?;
+        if self.failures.contains_key(&exit.id) {
+            return Err(PreviewEvidenceError::DuplicateFailure(exit.id));
+        }
+
+        self.failures.insert(
+            exit.id.clone(),
+            PreviewFailure {
+                id: exit.id.clone(),
+                preview_id: exit.preview_id,
+                evidence_id: exit.evidence_id,
+                message: exit.message,
+                kind: PreviewFailureKind::ProcessExited {
+                    process_id: exit.process_id,
+                    exit_code: exit.exit_code,
+                },
+                causal_links: exit.causal_links,
+                observed_at_ms: exit.observed_at_ms,
+            },
+        );
+        Ok(self
+            .failures
+            .get(&exit.id)
+            .expect("failure was inserted into this ledger"))
+    }
+
+    pub fn failure(&self, id: &str) -> Option<&PreviewFailure> {
+        self.failures.get(id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewEvidenceError {
+    MissingRequiredField,
+    MissingCausalLinks,
+    InvalidCausalLink,
+    CleanProcessExit,
+    DuplicateFailure(String),
+}
+
+impl std::fmt::Display for PreviewEvidenceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingRequiredField => {
+                write!(formatter, "preview evidence has a required empty field")
+            }
+            Self::MissingCausalLinks => write!(formatter, "preview failure requires causal links"),
+            Self::InvalidCausalLink => write!(formatter, "preview causal link cannot be blank"),
+            Self::CleanProcessExit => {
+                write!(formatter, "a clean process exit is not a preview failure")
+            }
+            Self::DuplicateFailure(id) => write!(formatter, "preview failure already exists: {id}"),
+        }
+    }
+}
+
+impl std::error::Error for PreviewEvidenceError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -21,6 +21,19 @@ fn inverted_observation() -> ObservedBehavior {
     }
 }
 
+fn failed_exit(id: &str, exit_code: i32, causal_links: CausalLinks) -> PreviewProcessExit {
+    PreviewProcessExit {
+        id: id.to_owned(),
+        preview_id: "preview-benchmark".to_owned(),
+        evidence_id: format!("evidence-{id}"),
+        process_id: "process-benchmark".to_owned(),
+        exit_code,
+        message: "benchmark process exited while starting".to_owned(),
+        causal_links,
+        observed_at_ms: 30,
+    }
+}
+
 #[test]
 fn preview_lifecycle_is_explicit_and_monotonic() {
     let mut preview = PreviewSupervisor::starting(10);
@@ -50,18 +63,127 @@ fn preview_lifecycle_is_explicit_and_monotonic() {
 
 #[test]
 fn failure_preserves_causal_effect_activity_and_files() {
-    let failure = PreviewFailure {
-        id: "preview-failure-1".to_owned(),
-        message: "bind failed".to_owned(),
-        causal_links: CausalLinks {
-            effect_ids: vec!["effect-preview-start".to_owned()],
-            activity_ids: vec!["activity-42".to_owned()],
-            file_paths: vec!["apps/benchmark/src/server.rs".to_owned()],
-        },
-        observed_at_ms: 30,
-    };
+    let mut ledger = PreviewEvidenceLedger::default();
+    let failure = ledger
+        .record_nonzero_process_exit(failed_exit(
+            "preview-failure-1",
+            17,
+            CausalLinks {
+                effect_ids: vec!["effect-preview-start".to_owned()],
+                activity_ids: vec!["activity-42".to_owned()],
+                file_paths: vec!["apps/benchmark/src/server.rs".to_owned()],
+            },
+        ))
+        .unwrap();
     assert!(!failure.causal_links.is_empty());
     assert_eq!(failure.causal_links.activity_ids[0], "activity-42");
+    assert_eq!(
+        failure.kind,
+        PreviewFailureKind::ProcessExited {
+            process_id: "process-benchmark".to_owned(),
+            exit_code: 17,
+        }
+    );
+    assert_eq!(
+        ledger.failure("preview-failure-1").unwrap().evidence_id,
+        "evidence-preview-failure-1"
+    );
+}
+
+#[test]
+fn a_nonzero_preview_exit_creates_causal_evidence_and_a_real_divergence() {
+    let mut preview = PreviewSupervisor::starting(10);
+    preview
+        .transition(PreviewHealth::Healthy, 11, None)
+        .unwrap();
+
+    let mut ledger = PreviewEvidenceLedger::default();
+    let failure = ledger
+        .record_nonzero_process_exit(PreviewProcessExit {
+            id: "preview-failure-2".to_owned(),
+            preview_id: "preview-benchmark".to_owned(),
+            evidence_id: "evidence-preview-failure-2".to_owned(),
+            process_id: "process-benchmark".to_owned(),
+            exit_code: 17,
+            message: "benchmark exited with status 17".to_owned(),
+            causal_links: CausalLinks {
+                effect_ids: vec!["effect-start-benchmark".to_owned()],
+                activity_ids: vec!["activity-run-benchmark".to_owned()],
+                file_paths: vec!["crates/benchmark-service/src/main.rs".to_owned()],
+            },
+            observed_at_ms: 12,
+        })
+        .unwrap()
+        .clone();
+    preview
+        .transition(PreviewHealth::Broken, 12, Some(failure.message.clone()))
+        .unwrap();
+
+    let expectation = IntentSpecRecord {
+        id: "intent-preview-health".to_owned(),
+        subject: "preview.health".to_owned(),
+        expected: json!("healthy"),
+        source_path: "specs/benchmark.md".to_owned(),
+        revision: "rev-preview-health".to_owned(),
+    };
+    let observation = failure.as_observation(
+        "observation-preview-health",
+        "preview.health",
+        json!("broken"),
+    );
+    let divergence = detect_divergence(&expectation, &observation).unwrap();
+
+    assert_eq!(preview.state().health, PreviewHealth::Broken);
+    assert_eq!(divergence.evidence_ids, vec!["evidence-preview-failure-2"]);
+    assert_eq!(
+        failure.causal_links.effect_ids,
+        vec!["effect-start-benchmark"]
+    );
+    assert_eq!(
+        failure.causal_links.file_paths,
+        vec!["crates/benchmark-service/src/main.rs"]
+    );
+}
+
+#[test]
+fn clean_exit_blank_traces_and_duplicate_failure_cannot_be_represented_as_evidence() {
+    let mut ledger = PreviewEvidenceLedger::default();
+    let links = CausalLinks {
+        effect_ids: vec!["effect-start".to_owned()],
+        activity_ids: vec!["activity-start".to_owned()],
+        file_paths: vec!["main.rs".to_owned()],
+    };
+
+    assert_eq!(
+        ledger
+            .record_nonzero_process_exit(failed_exit("failure-clean", 0, links.clone()))
+            .unwrap_err(),
+        PreviewEvidenceError::CleanProcessExit
+    );
+    assert_eq!(
+        ledger
+            .record_nonzero_process_exit(failed_exit(
+                "failure-empty-links",
+                1,
+                CausalLinks {
+                    effect_ids: vec![],
+                    activity_ids: vec![],
+                    file_paths: vec![],
+                },
+            ))
+            .unwrap_err(),
+        PreviewEvidenceError::MissingCausalLinks
+    );
+
+    ledger
+        .record_nonzero_process_exit(failed_exit("failure-duplicate", 1, links.clone()))
+        .unwrap();
+    assert_eq!(
+        ledger
+            .record_nonzero_process_exit(failed_exit("failure-duplicate", 2, links))
+            .unwrap_err(),
+        PreviewEvidenceError::DuplicateFailure("failure-duplicate".to_owned())
+    );
 }
 
 #[test]
