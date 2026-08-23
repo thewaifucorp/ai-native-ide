@@ -45,6 +45,13 @@ export interface SemanticProjectRecord {
   updatedAtMs: number;
 }
 
+export interface WorkspaceResource {
+  id: string;
+  kind: "directory" | "repository";
+  canonicalPath: string;
+  createdAtMs: number;
+}
+
 export type AgentTarget = "claude" | "codex" | "gemini" | "opencode";
 export type AgentAvailability = "Ready" | "Degraded" | "Unavailable";
 export type IdeCoverage = "Enforced" | "DeclaredOnly" | "HarnessOwned" | "Unknown";
@@ -85,6 +92,10 @@ interface HostCommandMap {
   host_viability_report: { args: undefined; result: TauriViabilityReport };
   emit_host_probe: { args: undefined; result: void };
   create_semantic_project: { args: { input: SemanticProjectInput }; result: SemanticProjectRecord };
+  attach_workspace_from_picker: {
+    args: { projectId: string; resourceId: string };
+    result: WorkspaceResource | null;
+  };
   agent_capability_card: { args: { target: AgentTarget }; result: AgentCapabilityCard };
 }
 
@@ -102,6 +113,7 @@ export interface HostClient {
   viabilityReport(): Promise<HostCall<TauriViabilityReport>>;
   emitProbe(): Promise<HostCall<void>>;
   createSemanticProject(input: SemanticProjectInput): Promise<HostCall<SemanticProjectRecord>>;
+  attachWorkspaceFromPicker(projectId: string, resourceId: string): Promise<HostCall<WorkspaceResource | null>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
 }
 
@@ -158,6 +170,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     viabilityReport: () => call("host_viability_report", undefined),
     emitProbe: () => call("emit_host_probe", undefined),
     createSemanticProject: (input) => call("create_semantic_project", { input }),
+    attachWorkspaceFromPicker: (projectId, resourceId) => call("attach_workspace_from_picker", { projectId, resourceId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
   };
 }

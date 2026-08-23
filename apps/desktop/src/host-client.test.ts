@@ -58,4 +58,21 @@ describe("host client", () => {
       message: "host database unavailable",
     });
   });
+
+  it("requests a native picker without passing a filesystem path through the renderer", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue(null);
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(client.attachWorkspaceFromPicker("auction", "auction-local")).resolves.toEqual({
+      state: "available",
+      value: null,
+    });
+    expect(invoke).toHaveBeenCalledWith("attach_workspace_from_picker", {
+      projectId: "auction",
+      resourceId: "auction-local",
+    });
+  });
 });
