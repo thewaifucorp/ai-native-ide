@@ -197,6 +197,10 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string };
     result: number;
   };
+  rollback_workspace_write: {
+    args: { projectId: string; resourceId: string; effectId: string };
+    result: void;
+  };
   agent_capability_card: {
     args: { target: AgentTarget };
     result: AgentCapabilityCard;
@@ -268,6 +272,11 @@ export interface HostClient {
     projectId: string,
     resourceId: string,
   ): Promise<HostCall<number>>;
+  rollbackWorkspaceWrite(
+    projectId: string,
+    resourceId: string,
+    effectId: string,
+  ): Promise<HostCall<void>>;
   agentCapabilityCard(
     target: AgentTarget,
   ): Promise<HostCall<AgentCapabilityCard>>;
@@ -370,6 +379,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>
       call("approve_next_workspace_write", { projectId, resourceId }),
+    rollbackWorkspaceWrite: (projectId, resourceId, effectId) =>
+      call("rollback_workspace_write", { projectId, resourceId, effectId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
     startReadOnlyAgentSession: (target, projectId, resourceId) =>
       call("start_read_only_agent_session", { target, projectId, resourceId }),

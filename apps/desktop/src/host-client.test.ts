@@ -201,4 +201,27 @@ describe("host client", () => {
       },
     });
   });
+
+  it("requests rollback by opaque project, resource and effect identifiers", async () => {
+    const invoke = vi
+      .fn<HostTransport["invoke"]>()
+      .mockResolvedValue(undefined);
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(
+      client.rollbackWorkspaceWrite(
+        "auction",
+        "auction-local",
+        "benchmark-plan-v1",
+      ),
+    ).resolves.toEqual({ state: "available", value: undefined });
+    expect(invoke).toHaveBeenCalledWith("rollback_workspace_write", {
+      projectId: "auction",
+      resourceId: "auction-local",
+      effectId: "benchmark-plan-v1",
+    });
+  });
 });

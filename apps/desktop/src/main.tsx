@@ -193,6 +193,21 @@ function App() {
     }
     await proposeBenchmarkPlan();
   }
+  async function rollbackBenchmarkPlan() {
+    if (!project || !resource) return;
+    const result = await hostClient.rollbackWorkspaceWrite(
+      project.id,
+      resource.id,
+      "benchmark-plan-v1",
+    );
+    if (result.state === "available") {
+      setEffectState("idle");
+      setPreview(null);
+      setPreviewFailure(null);
+    } else {
+      setEffectState("failed");
+    }
+  }
   async function startAgentSession() {
     if (!project || !resource) return;
     const result = await hostClient.startReadOnlyAgentSession(
@@ -475,16 +490,22 @@ function App() {
                   >
                     Aprovar plano <span>→</span>
                   </button>
+                ) : effectState === "written" ? (
+                  <button
+                    className="outline-action"
+                    onClick={() => void rollbackBenchmarkPlan()}
+                    type="button"
+                  >
+                    Reverter plano
+                  </button>
                 ) : (
                   <button
                     className="outline-action"
-                    disabled={!resource || effectState === "written"}
+                    disabled={!resource}
                     onClick={() => void proposeBenchmarkPlan()}
                     type="button"
                   >
-                    {effectState === "written"
-                      ? "Plano aplicado"
-                      : "Preparar benchmark"}
+                    Preparar benchmark
                   </button>
                 )}
               </div>
