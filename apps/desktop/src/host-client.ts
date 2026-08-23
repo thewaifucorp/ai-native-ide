@@ -18,7 +18,8 @@ export interface HostStatus {
   extensions: string[];
 }
 
-export type ViabilityGateStatus = "pendingArtifactMeasurement" | "passingByConstruction" | "blocker";
+export type ViabilityGateStatus =
+  "pendingArtifactMeasurement" | "passingByConstruction" | "blocker";
 
 export interface TauriViabilityReport {
   host: "tauri";
@@ -82,7 +83,8 @@ export interface PreviewFailureReport {
   };
 }
 
-export type PreviewReconciliationAction = "change_implementation" | "change_intent" | "accept_preview_exception";
+export type PreviewReconciliationAction =
+  "change_implementation" | "change_intent" | "accept_preview_exception";
 
 export interface WorkspaceWriteRequest {
   resourceId: string;
@@ -99,7 +101,8 @@ export interface WorkspaceEffectResult {
 
 export type AgentTarget = "claude" | "codex" | "gemini" | "opencode";
 export type AgentAvailability = "Ready" | "Degraded" | "Unavailable";
-export type IdeCoverage = "Enforced" | "DeclaredOnly" | "HarnessOwned" | "Unknown";
+export type IdeCoverage =
+  "Enforced" | "DeclaredOnly" | "HarnessOwned" | "Unknown";
 
 export interface AgentCapabilityCard {
   target: AgentTarget;
@@ -159,20 +162,32 @@ interface HostCommandMap {
   host_status: { args: undefined; result: HostStatus };
   host_viability_report: { args: undefined; result: TauriViabilityReport };
   emit_host_probe: { args: undefined; result: void };
-  create_semantic_project: { args: { input: SemanticProjectInput }; result: SemanticProjectRecord };
+  create_semantic_project: {
+    args: { input: SemanticProjectInput };
+    result: SemanticProjectRecord;
+  };
   attach_workspace_from_picker: {
     args: { projectId: string; resourceId: string };
     result: WorkspaceResource | null;
   };
-  start_benchmark_preview: { args: { projectId: string }; result: BenchmarkPreviewStatus };
-  stop_benchmark_preview: { args: undefined; result: BenchmarkPreviewStatus | null };
+  start_benchmark_preview: {
+    args: { projectId: string };
+    result: BenchmarkPreviewStatus;
+  };
+  stop_benchmark_preview: {
+    args: undefined;
+    result: BenchmarkPreviewStatus | null;
+  };
   stop_and_capture_benchmark_preview_failure: {
     args: { projectId: string; resourceId: string; effectId: string };
     result: PreviewFailureReport | null;
   };
   reconcile_benchmark_preview_failure: {
     args: { divergenceId: string; action: PreviewReconciliationAction };
-    result: { divergenceId: string; status: "pending_verification" | "accepted_scoped_exception" };
+    result: {
+      divergenceId: string;
+      status: "pending_verification" | "accepted_scoped_exception";
+    };
   };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
@@ -182,10 +197,19 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string };
     result: number;
   };
-  agent_capability_card: { args: { target: AgentTarget }; result: AgentCapabilityCard };
+  agent_capability_card: {
+    args: { target: AgentTarget };
+    result: AgentCapabilityCard;
+  };
   start_read_only_agent_session: {
     args: { target: AgentTarget; projectId: string; resourceId: string };
     result: StartedAgentSession;
+  };
+  submit_agent_task: {
+    args: {
+      request: { sessionId: string; prompt: string; codeChange: boolean };
+    };
+    result: number;
   };
   cancel_agent_session: { args: { sessionId: string }; result: void };
   start_workspace_inspection: {
@@ -201,27 +225,71 @@ type HostCommandResult<C extends HostCommand> = HostCommandMap[C]["result"];
 
 /** The only shape an adapter may use to reach native IPC. */
 export interface HostTransport {
-  invoke(command: HostCommand, args?: Record<string, unknown>): Promise<unknown>;
+  invoke(
+    command: HostCommand,
+    args?: Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 export interface HostClient {
   status(): Promise<HostCall<HostStatus>>;
   viabilityReport(): Promise<HostCall<TauriViabilityReport>>;
   emitProbe(): Promise<HostCall<void>>;
-  createSemanticProject(input: SemanticProjectInput): Promise<HostCall<SemanticProjectRecord>>;
-  attachWorkspaceFromPicker(projectId: string, resourceId: string): Promise<HostCall<WorkspaceResource | null>>;
-  startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
+  createSemanticProject(
+    input: SemanticProjectInput,
+  ): Promise<HostCall<SemanticProjectRecord>>;
+  attachWorkspaceFromPicker(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<WorkspaceResource | null>>;
+  startBenchmarkPreview(
+    projectId: string,
+  ): Promise<HostCall<BenchmarkPreviewStatus>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
-  stopAndCaptureBenchmarkPreviewFailure(projectId: string, resourceId: string, effectId: string): Promise<HostCall<PreviewFailureReport | null>>;
-  reconcileBenchmarkPreviewFailure(divergenceId: string, action: PreviewReconciliationAction): Promise<HostCall<{ divergenceId: string; status: "pending_verification" | "accepted_scoped_exception" }>>;
-  proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
-  approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
-  agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
-  startReadOnlyAgentSession(target: AgentTarget, projectId: string, resourceId: string): Promise<HostCall<StartedAgentSession>>;
+  stopAndCaptureBenchmarkPreviewFailure(
+    projectId: string,
+    resourceId: string,
+    effectId: string,
+  ): Promise<HostCall<PreviewFailureReport | null>>;
+  reconcileBenchmarkPreviewFailure(
+    divergenceId: string,
+    action: PreviewReconciliationAction,
+  ): Promise<
+    HostCall<{
+      divergenceId: string;
+      status: "pending_verification" | "accepted_scoped_exception";
+    }>
+  >;
+  proposeWorkspaceWrite(
+    projectId: string,
+    request: WorkspaceWriteRequest,
+  ): Promise<HostCall<WorkspaceEffectResult>>;
+  approveNextWorkspaceWrite(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<number>>;
+  agentCapabilityCard(
+    target: AgentTarget,
+  ): Promise<HostCall<AgentCapabilityCard>>;
+  startReadOnlyAgentSession(
+    target: AgentTarget,
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<StartedAgentSession>>;
+  submitAgentTask(
+    sessionId: string,
+    prompt: string,
+    codeChange: boolean,
+  ): Promise<HostCall<number>>;
   cancelAgentSession(sessionId: string): Promise<HostCall<void>>;
-  startWorkspaceInspection(projectId: string, resourceId: string): Promise<HostCall<TerminalRunStatus>>;
+  startWorkspaceInspection(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<TerminalRunStatus>>;
   cancelWorkspaceInspection(terminalId: string): Promise<HostCall<void>>;
-  listenHostEvents(listener: (event: HostEventPayload) => void): Promise<(() => void) | null>;
+  listenHostEvents(
+    listener: (event: HostEventPayload) => void,
+  ): Promise<(() => void) | null>;
 }
 
 export interface HostClientOptions {
@@ -231,10 +299,13 @@ export interface HostClientOptions {
   loadTransport?: () => Promise<HostTransport>;
 }
 
-const unavailableReason = "O host Tauri não está disponível nesta sessão; nenhum efeito foi executado.";
+const unavailableReason =
+  "O host Tauri não está disponível nesta sessão; nenhum efeito foi executado.";
 
 function defaultNativeHostCheck(): boolean {
-  return (globalThis as typeof globalThis & { isTauri?: unknown }).isTauri === true;
+  return (
+    (globalThis as typeof globalThis & { isTauri?: unknown }).isTauri === true
+  );
 }
 
 async function loadTauriTransport(): Promise<HostTransport> {
@@ -258,7 +329,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     command: C,
     args: HostCommandArgs<C>,
   ): Promise<HostCall<HostCommandResult<C>>> {
-    if (!isNativeHost()) return { state: "unavailable", reason: unavailableReason };
+    if (!isNativeHost())
+      return { state: "unavailable", reason: unavailableReason };
 
     try {
       const transport = await transportLoader();
@@ -267,7 +339,10 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     } catch (error) {
       return {
         state: "failed",
-        message: error instanceof Error ? error.message : "O host não respondeu ao comando solicitado.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "O host não respondeu ao comando solicitado.",
       };
     }
   }
@@ -276,23 +351,42 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     status: () => call("host_status", undefined),
     viabilityReport: () => call("host_viability_report", undefined),
     emitProbe: () => call("emit_host_probe", undefined),
-    createSemanticProject: (input) => call("create_semantic_project", { input }),
-    attachWorkspaceFromPicker: (projectId, resourceId) => call("attach_workspace_from_picker", { projectId, resourceId }),
-    startBenchmarkPreview: (projectId) => call("start_benchmark_preview", { projectId }),
+    createSemanticProject: (input) =>
+      call("create_semantic_project", { input }),
+    attachWorkspaceFromPicker: (projectId, resourceId) =>
+      call("attach_workspace_from_picker", { projectId, resourceId }),
+    startBenchmarkPreview: (projectId) =>
+      call("start_benchmark_preview", { projectId }),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),
-    stopAndCaptureBenchmarkPreviewFailure: (projectId, resourceId, effectId) => call("stop_and_capture_benchmark_preview_failure", { projectId, resourceId, effectId }),
-    reconcileBenchmarkPreviewFailure: (divergenceId, action) => call("reconcile_benchmark_preview_failure", { divergenceId, action }),
-    proposeWorkspaceWrite: (projectId, request) => call("propose_workspace_write", { projectId, request }),
-    approveNextWorkspaceWrite: (projectId, resourceId) => call("approve_next_workspace_write", { projectId, resourceId }),
+    stopAndCaptureBenchmarkPreviewFailure: (projectId, resourceId, effectId) =>
+      call("stop_and_capture_benchmark_preview_failure", {
+        projectId,
+        resourceId,
+        effectId,
+      }),
+    reconcileBenchmarkPreviewFailure: (divergenceId, action) =>
+      call("reconcile_benchmark_preview_failure", { divergenceId, action }),
+    proposeWorkspaceWrite: (projectId, request) =>
+      call("propose_workspace_write", { projectId, request }),
+    approveNextWorkspaceWrite: (projectId, resourceId) =>
+      call("approve_next_workspace_write", { projectId, resourceId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
-    startReadOnlyAgentSession: (target, projectId, resourceId) => call("start_read_only_agent_session", { target, projectId, resourceId }),
-    cancelAgentSession: (sessionId) => call("cancel_agent_session", { sessionId }),
-    startWorkspaceInspection: (projectId, resourceId) => call("start_workspace_inspection", { projectId, resourceId }),
-    cancelWorkspaceInspection: (terminalId) => call("cancel_workspace_inspection", { terminalId }),
+    startReadOnlyAgentSession: (target, projectId, resourceId) =>
+      call("start_read_only_agent_session", { target, projectId, resourceId }),
+    submitAgentTask: (sessionId, prompt, codeChange) =>
+      call("submit_agent_task", { request: { sessionId, prompt, codeChange } }),
+    cancelAgentSession: (sessionId) =>
+      call("cancel_agent_session", { sessionId }),
+    startWorkspaceInspection: (projectId, resourceId) =>
+      call("start_workspace_inspection", { projectId, resourceId }),
+    cancelWorkspaceInspection: (terminalId) =>
+      call("cancel_workspace_inspection", { terminalId }),
     async listenHostEvents(listener) {
       if (!isNativeHost()) return null;
       const { listen } = await import("@tauri-apps/api/event");
-      return listen<HostEventPayload>("ide://host-event", (event) => listener(event.payload));
+      return listen<HostEventPayload>("ide://host-event", (event) =>
+        listener(event.payload),
+      );
     },
   };
 }

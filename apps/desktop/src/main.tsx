@@ -73,19 +73,36 @@ function App() {
   );
   const [agentCall, setAgentCall] =
     useState<HostCall<StartedAgentSession> | null>(null);
+  const [agentPrompt, setAgentPrompt] = useState(
+    "Revise a intenção e aponte o próximo risco verificável.",
+  );
+  const [agentTask, setAgentTask] = useState<HostCall<number> | null>(null);
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
   const [hostActivity, setHostActivity] = useState<string[]>([]);
-  const [reconciliationNote, setReconciliationNote] = useState<string | null>(null);
+  const [reconciliationNote, setReconciliationNote] = useState<string | null>(
+    null,
+  );
   const signals = useMemo(() => analyzeIntent(intent), [intent]);
   const nextStep = nextStepFor(intent, signals);
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
-    void hostClient.listenHostEvents((event) => {
-      const detail = event.line ?? event.message ?? event.detail ?? event.health ?? event.kind;
-      setHostActivity((current) => [`${event.kind}: ${detail}`, ...current].slice(0, 4));
-    }).then((stop) => { unsubscribe = stop; });
+    void hostClient
+      .listenHostEvents((event) => {
+        const detail =
+          event.line ??
+          event.message ??
+          event.detail ??
+          event.health ??
+          event.kind;
+        setHostActivity((current) =>
+          [`${event.kind}: ${detail}`, ...current].slice(0, 4),
+        );
+      })
+      .then((stop) => {
+        unsubscribe = stop;
+      });
     return () => unsubscribe?.();
   }, []);
   function useSignal(signal: IntentSignal) {
@@ -134,7 +151,8 @@ function App() {
     }
   }
   async function reconcilePreview(
-    action: "change_implementation" | "change_intent" | "accept_preview_exception",
+    action:
+      "change_implementation" | "change_intent" | "accept_preview_exception",
   ) {
     if (!previewFailure) return;
     const result = await hostClient.reconcileBenchmarkPreviewFailure(
@@ -189,6 +207,15 @@ function App() {
     if (!agentSession) return;
     await hostClient.cancelAgentSession(agentSession.sessionId);
     setAgentSession(null);
+  }
+  async function submitAgentTask() {
+    if (!agentSession) return;
+    const result = await hostClient.submitAgentTask(
+      agentSession.sessionId,
+      agentPrompt,
+      false,
+    );
+    setAgentTask(result);
   }
   async function startWorkspaceInspection() {
     if (!project || !resource) return;
@@ -527,13 +554,42 @@ function App() {
             </div>
           </section>
           {previewFailure && (
-            <section className="raw-surface" aria-label="Reconciliação do preview">
-              <div className="section-label"><span>04</span><span>RECONCILIAÇÃO</span></div>
+            <section
+              className="raw-surface"
+              aria-label="Reconciliação do preview"
+            >
+              <div className="section-label">
+                <span>04</span>
+                <span>RECONCILIAÇÃO</span>
+              </div>
               <h2>O que deve mudar?</h2>
-              <p>{reconciliationNote ?? "A falha permanece vinculada ao efeito, atividade e artefato. Escolha a próxima decisão."}</p>
-              <button className="text-button" onClick={() => void reconcilePreview("change_implementation")} type="button">Mudar implementação</button>
-              <button className="text-button" onClick={() => void reconcilePreview("change_intent")} type="button">Mudar intenção</button>
-              <button className="text-button" onClick={() => void reconcilePreview("accept_preview_exception")} type="button">Aceitar exceção limitada</button>
+              <p>
+                {reconciliationNote ??
+                  "A falha permanece vinculada ao efeito, atividade e artefato. Escolha a próxima decisão."}
+              </p>
+              <button
+                className="text-button"
+                onClick={() => void reconcilePreview("change_implementation")}
+                type="button"
+              >
+                Mudar implementação
+              </button>
+              <button
+                className="text-button"
+                onClick={() => void reconcilePreview("change_intent")}
+                type="button"
+              >
+                Mudar intenção
+              </button>
+              <button
+                className="text-button"
+                onClick={() =>
+                  void reconcilePreview("accept_preview_exception")
+                }
+                type="button"
+              >
+                Aceitar exceção limitada
+              </button>
             </section>
           )}
           {depth === "raw" && (
@@ -599,6 +655,32 @@ function App() {
             {agentSession ? "Encerrar sessão" : "Conectar Claude"}{" "}
             <span>→</span>
           </button>
+          {agentSession && (
+            <div className="guidance-empty">
+              <label htmlFor="agent-task">Tarefa do agente</label>
+              <textarea
+                id="agent-task"
+                value={agentPrompt}
+                onChange={(event) => setAgentPrompt(event.target.value)}
+                rows={2}
+              />
+              <button
+                className="text-button"
+                disabled={!agentPrompt.trim()}
+                onClick={() => void submitAgentTask()}
+                type="button"
+              >
+                Enviar leitura <span>→</span>
+              </button>
+              <p>
+                {agentTask?.state === "available"
+                  ? `Tarefa ${agentTask.value} enviada à sessão; alterações continuam fora do agente.`
+                  : agentTask?.state === "failed"
+                    ? `A sessão recusou a tarefa: ${agentTask.message}`
+                    : ""}
+              </p>
+            </div>
+          )}
         </section>
         <section className="dock-section">
           <span className="dock-label">TERMINAL</span>
@@ -686,7 +768,10 @@ function App() {
         {hostActivity.map((entry, index) => (
           <div className="activity-item activity-item--active" key={entry}>
             <span className="activity-index">H{index + 1}</span>
-            <div><strong>Host</strong><small>{entry}</small></div>
+            <div>
+              <strong>Host</strong>
+              <small>{entry}</small>
+            </div>
           </div>
         ))}
         <button className="activity-all" type="button">
