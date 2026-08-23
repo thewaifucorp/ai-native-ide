@@ -1907,6 +1907,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ide-reconciliation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
