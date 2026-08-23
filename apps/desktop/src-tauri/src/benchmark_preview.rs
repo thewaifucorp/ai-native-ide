@@ -185,6 +185,7 @@ impl BenchmarkPreviewHost {
         divergence_id: &str,
         action: PreviewReconciliationAction,
     ) -> anyhow::Result<Reconciliation> {
+        let mut reconciliation = self.reconciliation.lock().await;
         let choice = match action {
             PreviewReconciliationAction::ChangeImplementation => {
                 ReconciliationChoice::ChangeImplementation {
@@ -195,21 +196,20 @@ impl BenchmarkPreviewHost {
                 revised_expected: serde_json::json!({ "health": "broken" }),
             },
             PreviewReconciliationAction::AcceptPreviewException => {
+                let subject = reconciliation
+                    .divergence(divergence_id)
+                    .map(|divergence| divergence.subject.as_str())
+                    .context("unknown preview divergence")?;
+                let preview_id = subject
+                    .strip_prefix("benchmark-preview:")
+                    .context("preview divergence has an invalid subject")?;
                 ReconciliationChoice::AcceptScopedException {
-                    scope: ExceptionScope::Preview {
-                        preview_id: divergence_id
-                            .split("::")
-                            .next()
-                            .unwrap_or(divergence_id)
-                            .to_owned(),
-                    },
+                    scope: ExceptionScope::Preview { preview_id: preview_id.to_owned() },
                     justification: "Explicitly accepted through the AI-Native IDE preview reconciliation surface.".to_owned(),
                 }
             }
         };
-        self.reconciliation
-            .lock()
-            .await
+        reconciliation
             .reconcile(divergence_id, choice)
             .cloned()
             .context("unknown preview divergence")
@@ -276,6 +276,47 @@ mod tests {
             failure.divergence.evidence_ids,
             [failure.failure.evidence_id]
         );
+        fs::remove_dir_all(directory).expect("remove preview test directory");
+    }
+
+    #[tokio::test]
+    async fn preview_exception_uses_the_actual_preview_scope() {
+        let directory = std::env::temp_dir().join(format!(
+            "ai-native-ide-preview-scope-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after epoch")
+                .as_nanos()
+        ));
+        let host = BenchmarkPreviewHost::open(directory.clone()).expect("open preview host");
+        host.start("auction").await.expect("start preview");
+        let report = host
+            .stop_and_capture_health_failure(
+                CausalLinks {
+                    effect_ids: vec!["benchmark-plan-v1".to_owned()],
+                    activity_ids: vec!["activity:revision-1".to_owned()],
+                    file_paths: vec!["benchmark.intent.md".to_owned()],
+                },
+                "# Benchmark intent",
+            )
+            .await
+            .expect("capture failed health")
+            .expect("running preview yields failure evidence");
+
+        let reconciliation = host
+            .reconcile_failure(
+                &report.divergence.id,
+                PreviewReconciliationAction::AcceptPreviewException,
+            )
+            .await
+            .expect("scope preview exception");
+        assert!(matches!(
+            reconciliation.choice,
+            ReconciliationChoice::AcceptScopedException {
+                scope: ExceptionScope::Preview { ref preview_id },
+                ..
+            } if preview_id == "auction"
+        ));
         fs::remove_dir_all(directory).expect("remove preview test directory");
     }
 }

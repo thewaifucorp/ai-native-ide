@@ -561,6 +561,12 @@ impl ReconciliationStore {
     pub fn intent(&self, id: &str) -> Option<&IntentSpecRecord> {
         self.intents.get(id)
     }
+
+    /// Lets a host derive a narrow exception scope from the observed subject,
+    /// rather than trying to parse a composite divergence identifier.
+    pub fn divergence(&self, id: &str) -> Option<&Divergence> {
+        self.divergences.get(id)
+    }
 }
 
 fn invalid_scope(scope: &ExceptionScope) -> bool {
