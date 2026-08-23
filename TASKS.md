@@ -114,10 +114,19 @@ Não é necessário rodar GSD. `.planning/` preserva pesquisa e histórico, mas 
 
 ### Gate da Fase 1
 
-- [ ] Uma pessoa parte de uma descrição informal e chega ao benchmark executável.
-- [ ] O host Tauri passou pelos gates de viabilidade no artifact produzido pelo GitHub.
-- [ ] PTY, agente, efeito, preview, evidência e reconciliação atravessam uma rota real de ponta a ponta.
-- [ ] Erros de preview apontam atividade e artefatos causais.
+- [x] Uma pessoa parte de uma descrição informal e chega ao benchmark executável.
+- [x] O host Tauri passou pelos gates de viabilidade no artifact produzido pelo GitHub.
+- [x] PTY, agente, efeito, preview, evidência e reconciliação atravessam uma rota real de ponta a ponta.
+- [x] Erros de preview apontam atividade e artefatos causais.
+
+**Evidência do gate (2026-08-23):** a golden journey do host cria o projeto a partir
+da intenção, anexa um recurso real, aprova e aplica o efeito, verifica o output do
+PTY de `git status --short`, executa o lance HTTP transacional no preview, confirma
+que o leaderboard não vaza o comprador, provoca um health-check recusado e reconcilia
+a divergência com referências causais de efeito, atividade e arquivo. O renderer usa
+apenas sessões ACPX opacas, mostra capabilities antes de conectar e consome eventos
+da sessão; a conformance do adapter cobre start, submit e cancelamento. O artifact
+Tauri e os gates de viabilidade são validados pelo workflow de CI definido em T01.
 
 ## Fase 2 — Tornar o projeto durável
 
