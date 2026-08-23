@@ -72,13 +72,18 @@ autorização deve degradar explicitamente e nunca bloquear os demais fluxos.
 
 ### T02 — Intent + Instrument inicial
 
-- [ ] Implementar entrada de intenção e autocomplete de ambiguidades/decisões/riscos.
-- [ ] Implementar orientação incremental durante a construção.
-- [ ] Construir shell React com Project Rail, Navigator, Work Surface, Context Dock e Activity Strip.
-- [ ] Implementar Essential e Raw como duas profundidades do mesmo estado.
-- [ ] Empacotar Geologica e DM Mono com fontes, hashes e licenças.
+- [x] Implementar entrada de intenção e autocomplete de ambiguidades/decisões/riscos.
+- [x] Implementar orientação incremental durante a construção.
+- [x] Construir shell React com Project Rail, Navigator, Work Surface, Context Dock e Activity Strip.
+- [x] Implementar Essential e Raw como duas profundidades do mesmo estado.
+- [x] Empacotar Geologica e DM Mono com fontes, hashes e licenças.
 
 **Pronto quando:** usuário descreve o benchmark sem wizard, recebe orientação e alcança intenção, preview placeholder e código/raw na mesma interface.
+
+**Evidência (2026-08-23):** `npm run check`, `cargo test --workspace` e
+`cargo clippy --workspace --all-targets -- -D warnings` passaram. O bundle Linux
+foi gerado como `.deb`/`.rpm`; o `.deb` foi instalado atomicamente em
+`.local-install` e o binário Tauri foi aberto com sucesso em display virtual.
 
 ### T03 — Provar o host Tauri
 

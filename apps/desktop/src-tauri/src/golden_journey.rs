@@ -195,7 +195,7 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     );
     assert_eq!(
         report.divergence.evidence_ids,
-        [report.failure.evidence_id.clone()]
+        std::slice::from_ref(&report.failure.evidence_id)
     );
 
     let reconciliation = previews
