@@ -23,7 +23,7 @@ use ide_agent::{
     AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
 };
 use ide_domain::{
-    CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
+    ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
 };
 use ide_reconciliation::CausalLinks;
@@ -293,12 +293,32 @@ impl DesktopBridge {
         let workspaces = self.workspaces.lock().await;
         workspace_for(&workspaces, project_id, resource_id)?;
         drop(workspaces);
-        self.effect_links
+        if let Some(links) = self
+            .effect_links
             .lock()
             .await
             .get(&effect_link_key(project_id, resource_id, effect_id))
             .cloned()
-            .context("the effect has no observed semantic revision to use as preview causation")
+        {
+            return Ok(links);
+        }
+
+        // The in-memory index is a fast path only. Reopening the desktop must
+        // preserve the causal route, so rebuild it from the semantic revision
+        // persisted by the approved effect rather than treating a restart as
+        // an unknown external change.
+        let revision = self
+            .projects
+            .revisions_for_resource(&ResourceId(resource_id.to_owned()))?
+            .into_iter()
+            .rev()
+            .find(|revision| matches!(&revision.cause, ChangeCause::IdeEffect { effect_id: recorded } if recorded == effect_id))
+            .context("the effect has no observed semantic revision to use as preview causation")?;
+        Ok(CausalLinks {
+            effect_ids: vec![effect_id.to_owned()],
+            activity_ids: vec![format!("activity:{}", revision.id)],
+            file_paths: vec![revision.relative_path.display().to_string()],
+        })
     }
 
     pub async fn approve_next_write(
