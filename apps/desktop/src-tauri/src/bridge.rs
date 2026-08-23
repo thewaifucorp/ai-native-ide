@@ -355,16 +355,4 @@ mod tests {
         assert_eq!(AcpxTarget::Claude.as_acpx_agent(), "claude");
         assert_eq!(AcpxTarget::OpenCode.as_acpx_agent(), "opencode");
     }
-
-    #[test]
-    fn unavailable_card_never_claims_policy_enforcement() {
-        let policy = AgentPolicyCoverage {
-            tool_visibility: IdeCoverage::Unknown,
-            approvals: IdeCoverage::HarnessOwned,
-            egress: IdeCoverage::HarnessOwned,
-            budget: IdeCoverage::Unknown,
-            sandbox: IdeCoverage::Unknown,
-        };
-        assert_eq!(policy.approvals, IdeCoverage::HarnessOwned);
-    }
 }

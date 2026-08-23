@@ -36,7 +36,7 @@ fn project_resources_and_scopes_survive_reopen_without_a_transcript() {
         .create_session_scope(
             SessionId("session:build".to_owned()),
             &created.id,
-            &[resource.id.clone()],
+            std::slice::from_ref(&resource.id),
         )
         .expect("create scoped session");
     drop(store);

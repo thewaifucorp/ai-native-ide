@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:journey:contract": "node scripts/verify-golden-journey.mjs",
+    "clean:artifacts": "bash scripts/clean-local-artifacts.sh",
     "check": "npm run lint && npm run typecheck && npm run test && npm run test:journey:contract"
   },
   "dependencies": {
