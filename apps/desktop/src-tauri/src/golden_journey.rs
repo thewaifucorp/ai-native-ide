@@ -7,6 +7,7 @@ use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn temporary_directory(label: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
@@ -14,6 +15,25 @@ fn temporary_directory(label: &str) -> std::path::PathBuf {
         .expect("system time is after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("ai-native-ide-{label}-{nanos}"))
+}
+
+async fn preview_request(url: &str, request: &str) -> String {
+    let address = url
+        .strip_prefix("http://")
+        .expect("preview uses loopback HTTP");
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connect actual preview");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("send actual preview request");
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
+        .expect("read actual preview response");
+    String::from_utf8(response).expect("preview response is UTF-8")
 }
 
 /// The Gate 1 happy route is deliberately host-level: no WebView mock can make
@@ -69,6 +89,28 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
         .await
         .expect("start local benchmark preview");
     assert!(started.url.starts_with("http://127.0.0.1:"));
+    let bid = r#"{"listingId":"listing:home","bidderId":"buyer:private","amountCents":700}"#;
+    let bid_response = preview_request(
+        &started.url,
+        &format!(
+            "POST /api/bids HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bid}",
+            bid.len()
+        ),
+    )
+    .await;
+    assert!(bid_response.starts_with("HTTP/1.1 200"));
+    assert!(bid_response.contains("leading_bid"));
+    let leaderboard = preview_request(
+        &started.url,
+        "GET /api/leaderboard HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(leaderboard.starts_with("HTTP/1.1 200"));
+    assert!(leaderboard.contains("700"));
+    assert!(
+        !leaderboard.contains("buyer:private"),
+        "the public preview must not leak bidder identity"
+    );
     let causal = bridge
         .effect_causal_links(&project.id.0, "auction-local", "benchmark-plan-v1")
         .await
