@@ -7,8 +7,9 @@
 use anyhow::Context;
 use benchmark_service::{router, BenchmarkStore};
 use ide_reconciliation::{
-    CausalLinks, Divergence, IntentSpecRecord, PreviewEvidenceLedger, PreviewFailure,
-    PreviewHealthCheck, PreviewHealthCheckObservation, ReconciliationStore,
+    CausalLinks, Divergence, ExceptionScope, IntentSpecRecord, PreviewEvidenceLedger,
+    PreviewFailure, PreviewHealthCheck, PreviewHealthCheckObservation, Reconciliation,
+    ReconciliationChoice, ReconciliationStore,
 };
 use serde::Serialize;
 use std::{
@@ -36,6 +37,14 @@ pub struct BenchmarkPreviewStatus {
 pub struct PreviewFailureReport {
     pub failure: PreviewFailure,
     pub divergence: Divergence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewReconciliationAction {
+    ChangeImplementation,
+    ChangeIntent,
+    AcceptPreviewException,
 }
 
 struct RunningPreview {
@@ -169,6 +178,41 @@ impl BenchmarkPreviewHost {
             failure,
             divergence,
         }))
+    }
+
+    pub async fn reconcile_failure(
+        &self,
+        divergence_id: &str,
+        action: PreviewReconciliationAction,
+    ) -> anyhow::Result<Reconciliation> {
+        let choice = match action {
+            PreviewReconciliationAction::ChangeImplementation => {
+                ReconciliationChoice::ChangeImplementation {
+                    proposed_effect_id: format!("reconcile:{divergence_id}:implementation"),
+                }
+            }
+            PreviewReconciliationAction::ChangeIntent => ReconciliationChoice::ChangeIntent {
+                revised_expected: serde_json::json!({ "health": "broken" }),
+            },
+            PreviewReconciliationAction::AcceptPreviewException => {
+                ReconciliationChoice::AcceptScopedException {
+                    scope: ExceptionScope::Preview {
+                        preview_id: divergence_id
+                            .split("::")
+                            .next()
+                            .unwrap_or(divergence_id)
+                            .to_owned(),
+                    },
+                    justification: "Explicitly accepted through the AI-Native IDE preview reconciliation surface.".to_owned(),
+                }
+            }
+        };
+        self.reconciliation
+            .lock()
+            .await
+            .reconcile(divergence_id, choice)
+            .cloned()
+            .context("unknown preview divergence")
     }
 }
 

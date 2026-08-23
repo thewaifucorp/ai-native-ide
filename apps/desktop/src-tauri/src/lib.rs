@@ -20,7 +20,9 @@ use std::{
     },
 };
 
-use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus, PreviewFailureReport};
+use benchmark_preview::{
+    BenchmarkPreviewHost, BenchmarkPreviewStatus, PreviewFailureReport, PreviewReconciliationAction,
+};
 use bridge::{
     AcpxTarget, AgentCapabilityCard, AgentTaskRequest, DesktopBridge, ProjectIntentInput,
     StartedAgentSession, TrustedWorkspaceSelection, WorkspaceWriteRequest,
@@ -324,6 +326,18 @@ async fn stop_and_capture_benchmark_preview_failure(
 }
 
 #[tauri::command]
+async fn reconcile_benchmark_preview_failure(
+    previews: State<'_, BenchmarkPreviewHost>,
+    divergence_id: String,
+    action: PreviewReconciliationAction,
+) -> Result<ide_reconciliation::Reconciliation, String> {
+    previews
+        .reconcile_failure(&divergence_id, action)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
@@ -416,6 +430,7 @@ pub fn run() {
             start_benchmark_preview,
             stop_benchmark_preview,
             stop_and_capture_benchmark_preview_failure,
+            reconcile_benchmark_preview_failure,
             agent_capability_card,
             start_read_only_agent_session,
             submit_agent_task,

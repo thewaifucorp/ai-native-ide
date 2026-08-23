@@ -82,6 +82,8 @@ export interface PreviewFailureReport {
   };
 }
 
+export type PreviewReconciliationAction = "change_implementation" | "change_intent" | "accept_preview_exception";
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -157,6 +159,10 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string; effectId: string };
     result: PreviewFailureReport | null;
   };
+  reconcile_benchmark_preview_failure: {
+    args: { divergenceId: string; action: PreviewReconciliationAction };
+    result: { divergenceId: string; status: "PendingVerification" | "AcceptedScopedException" };
+  };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -196,6 +202,7 @@ export interface HostClient {
   startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
   stopAndCaptureBenchmarkPreviewFailure(projectId: string, resourceId: string, effectId: string): Promise<HostCall<PreviewFailureReport | null>>;
+  reconcileBenchmarkPreviewFailure(divergenceId: string, action: PreviewReconciliationAction): Promise<HostCall<{ divergenceId: string; status: "PendingVerification" | "AcceptedScopedException" }>>;
   proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
   approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
@@ -262,6 +269,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     startBenchmarkPreview: (projectId) => call("start_benchmark_preview", { projectId }),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),
     stopAndCaptureBenchmarkPreviewFailure: (projectId, resourceId, effectId) => call("stop_and_capture_benchmark_preview_failure", { projectId, resourceId, effectId }),
+    reconcileBenchmarkPreviewFailure: (divergenceId, action) => call("reconcile_benchmark_preview_failure", { divergenceId, action }),
     proposeWorkspaceWrite: (projectId, request) => call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) => call("approve_next_workspace_write", { projectId, resourceId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
