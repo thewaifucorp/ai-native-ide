@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/ide-domain",
+  "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]
 
@@ -15,4 +16,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
