@@ -225,14 +225,23 @@ impl DesktopBridge {
         validate_relative_path(&request.relative_path)?;
         let workspaces = self.workspaces.lock().await;
         let workspace = workspace_for(&workspaces, project_id, &request.resource_id)?;
-        workspace
+        let result = workspace
             .broker
             .propose_write(&WorkspaceWrite {
-                effect_id: request.effect_id,
-                relative_path: request.relative_path,
-                content: request.content,
+                effect_id: request.effect_id.clone(),
+                relative_path: request.relative_path.clone(),
+                content: request.content.clone(),
             })
-            .await
+            .await?;
+        drop(workspaces);
+        if result["written"] == serde_json::Value::Bool(true) {
+            self.projects.record_ide_revision(
+                &ResourceId(request.resource_id),
+                request.relative_path,
+                request.effect_id,
+            )?;
+        }
+        Ok(result)
     }
 
     pub async fn approve_next_write(

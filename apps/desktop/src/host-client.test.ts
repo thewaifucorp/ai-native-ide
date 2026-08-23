@@ -93,4 +93,24 @@ describe("host client", () => {
     });
     expect(invoke).toHaveBeenCalledWith("start_benchmark_preview", { projectId: "auction" });
   });
+
+  it("keeps workspace effects typed through proposal and approval", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({ awaitingApproval: true });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+    const request = {
+      resourceId: "auction-local",
+      effectId: "benchmark-plan-v1",
+      relativePath: "benchmark.intent.md",
+      content: "# Benchmark",
+    };
+
+    await expect(client.proposeWorkspaceWrite("auction", request)).resolves.toMatchObject({
+      state: "available",
+      value: { awaitingApproval: true },
+    });
+    expect(invoke).toHaveBeenCalledWith("propose_workspace_write", { projectId: "auction", request });
+  });
 });

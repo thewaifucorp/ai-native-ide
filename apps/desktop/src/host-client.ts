@@ -58,6 +58,19 @@ export interface BenchmarkPreviewStatus {
   state: "healthy" | "stopped";
 }
 
+export interface WorkspaceWriteRequest {
+  resourceId: string;
+  effectId: string;
+  relativePath: string;
+  content: string;
+}
+
+export interface WorkspaceEffectResult {
+  awaitingApproval?: boolean;
+  written?: boolean;
+  path?: string;
+}
+
 export type AgentTarget = "claude" | "codex" | "gemini" | "opencode";
 export type AgentAvailability = "Ready" | "Degraded" | "Unavailable";
 export type IdeCoverage = "Enforced" | "DeclaredOnly" | "HarnessOwned" | "Unknown";
@@ -104,6 +117,14 @@ interface HostCommandMap {
   };
   start_benchmark_preview: { args: { projectId: string }; result: BenchmarkPreviewStatus };
   stop_benchmark_preview: { args: undefined; result: BenchmarkPreviewStatus | null };
+  propose_workspace_write: {
+    args: { projectId: string; request: WorkspaceWriteRequest };
+    result: WorkspaceEffectResult;
+  };
+  approve_next_workspace_write: {
+    args: { projectId: string; resourceId: string };
+    result: number;
+  };
   agent_capability_card: { args: { target: AgentTarget }; result: AgentCapabilityCard };
 }
 
@@ -124,6 +145,8 @@ export interface HostClient {
   attachWorkspaceFromPicker(projectId: string, resourceId: string): Promise<HostCall<WorkspaceResource | null>>;
   startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
+  proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
+  approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
 }
 
@@ -183,6 +206,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     attachWorkspaceFromPicker: (projectId, resourceId) => call("attach_workspace_from_picker", { projectId, resourceId }),
     startBenchmarkPreview: (projectId) => call("start_benchmark_preview", { projectId }),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),
+    proposeWorkspaceWrite: (projectId, request) => call("propose_workspace_write", { projectId, request }),
+    approveNextWorkspaceWrite: (projectId, resourceId) => call("approve_next_workspace_write", { projectId, resourceId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
   };
 }
