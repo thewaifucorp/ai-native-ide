@@ -18,10 +18,7 @@
 //! executable, shell command, HOME value, credential, or auth-profile value.
 
 use anyhow::{anyhow, bail, Context};
-use ide_agent::{
-    AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentHealth, AgentPolicyCoverage,
-    IdeCoverage,
-};
+use ide_agent::{AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentHealth};
 use ide_domain::{
     CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
@@ -31,7 +28,6 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
-    sync::Arc,
 };
 use tokio::sync::Mutex;
 

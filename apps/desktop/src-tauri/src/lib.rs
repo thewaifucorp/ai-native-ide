@@ -62,7 +62,7 @@ fn create_semantic_project(
 }
 
 #[tauri::command]
-fn agent_capability_card(
+async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
 ) -> AgentCapabilityCard {
