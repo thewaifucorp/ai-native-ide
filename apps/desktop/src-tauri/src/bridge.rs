@@ -72,7 +72,9 @@ impl TrustedWorkspaceSelection {
         Ok(Self { root })
     }
 
-    fn root(&self) -> &Path {
+    /// The canonical result of a native picker. This is intentionally exposed
+    /// only to sibling host code; it is never serializable to the renderer.
+    pub fn root(&self) -> &Path {
         &self.root
     }
 }

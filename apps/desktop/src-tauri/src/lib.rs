@@ -12,9 +12,14 @@ mod surface;
 
 use std::sync::Arc;
 
-use bridge::{AcpxTarget, AgentCapabilityCard, DesktopBridge, ProjectIntentInput};
+use bridge::{
+    AcpxTarget, AgentCapabilityCard, DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection,
+    WorkspaceWriteRequest,
+};
+use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 pub use host::{
     ActiveWatch, HostEvent, HostExtension, HostRuntime, ManagedProcess, ManagedPty,
@@ -62,6 +67,81 @@ fn create_semantic_project(
 }
 
 #[tauri::command]
+fn open_semantic_project(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+) -> Result<Option<ProjectRecord>, String> {
+    bridge
+        .open_project(&project_id)
+        .map_err(|error| error.to_string())
+}
+
+/// The directory selector runs in the native host. The renderer can name the
+/// semantic project/resource it wants to attach, but can never submit a path.
+#[tauri::command]
+async fn attach_workspace_from_picker(
+    app: AppHandle,
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+) -> Result<Option<Resource>, String> {
+    let Some(selected) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let selection = TrustedWorkspaceSelection::from_native_host(
+        selected.into_path().map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let kind = if selection.root().join(".git").is_dir() {
+        ResourceKind::Repository
+    } else {
+        ResourceKind::Directory
+    };
+    bridge
+        .attach_workspace(&project_id, &resource_id, kind, selection)
+        .await
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn propose_workspace_write(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    request: WorkspaceWriteRequest,
+) -> Result<serde_json::Value, String> {
+    bridge
+        .propose_write(&project_id, request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn approve_next_workspace_write(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+) -> Result<i64, String> {
+    bridge
+        .approve_next_write(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn rollback_workspace_write(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+    effect_id: String,
+) -> Result<(), String> {
+    bridge
+        .rollback_write(&project_id, &resource_id, &effect_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
@@ -72,6 +152,7 @@ async fn agent_capability_card(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_directory = app.path().app_data_dir()?;
             app.manage(Arc::new(DesktopBridge::open(
@@ -93,6 +174,11 @@ pub fn run() {
             open_surface,
             emit_host_probe,
             create_semantic_project,
+            open_semantic_project,
+            attach_workspace_from_picker,
+            propose_workspace_write,
+            approve_next_workspace_write,
+            rollback_workspace_write,
             agent_capability_card
         ])
         .run(tauri::generate_context!())

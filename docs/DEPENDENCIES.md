@@ -7,6 +7,7 @@ This is the reviewed dependency baseline for T01. Exact resolved transitive vers
 |---|---:|---|---|
 | `bastion-core` crates | `aece48b55981a1c64b04eaf1f8c9eae3404f9503` | MIT | Governed memory, capabilities, approvals and agent substrate |
 | Tauri | `2.11.5` | MIT OR Apache-2.0 | Desktop host and narrow IPC boundary |
+| tauri-plugin-dialog | `2.7.2` | MIT OR Apache-2.0 | Native host-owned directory selection |
 | React / React DOM | `19.2.0` | MIT | Renderer UI |
 | TypeScript | `5.9.3` | Apache-2.0 | Typed renderer contracts |
 | Vite | `7.2.2` | MIT | Renderer build and development server |
