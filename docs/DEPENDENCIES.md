@@ -12,6 +12,12 @@ This is the reviewed dependency baseline for T01. Exact resolved transitive vers
 | Vite | `7.2.2` | MIT | Renderer build and development server |
 | Vitest | `4.0.8` | MIT | Renderer tests |
 | SQLite via Bastion | transitive | Public domain | Local governed-memory persistence |
+| Axum | `0.8.9` | MIT | Local benchmark HTTP boundary |
+| rusqlite | `0.39.0` | MIT | Transactional benchmark persistence |
+| Tokio | `1.53.1` | MIT | Native async runtime and local server |
+| thiserror | `2.0.20` | MIT OR Apache-2.0 | Typed benchmark failures |
+| notify | `8.2.0` | CC0-1.0 | Scoped external-workspace watching |
+| portable-pty | `0.9.0` | MIT | Native terminal surface |
 
 ## Admission rules
 
@@ -21,4 +27,3 @@ This is the reviewed dependency baseline for T01. Exact resolved transitive vers
 - Record any copyleft, proprietary service, native binary or code-generation dependency before
   adding it.
 - GitHub Actions runs the lockfiles actually committed by this repository.
-

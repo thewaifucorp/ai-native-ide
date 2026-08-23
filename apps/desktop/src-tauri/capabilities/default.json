@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal renderer capability set for the AI-Native IDE surfaces.",
+  "windows": ["main", "ide-preview", "ide-terminal", "ide-raw-evidence"],
+  "permissions": ["core:default", "opener:default"]
+}
