@@ -78,3 +78,43 @@ async fn changed_payload_cannot_reuse_prior_approval() {
         "before"
     );
 }
+
+#[tokio::test]
+async fn approved_new_file_is_removed_by_rollback() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("created.txt");
+    let broker = WorkspaceEffectBroker::open(
+        temp.path().join("effects.sqlite3"),
+        "owner:test",
+        temp.path(),
+    )
+    .await
+    .expect("broker");
+    let write = WorkspaceWrite {
+        effect_id: "effect:create-1".into(),
+        relative_path: "created.txt".into(),
+        content: "created by an approved effect".into(),
+    };
+
+    assert_eq!(
+        broker.propose_write(&write).await.expect("queue")["awaiting_approval"],
+        json!(true)
+    );
+    assert!(!file.exists(), "queuing cannot create a file");
+
+    broker.approve_next().await.expect("approve");
+    assert_eq!(
+        broker.propose_write(&write).await.expect("write")["written"],
+        json!(true)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read created file"),
+        "created by an approved effect"
+    );
+
+    broker.rollback("effect:create-1").await.expect("rollback");
+    assert!(
+        !file.exists(),
+        "rollback removes a file that did not exist before"
+    );
+}

@@ -34,7 +34,9 @@ pub enum BrokerActivity {
 #[derive(Clone)]
 struct Snapshot {
     path: PathBuf,
-    bytes: Vec<u8>,
+    /// `None` means this effect created the file. Reverting it must remove
+    /// that file rather than inventing an empty predecessor.
+    original_bytes: Option<Vec<u8>>,
 }
 
 /// The only write route exposed by this crate. The renderer and agent layer
@@ -136,8 +138,12 @@ impl WorkspaceEffectBroker {
             .await
             .remove(effect_id)
             .with_context(|| format!("no snapshot exists for {effect_id}"))?;
-        fs::write(&snapshot.path, snapshot.bytes)
-            .with_context(|| format!("restore snapshot {}", snapshot.path.display()))?;
+        match snapshot.original_bytes {
+            Some(bytes) => fs::write(&snapshot.path, bytes)
+                .with_context(|| format!("restore snapshot {}", snapshot.path.display()))?,
+            None => fs::remove_file(&snapshot.path)
+                .with_context(|| format!("remove created file {}", snapshot.path.display()))?,
+        }
         self.activity.lock().await.push(BrokerActivity::RolledBack {
             effect_id: effect_id.to_owned(),
             path: snapshot.path,
@@ -199,6 +205,16 @@ impl WorkspaceWriteCapability {
         if !parent.starts_with(&self.root) {
             bail!("workspace write escapes project resource")
         }
+        // An existing file may itself be a symlink. Writing through one would
+        // cross the resource boundary even when its parent is trusted.
+        if candidate.exists() {
+            let canonical_file = candidate
+                .canonicalize()
+                .with_context(|| format!("resolve workspace file {}", candidate.display()))?;
+            if !canonical_file.starts_with(&self.root) {
+                bail!("workspace write escapes project resource")
+            }
+        }
         Ok(candidate)
     }
 }
@@ -227,7 +243,13 @@ impl Capability for WorkspaceWriteCapability {
             bail!("effect id is required")
         }
         let path = self.resolve(&write.relative_path)?;
-        let bytes = fs::read(&path).with_context(|| format!("snapshot {}", path.display()))?;
+        let original_bytes = match fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| format!("snapshot {}", path.display()))
+            }
+        };
         self.activity
             .lock()
             .await
@@ -241,7 +263,7 @@ impl Capability for WorkspaceWriteCapability {
             write.effect_id.clone(),
             Snapshot {
                 path: path.clone(),
-                bytes,
+                original_bytes,
             },
         );
         self.activity.lock().await.push(BrokerActivity::Executed {
