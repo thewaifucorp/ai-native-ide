@@ -1880,6 +1880,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ide-agent"
+version = "0.1.0"
+dependencies = [
+ "bastion-agent-runtime",
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "ide-domain"
 version = "0.1.0"
 dependencies = [

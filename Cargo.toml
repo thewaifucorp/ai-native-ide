@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/ide-domain",
+  "crates/ide-agent",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]
