@@ -18,7 +18,10 @@
 //! executable, shell command, HOME value, credential, or auth-profile value.
 
 use anyhow::{anyhow, bail, Context};
-use ide_agent::{AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentHealth};
+use ide_agent::{
+    AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
+    AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
+};
 use ide_domain::{
     CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
@@ -112,6 +115,24 @@ pub struct AgentCapabilityCard {
     pub auth_boundary: &'static str,
 }
 
+/// Renderer-safe task input. The agent target/session is selected through opaque
+/// IDs; it cannot receive a renderer-provided command, workspace root or auth path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskRequest {
+    pub session_id: String,
+    pub prompt: String,
+    pub code_change: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartedAgentSession {
+    pub session_id: String,
+    pub read_only: bool,
+    pub policy_note: &'static str,
+}
+
 struct AttachedWorkspace {
     project_id: ProjectId,
     root: PathBuf,
@@ -128,6 +149,7 @@ pub struct DesktopBridge {
     approval_database: PathBuf,
     owner: String,
     workspaces: Mutex<BTreeMap<String, AttachedWorkspace>>,
+    agents: Mutex<BTreeMap<String, Arc<AcpxAgentFacade>>>,
 }
 
 impl DesktopBridge {
@@ -148,6 +170,7 @@ impl DesktopBridge {
             approval_database: data_directory.join("workspace-approvals.sqlite3"),
             owner,
             workspaces: Mutex::new(BTreeMap::new()),
+            agents: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -296,6 +319,100 @@ impl DesktopBridge {
                 auth_boundary: "The IDE never reads credentials; an explicit host-owned home and auth-profile reference are required before starting a session.",
             },
         }
+    }
+
+    /// Starts an actual ACPX session through the host-owned adapter. It is
+    /// deliberately read-only: writes must return through the separate Bastion
+    /// effect broker rather than giving an external CLI a bypass path.
+    pub async fn start_read_only_agent_session(
+        &self,
+        target: AcpxTarget,
+        project_id: &str,
+        resource_id: &str,
+        host_home: PathBuf,
+    ) -> anyhow::Result<StartedAgentSession> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", resource_id)?;
+        let workspaces = self.workspaces.lock().await;
+        let workspace = workspace_for(&workspaces, project_id, resource_id)?;
+        let workspace_root = workspace.root.clone();
+        drop(workspaces);
+
+        let facade = Arc::new(AcpxAgentFacade::new(target.as_acpx_agent())?);
+        let session = facade
+            .start_session(StartAgentSession {
+                owner: self.owner.clone(),
+                workspace_root: workspace_root.clone(),
+                home_dir: host_home,
+                read_only: true,
+                denied_paths: vec![workspace_root.join(".git")],
+                sandbox: AgentSandbox::Isolated,
+                auth_profile_ref: "host-managed-acpx-default".to_owned(),
+                runtime_id: "ai-native-ide".to_owned(),
+                allowed_actions: Vec::new(),
+                task_timeout_ms: 300_000,
+                idle_timeout_ms: 900_000,
+            })
+            .await?;
+        self.agents
+            .lock()
+            .await
+            .insert(session.0.clone(), Arc::clone(&facade));
+        Ok(StartedAgentSession {
+            session_id: session.0,
+            read_only: true,
+            policy_note: "The external agent is read-only. Workspace changes require a separate IDE effect approval.",
+        })
+    }
+
+    pub async fn submit_agent_task(&self, request: AgentTaskRequest) -> anyhow::Result<u64> {
+        if request.prompt.trim().is_empty() {
+            bail!("agent prompt cannot be empty")
+        }
+        let agent = self.agent_for(&request.session_id).await?;
+        agent
+            .submit_task(
+                &AgentSessionId(request.session_id),
+                AgentTask {
+                    prompt: request.prompt,
+                    expectation: if request.code_change {
+                        AgentExpectation::CodeChange
+                    } else {
+                        AgentExpectation::Conversation
+                    },
+                    model_hint: None,
+                },
+            )
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn next_agent_event(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Option<IdeAgentEvent>> {
+        let agent = self.agent_for(session_id).await?;
+        agent
+            .next_event(&AgentSessionId(session_id.to_owned()))
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn cancel_agent_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let agent = self.agent_for(session_id).await?;
+        agent
+            .cancel(&AgentSessionId(session_id.to_owned()), true)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn agent_for(&self, session_id: &str) -> anyhow::Result<Arc<AcpxAgentFacade>> {
+        self.agents
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+            .context("unknown IDE-owned agent session")
     }
 }
 

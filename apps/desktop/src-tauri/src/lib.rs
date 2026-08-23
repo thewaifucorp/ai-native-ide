@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus};
 use bridge::{
-    AcpxTarget, AgentCapabilityCard, DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection,
-    WorkspaceWriteRequest,
+    AcpxTarget, AgentCapabilityCard, AgentTaskRequest, DesktopBridge, ProjectIntentInput,
+    StartedAgentSession, TrustedWorkspaceSelection, WorkspaceWriteRequest,
 };
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use model::{HostStatus, TauriViabilityReport};
@@ -189,6 +189,54 @@ async fn agent_capability_card(
     Ok(bridge.agent_capability_card(target).await)
 }
 
+#[tauri::command]
+async fn start_read_only_agent_session(
+    app: AppHandle,
+    bridge: State<'_, Arc<DesktopBridge>>,
+    target: AcpxTarget,
+    project_id: String,
+    resource_id: String,
+) -> Result<StartedAgentSession, String> {
+    let home = app.path().home_dir().map_err(|error| error.to_string())?;
+    bridge
+        .start_read_only_agent_session(target, &project_id, &resource_id, home)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn submit_agent_task(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    request: AgentTaskRequest,
+) -> Result<u64, String> {
+    bridge
+        .submit_agent_task(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn next_agent_event(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    session_id: String,
+) -> Result<Option<ide_agent::IdeAgentEvent>, String> {
+    bridge
+        .next_agent_event(&session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn cancel_agent_session(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    session_id: String,
+) -> Result<(), String> {
+    bridge
+        .cancel_agent_session(&session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -224,7 +272,11 @@ pub fn run() {
             rollback_workspace_write,
             start_benchmark_preview,
             stop_benchmark_preview,
-            agent_capability_card
+            agent_capability_card,
+            start_read_only_agent_session,
+            submit_agent_task,
+            next_agent_event,
+            cancel_agent_session
         ])
         .run(tauri::generate_context!())
         .expect("failed to run AI-Native IDE desktop host");

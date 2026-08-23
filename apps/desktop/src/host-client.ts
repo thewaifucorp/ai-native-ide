@@ -106,6 +106,12 @@ export interface AgentCapabilityCard {
   authBoundary: string;
 }
 
+export interface StartedAgentSession {
+  sessionId: string;
+  readOnly: boolean;
+  policyNote: string;
+}
+
 interface HostCommandMap {
   host_status: { args: undefined; result: HostStatus };
   host_viability_report: { args: undefined; result: TauriViabilityReport };
@@ -126,6 +132,11 @@ interface HostCommandMap {
     result: number;
   };
   agent_capability_card: { args: { target: AgentTarget }; result: AgentCapabilityCard };
+  start_read_only_agent_session: {
+    args: { target: AgentTarget; projectId: string; resourceId: string };
+    result: StartedAgentSession;
+  };
+  cancel_agent_session: { args: { sessionId: string }; result: void };
 }
 
 type HostCommand = keyof HostCommandMap;
@@ -148,6 +159,8 @@ export interface HostClient {
   proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
   approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
+  startReadOnlyAgentSession(target: AgentTarget, projectId: string, resourceId: string): Promise<HostCall<StartedAgentSession>>;
+  cancelAgentSession(sessionId: string): Promise<HostCall<void>>;
 }
 
 export interface HostClientOptions {
@@ -209,6 +222,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     proposeWorkspaceWrite: (projectId, request) => call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) => call("approve_next_workspace_write", { projectId, resourceId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
+    startReadOnlyAgentSession: (target, projectId, resourceId) => call("start_read_only_agent_session", { target, projectId, resourceId }),
+    cancelAgentSession: (sessionId) => call("cancel_agent_session", { sessionId }),
   };
 }
 
