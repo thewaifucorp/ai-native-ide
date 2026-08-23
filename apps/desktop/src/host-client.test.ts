@@ -75,4 +75,22 @@ describe("host client", () => {
       resourceId: "auction-local",
     });
   });
+
+  it("starts the benchmark through the fixed local-preview command", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
+      projectId: "auction",
+      url: "http://127.0.0.1:4317",
+      state: "healthy",
+    });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(client.startBenchmarkPreview("auction")).resolves.toMatchObject({
+      state: "available",
+      value: { url: "http://127.0.0.1:4317" },
+    });
+    expect(invoke).toHaveBeenCalledWith("start_benchmark_preview", { projectId: "auction" });
+  });
 });

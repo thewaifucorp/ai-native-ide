@@ -5,6 +5,7 @@
 //! APIs: an untrusted renderer never supplies an executable, a shell command, or
 //! an unrestricted filesystem path.
 
+mod benchmark_preview;
 mod bridge;
 mod host;
 mod model;
@@ -12,6 +13,7 @@ mod surface;
 
 use std::sync::Arc;
 
+use benchmark_preview::{BenchmarkPreviewHost, BenchmarkPreviewStatus};
 use bridge::{
     AcpxTarget, AgentCapabilityCard, DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection,
     WorkspaceWriteRequest,
@@ -142,6 +144,44 @@ async fn rollback_workspace_write(
 }
 
 #[tauri::command]
+async fn start_benchmark_preview(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    previews: State<'_, BenchmarkPreviewHost>,
+    runtime: State<'_, HostRuntime>,
+    project_id: String,
+) -> Result<BenchmarkPreviewStatus, String> {
+    if bridge
+        .open_project(&project_id)
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("the requested semantic project does not exist".to_owned());
+    }
+    let status = previews
+        .start(&project_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    runtime.publish(HostEvent::PreviewHealth {
+        health: PreviewHealth::Healthy,
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+async fn stop_benchmark_preview(
+    previews: State<'_, BenchmarkPreviewHost>,
+    runtime: State<'_, HostRuntime>,
+) -> Option<BenchmarkPreviewStatus> {
+    let status = previews.stop().await;
+    if status.is_some() {
+        runtime.publish(HostEvent::PreviewHealth {
+            health: PreviewHealth::Stopped,
+        });
+    }
+    status
+}
+
+#[tauri::command]
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
@@ -155,6 +195,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_directory = app.path().app_data_dir()?;
+            app.manage(BenchmarkPreviewHost::open(
+                data_directory.join("benchmark-previews"),
+            )?);
             app.manage(Arc::new(DesktopBridge::open(
                 data_directory,
                 "local.owner",
@@ -179,6 +222,8 @@ pub fn run() {
             propose_workspace_write,
             approve_next_workspace_write,
             rollback_workspace_write,
+            start_benchmark_preview,
+            stop_benchmark_preview,
             agent_capability_card
         ])
         .run(tauri::generate_context!())

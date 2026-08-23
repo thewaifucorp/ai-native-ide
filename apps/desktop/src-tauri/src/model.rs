@@ -15,7 +15,14 @@ impl HostStatus {
             host: "tauri",
             event_channel: "ide://host-event",
             renderer_privileges: "typed IPC only; no direct filesystem/process/network APIs",
-            extensions: vec!["process", "pty", "preview", "filesystem-watch", "surface"],
+            extensions: vec![
+                "process",
+                "pty",
+                "preview",
+                "benchmark-preview",
+                "filesystem-watch",
+                "surface",
+            ],
         }
     }
 }

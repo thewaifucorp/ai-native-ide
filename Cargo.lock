@@ -22,6 +22,8 @@ name = "ai-native-ide-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
+ "benchmark-service",
  "ide-agent",
  "ide-domain",
  "notify",
@@ -1887,6 +1889,7 @@ dependencies = [
 name = "ide-agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bastion-agent-runtime",
  "serde",
  "thiserror 2.0.20",

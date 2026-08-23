@@ -5,7 +5,7 @@
 //! outcome never depends on scheduler timing. Bidder identities are retained
 //! for audit but never appear in the public leaderboard response.
 
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, response::Html, routing::get, Json, Router};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -99,6 +99,20 @@ impl BenchmarkStore {
         Ok(())
     }
 
+    /// Seeds the benchmark without treating a restart as an exceptional mutation.
+    /// It never changes an existing listing or its current leading bid.
+    pub fn ensure_listing(&self, listing_id: &str, title: &str) -> Result<(), BenchmarkError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| BenchmarkError::PoisonedStore)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO listings (listing_id, title, amount_cents) VALUES (?1, ?2, 0)",
+            params![listing_id, title],
+        )?;
+        Ok(())
+    }
+
     pub fn place_bid(&self, bid: NewBid) -> Result<BidOutcome, BenchmarkError> {
         if bid.amount_cents <= 0 {
             return Err(BenchmarkError::NonPositiveBid);
@@ -179,10 +193,20 @@ pub struct BenchmarkHttpState(pub Arc<BenchmarkStore>);
 
 pub fn router(store: Arc<BenchmarkStore>) -> Router {
     Router::new()
+        .route("/", get(benchmark_page))
         .route("/health", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/leaderboard", get(public_leaderboard))
         .route("/api/bids", axum::routing::post(place_bid))
         .with_state(BenchmarkHttpState(store))
+}
+
+async fn benchmark_page() -> Html<&'static str> {
+    Html(
+        r#"<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leilão de posições</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:48px auto;padding:0 20px;background:#101416;color:#edf3f3}article,form{border:1px solid #334047;border-radius:12px;padding:20px;margin:14px 0;background:#182025}label{display:grid;gap:6px;margin:10px 0}input,button{font:inherit;padding:10px;border-radius:7px;border:1px solid #50606a}button{background:#98efc4;color:#102019;font-weight:700;cursor:pointer}small{color:#aebcc0}</style></head>
+<body><main><small>PREVIEW LOCAL · benchmark transacional</small><h1>Leilão de posições</h1><p>Quem oferece mais fica em primeiro. Empates não vencem.</p><section id="board">Carregando posições…</section><form id="bid"><h2>Fazer um lance</h2><label>Posição<input name="listing" value="listing:home" required></label><label>Identificador do comprador<input name="bidder" placeholder="ex.: loja-aurora" required></label><label>Valor em centavos<input name="amount" type="number" min="1" required></label><button>Enviar lance</button><p id="result"></p></form></main><script>const b=document.querySelector('#board'),f=document.querySelector('#bid'),r=document.querySelector('#result');async function load(){const x=await fetch('/api/leaderboard');const rows=await x.json();b.innerHTML=rows.map(x=>`<article><strong>${x.title}</strong><br>R$ ${(x.amountCents/100).toFixed(2)}</article>`).join('')}f.onsubmit=async e=>{e.preventDefault();const d=new FormData(f);const q=await fetch('/api/bids',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({listingId:d.get('listing'),bidderId:d.get('bidder'),amountCents:Number(d.get('amount'))})});const o=await q.json();r.textContent=o.accepted?'Lance líder registrado.':`Não aceito: ${o.reason}`;await load()};load()</script></body></html>"#,
+    )
 }
 
 async fn public_leaderboard(

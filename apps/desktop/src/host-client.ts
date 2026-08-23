@@ -52,6 +52,12 @@ export interface WorkspaceResource {
   createdAtMs: number;
 }
 
+export interface BenchmarkPreviewStatus {
+  projectId: string;
+  url: string;
+  state: "healthy" | "stopped";
+}
+
 export type AgentTarget = "claude" | "codex" | "gemini" | "opencode";
 export type AgentAvailability = "Ready" | "Degraded" | "Unavailable";
 export type IdeCoverage = "Enforced" | "DeclaredOnly" | "HarnessOwned" | "Unknown";
@@ -96,6 +102,8 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string };
     result: WorkspaceResource | null;
   };
+  start_benchmark_preview: { args: { projectId: string }; result: BenchmarkPreviewStatus };
+  stop_benchmark_preview: { args: undefined; result: BenchmarkPreviewStatus | null };
   agent_capability_card: { args: { target: AgentTarget }; result: AgentCapabilityCard };
 }
 
@@ -114,6 +122,8 @@ export interface HostClient {
   emitProbe(): Promise<HostCall<void>>;
   createSemanticProject(input: SemanticProjectInput): Promise<HostCall<SemanticProjectRecord>>;
   attachWorkspaceFromPicker(projectId: string, resourceId: string): Promise<HostCall<WorkspaceResource | null>>;
+  startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
+  stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
 }
 
@@ -171,6 +181,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     emitProbe: () => call("emit_host_probe", undefined),
     createSemanticProject: (input) => call("create_semantic_project", { input }),
     attachWorkspaceFromPicker: (projectId, resourceId) => call("attach_workspace_from_picker", { projectId, resourceId }),
+    startBenchmarkPreview: (projectId) => call("start_benchmark_preview", { projectId }),
+    stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
   };
 }
