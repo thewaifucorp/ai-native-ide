@@ -5,13 +5,14 @@
 //! APIs: an untrusted renderer never supplies an executable, a shell command, or
 //! an unrestricted filesystem path.
 
+mod bridge;
 mod host;
 mod model;
 mod surface;
 
 use std::sync::Arc;
 
-use host::HostRuntime;
+use bridge::{AcpxTarget, AgentCapabilityCard, DesktopBridge, ProjectIntentInput};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -50,10 +51,33 @@ fn emit_host_probe(runtime: State<'_, HostRuntime>) {
     });
 }
 
+#[tauri::command]
+fn create_semantic_project(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    input: ProjectIntentInput,
+) -> Result<ide_domain::ProjectRecord, String> {
+    bridge
+        .create_project(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn agent_capability_card(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    target: AcpxTarget,
+) -> AgentCapabilityCard {
+    bridge.agent_capability_card(target).await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let data_directory = app.path().app_data_dir()?;
+            app.manage(Arc::new(DesktopBridge::open(
+                data_directory,
+                "local.owner",
+            )?));
             surface::install_menu(app)?;
             let handle = app.handle().clone();
             app.manage(HostRuntime::new(Arc::new(move |event| {
@@ -67,7 +91,9 @@ pub fn run() {
             host_status,
             host_viability_report,
             open_surface,
-            emit_host_probe
+            emit_host_probe,
+            create_semantic_project,
+            agent_capability_card
         ])
         .run(tauri::generate_context!())
         .expect("failed to run AI-Native IDE desktop host");

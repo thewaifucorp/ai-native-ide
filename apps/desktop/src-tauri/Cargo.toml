@@ -13,7 +13,9 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = "2.5.1"
 
 [dependencies]
+anyhow = "1.0.100"
 ide-domain = { path = "../../../crates/ide-domain" }
+ide-agent = { path = "../../../crates/ide-agent" }
 notify = "8.2.0"
 portable-pty = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
