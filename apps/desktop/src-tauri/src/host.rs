@@ -381,20 +381,22 @@ pub struct ActiveWatch {
 
 impl ActiveWatch {
     fn start(scope: WatchScope, sink: EventSink) -> notify::Result<Self> {
-        let mut watcher = notify::recommended_watcher(move |result| match result {
-            Ok(event) => {
-                let detail = format!("{:?}", event.kind);
-                for path in event.paths {
-                    sink(HostEvent::FilesystemChanged {
-                        path,
-                        detail: detail.clone(),
-                    });
+        let mut watcher = notify::recommended_watcher(
+            move |result: notify::Result<notify::Event>| match result {
+                Ok(event) => {
+                    let detail = format!("{:?}", event.kind);
+                    for path in event.paths {
+                        sink(HostEvent::FilesystemChanged {
+                            path,
+                            detail: detail.clone(),
+                        });
+                    }
                 }
-            }
-            Err(error) => sink(HostEvent::HostProbe {
-                message: format!("filesystem watch error: {error}"),
-            }),
-        })?;
+                Err(error) => sink(HostEvent::HostProbe {
+                    message: format!("filesystem watch error: {error}"),
+                }),
+            },
+        )?;
         watcher.watch(scope.root(), RecursiveMode::Recursive)?;
         Ok(Self { _watcher: watcher })
     }
