@@ -181,6 +181,33 @@ async fn stop_benchmark_preview(
     Ok(status)
 }
 
+/// A user-triggered gate probe: it stops the host-owned preview and records the
+/// *actual* refused health connection against the exact approved effect.
+#[tauri::command]
+async fn stop_and_capture_benchmark_preview_failure(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    previews: State<'_, BenchmarkPreviewHost>,
+    runtime: State<'_, HostRuntime>,
+    project_id: String,
+    resource_id: String,
+    effect_id: String,
+) -> Result<Option<ide_reconciliation::PreviewFailure>, String> {
+    let causal_links = bridge
+        .effect_causal_links(&project_id, &resource_id, &effect_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let failure = previews
+        .stop_and_capture_health_failure(causal_links)
+        .await
+        .map_err(|error| error.to_string())?;
+    if failure.is_some() {
+        runtime.publish(HostEvent::PreviewHealth {
+            health: PreviewHealth::Broken,
+        });
+    }
+    Ok(failure)
+}
+
 #[tauri::command]
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
@@ -272,6 +299,7 @@ pub fn run() {
             rollback_workspace_write,
             start_benchmark_preview,
             stop_benchmark_preview,
+            stop_and_capture_benchmark_preview_failure,
             agent_capability_card,
             start_read_only_agent_session,
             submit_agent_task,

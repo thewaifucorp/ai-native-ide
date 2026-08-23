@@ -26,6 +26,7 @@ use ide_domain::{
     CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
 };
+use ide_reconciliation::CausalLinks;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -149,6 +150,7 @@ pub struct DesktopBridge {
     approval_database: PathBuf,
     owner: String,
     workspaces: Mutex<BTreeMap<String, AttachedWorkspace>>,
+    effect_links: Mutex<BTreeMap<String, CausalLinks>>,
     agents: Mutex<BTreeMap<String, Arc<AcpxAgentFacade>>>,
 }
 
@@ -170,6 +172,7 @@ impl DesktopBridge {
             approval_database: data_directory.join("workspace-approvals.sqlite3"),
             owner,
             workspaces: Mutex::new(BTreeMap::new()),
+            effect_links: Mutex::new(BTreeMap::new()),
             agents: Mutex::new(BTreeMap::new()),
         })
     }
@@ -258,13 +261,44 @@ impl DesktopBridge {
             .await?;
         drop(workspaces);
         if result["written"] == serde_json::Value::Bool(true) {
-            self.projects.record_ide_revision(
+            if let Some(revision) = self.projects.record_ide_revision(
                 &ResourceId(request.resource_id),
-                request.relative_path,
-                request.effect_id,
-            )?;
+                &request.relative_path,
+                &request.effect_id,
+            )? {
+                self.effect_links.lock().await.insert(
+                    effect_link_key(project_id, &request.resource_id, &request.effect_id),
+                    CausalLinks {
+                        effect_ids: vec![request.effect_id.clone()],
+                        activity_ids: vec![format!("activity:{}", revision.id)],
+                        file_paths: vec![request.relative_path.display().to_string()],
+                    },
+                );
+            }
         }
         Ok(result)
+    }
+
+    /// Returns causation created by a completed governed effect. A preview cannot
+    /// attach a failure to merely proposed work or manufacture an activity ID.
+    pub async fn effect_causal_links(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+        effect_id: &str,
+    ) -> anyhow::Result<CausalLinks> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", resource_id)?;
+        validate_identifier("effect id", effect_id)?;
+        let workspaces = self.workspaces.lock().await;
+        workspace_for(&workspaces, project_id, resource_id)?;
+        drop(workspaces);
+        self.effect_links
+            .lock()
+            .await
+            .get(&effect_link_key(project_id, resource_id, effect_id))
+            .cloned()
+            .context("the effect has no observed semantic revision to use as preview causation")
     }
 
     pub async fn approve_next_write(
@@ -428,6 +462,10 @@ fn workspace_for<'a>(
         bail!("resource is outside the selected semantic project")
     }
     Ok(workspace)
+}
+
+fn effect_link_key(project_id: &str, resource_id: &str, effect_id: &str) -> String {
+    format!("{project_id}\u{1f}{resource_id}\u{1f}{effect_id}")
 }
 
 fn validate_identifier(label: &str, value: &str) -> anyhow::Result<()> {

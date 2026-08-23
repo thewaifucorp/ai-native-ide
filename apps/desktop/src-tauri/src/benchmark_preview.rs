@@ -6,9 +6,22 @@
 
 use anyhow::Context;
 use benchmark_service::{router, BenchmarkStore};
+use ide_reconciliation::{
+    CausalLinks, PreviewEvidenceLedger, PreviewFailure, PreviewHealthCheck,
+    PreviewHealthCheckObservation,
+};
 use serde::Serialize;
-use std::{fs, path::PathBuf, sync::Arc};
-use tokio::sync::{oneshot, Mutex};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::{oneshot, Mutex},
+    task::JoinHandle,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +34,7 @@ pub struct BenchmarkPreviewStatus {
 struct RunningPreview {
     status: BenchmarkPreviewStatus,
     shutdown: oneshot::Sender<()>,
+    task: JoinHandle<()>,
 }
 
 pub struct BenchmarkPreviewHost {
@@ -59,7 +73,7 @@ impl BenchmarkPreviewHost {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let (shutdown, receiver) = oneshot::channel();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router(store))
                 .with_graceful_shutdown(async move {
                     let _ = receiver.await;
@@ -74,17 +88,105 @@ impl BenchmarkPreviewHost {
         *running = Some(RunningPreview {
             status: status.clone(),
             shutdown,
+            task,
         });
         Ok(status)
     }
 
     pub async fn stop(&self) -> Option<BenchmarkPreviewStatus> {
-        self.running.lock().await.take().map(|active| {
-            let _ = active.shutdown.send(());
-            BenchmarkPreviewStatus {
-                state: "stopped",
-                ..active.status
-            }
+        let active = self.running.lock().await.take()?;
+        let _ = active.shutdown.send(());
+        let _ = active.task.await;
+        Some(BenchmarkPreviewStatus {
+            state: "stopped",
+            ..active.status
         })
+    }
+
+    /// Stops a real loopback preview and records the resulting failed HTTP probe.
+    /// The endpoint, process lifecycle and failure detail remain host-owned; the
+    /// caller supplies only causal links already observed by the semantic bridge.
+    pub async fn stop_and_capture_health_failure(
+        &self,
+        causal_links: CausalLinks,
+    ) -> anyhow::Result<Option<PreviewFailure>> {
+        let Some(status) = self.stop().await else {
+            return Ok(None);
+        };
+        let detail = probe_health(&status.url)
+            .await
+            .err()
+            .context("stopped benchmark preview unexpectedly answered its health check")?;
+        let observed_at_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+        let mut ledger = PreviewEvidenceLedger::default();
+        let failure = ledger
+            .record_failed_health_check(PreviewHealthCheck {
+                id: format!("preview-health:{}:{observed_at_ms}", status.project_id),
+                preview_id: status.project_id.clone(),
+                evidence_id: format!(
+                    "evidence:preview-health:{}:{observed_at_ms}",
+                    status.project_id
+                ),
+                url: status.url,
+                observation: PreviewHealthCheckObservation::Failed { detail },
+                causal_links,
+                observed_at_ms,
+            })?
+            .clone();
+        Ok(Some(failure))
+    }
+}
+
+async fn probe_health(url: &str) -> anyhow::Result<()> {
+    let address = url
+        .strip_prefix("http://")
+        .context("preview URL must use loopback HTTP")?;
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .with_context(|| format!("connect preview health endpoint {url}"))?;
+    stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    anyhow::ensure!(
+        response.starts_with(b"HTTP/1.1 204"),
+        "preview health endpoint returned a non-204 response"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stopped_preview_produces_causal_failed_health_evidence() {
+        let directory = std::env::temp_dir().join(format!(
+            "ai-native-ide-preview-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after epoch")
+                .as_nanos()
+        ));
+        let host = BenchmarkPreviewHost::open(directory.clone()).expect("open preview host");
+        host.start("auction").await.expect("start preview");
+
+        let failure = host
+            .stop_and_capture_health_failure(CausalLinks {
+                effect_ids: vec!["benchmark-plan-v1".to_owned()],
+                activity_ids: vec!["activity:revision-1".to_owned()],
+                file_paths: vec!["benchmark.intent.md".to_owned()],
+            })
+            .await
+            .expect("capture failed health")
+            .expect("a running preview should yield evidence");
+
+        assert_eq!(failure.causal_links.effect_ids, ["benchmark-plan-v1"]);
+        assert!(matches!(
+            failure.kind,
+            ide_reconciliation::PreviewFailureKind::HealthCheckFailed { .. }
+        ));
+        fs::remove_dir_all(directory).expect("remove preview test directory");
     }
 }

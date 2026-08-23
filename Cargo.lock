@@ -26,6 +26,7 @@ dependencies = [
  "benchmark-service",
  "ide-agent",
  "ide-domain",
+ "ide-reconciliation",
  "notify",
  "portable-pty",
  "serde",
