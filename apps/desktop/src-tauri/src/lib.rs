@@ -62,6 +62,16 @@ impl TerminalRegistry {
     }
 }
 
+impl Drop for TerminalRegistry {
+    fn drop(&mut self) {
+        if let Ok(sessions) = self.sessions.get_mut() {
+            for terminal in sessions.values_mut() {
+                let _ = terminal.stop();
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn start_workspace_inspection(
     bridge: State<'_, Arc<DesktopBridge>>,
