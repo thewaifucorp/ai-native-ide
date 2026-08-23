@@ -144,6 +144,17 @@ export interface TerminalRunStatus {
   detail: string;
 }
 
+/** Host observations are read-only events; they carry no capability to invoke code. */
+export interface HostEventPayload {
+  kind: string;
+  message?: string;
+  health?: string;
+  line?: string;
+  detail?: string;
+  path?: string;
+  exitCode?: number | null;
+}
+
 interface HostCommandMap {
   host_status: { args: undefined; result: HostStatus };
   host_viability_report: { args: undefined; result: TauriViabilityReport };
@@ -161,7 +172,7 @@ interface HostCommandMap {
   };
   reconcile_benchmark_preview_failure: {
     args: { divergenceId: string; action: PreviewReconciliationAction };
-    result: { divergenceId: string; status: "PendingVerification" | "AcceptedScopedException" };
+    result: { divergenceId: string; status: "pending_verification" | "accepted_scoped_exception" };
   };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
@@ -202,7 +213,7 @@ export interface HostClient {
   startBenchmarkPreview(projectId: string): Promise<HostCall<BenchmarkPreviewStatus>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
   stopAndCaptureBenchmarkPreviewFailure(projectId: string, resourceId: string, effectId: string): Promise<HostCall<PreviewFailureReport | null>>;
-  reconcileBenchmarkPreviewFailure(divergenceId: string, action: PreviewReconciliationAction): Promise<HostCall<{ divergenceId: string; status: "PendingVerification" | "AcceptedScopedException" }>>;
+  reconcileBenchmarkPreviewFailure(divergenceId: string, action: PreviewReconciliationAction): Promise<HostCall<{ divergenceId: string; status: "pending_verification" | "accepted_scoped_exception" }>>;
   proposeWorkspaceWrite(projectId: string, request: WorkspaceWriteRequest): Promise<HostCall<WorkspaceEffectResult>>;
   approveNextWorkspaceWrite(projectId: string, resourceId: string): Promise<HostCall<number>>;
   agentCapabilityCard(target: AgentTarget): Promise<HostCall<AgentCapabilityCard>>;
@@ -210,6 +221,7 @@ export interface HostClient {
   cancelAgentSession(sessionId: string): Promise<HostCall<void>>;
   startWorkspaceInspection(projectId: string, resourceId: string): Promise<HostCall<TerminalRunStatus>>;
   cancelWorkspaceInspection(terminalId: string): Promise<HostCall<void>>;
+  listenHostEvents(listener: (event: HostEventPayload) => void): Promise<(() => void) | null>;
 }
 
 export interface HostClientOptions {
@@ -277,6 +289,11 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     cancelAgentSession: (sessionId) => call("cancel_agent_session", { sessionId }),
     startWorkspaceInspection: (projectId, resourceId) => call("start_workspace_inspection", { projectId, resourceId }),
     cancelWorkspaceInspection: (terminalId) => call("cancel_workspace_inspection", { terminalId }),
+    async listenHostEvents(listener) {
+      if (!isNativeHost()) return null;
+      const { listen } = await import("@tauri-apps/api/event");
+      return listen<HostEventPayload>("ide://host-event", (event) => listener(event.payload));
+    },
   };
 }
 
