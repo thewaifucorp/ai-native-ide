@@ -65,8 +65,8 @@ fn create_semantic_project(
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
-) -> AgentCapabilityCard {
-    bridge.agent_capability_card(target).await
+) -> Result<AgentCapabilityCard, String> {
+    Ok(bridge.agent_capability_card(target).await)
 }
 
 pub fn run() {
