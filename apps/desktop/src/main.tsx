@@ -145,6 +145,7 @@ function App() {
   const [rawDocument, setRawDocument] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
   const [fileEffectId, setFileEffectId] = useState<string | null>(null);
+  const [lastFileEffectId, setLastFileEffectId] = useState<string | null>(null);
   const [workspaceDiff, setWorkspaceDiff] = useState<HostCall<WorkspaceDiff> | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
@@ -471,6 +472,7 @@ function App() {
     }
     setEffectState(result.value.written ? "written" : "awaiting");
     if (result.value.written) {
+      setLastFileEffectId(effectId);
       setFileEffectId(null);
       await loadWorkspaceFiles(project, resource);
     }
@@ -499,6 +501,21 @@ function App() {
       return;
     }
     await proposeSelectedFile(fileEffectId);
+  }
+  async function rollbackSelectedFile() {
+    if (!project || !resource || !lastFileEffectId) return;
+    const result = await hostClient.rollbackWorkspaceWrite(
+      project.id,
+      resource.id,
+      lastFileEffectId,
+    );
+    if (result.state !== "available") {
+      setEffectState("failed");
+      return;
+    }
+    setLastFileEffectId(null);
+    setEffectState("idle");
+    await loadWorkspaceFiles(project, resource);
   }
   async function startAgentSession() {
     if (!project || !resource) return;
@@ -1076,6 +1093,11 @@ function App() {
                   ) : (
                     <button className="outline-action" disabled={!selectedFile} onClick={() => void saveWorkspaceFile()} type="button">
                       Salvar edição
+                    </button>
+                  )}
+                  {lastFileEffectId && (
+                    <button className="text-button" onClick={() => void rollbackSelectedFile()} type="button">
+                      Reverter último checkpoint
                     </button>
                   )}
                   <button className="text-button" disabled={!resource} onClick={() => void inspectWorkspaceDiff()} type="button">
