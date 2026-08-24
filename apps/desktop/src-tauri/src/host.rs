@@ -345,6 +345,10 @@ impl ManagedPty {
         command.args(spec.args);
         command.cwd(spec.working_directory);
         let child = pair.slave.spawn_command(command).map_err(io_error)?;
+        // ConPTY requires the parent to release the slave endpoint immediately
+        // after spawn. Keeping it alive can leave short-lived Windows commands
+        // running without ever draining their output pipe.
+        drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(io_error)?;
         let writer = pair.master.take_writer().map_err(io_error)?;
         stream_lines(
