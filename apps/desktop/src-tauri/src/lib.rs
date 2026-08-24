@@ -141,9 +141,12 @@ async fn start_workspace_inspection(
         .map_err(|error| error.to_string())?;
     let scope = WatchScope::from_project_resource(root).map_err(|error| error.to_string())?;
     let executable = registered_git_executable().map_err(|error| error.to_string())?;
-    let spec =
-        TrustedProcessSpec::for_registered_extension(executable, ["status", "--short"], &scope)
-            .map_err(|error| error.to_string())?;
+    let spec = TrustedProcessSpec::for_registered_extension(
+        executable,
+        ["--no-pager", "status", "--short"],
+        &scope,
+    )
+    .map_err(|error| error.to_string())?;
     let pty = runtime
         .spawn_pty(spec, 24, 120)
         .map_err(|error| error.to_string())?;

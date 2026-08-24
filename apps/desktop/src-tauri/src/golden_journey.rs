@@ -108,7 +108,7 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     let terminal_scope = WatchScope::from_project_resource(&root).expect("scope workspace PTY");
     let terminal_spec = TrustedProcessSpec::for_registered_extension(
         registered_git_executable().expect("find registered Git"),
-        ["status", "--short"],
+        ["--no-pager", "status", "--short"],
         &terminal_scope,
     )
     .expect("construct fixed workspace inspection");
