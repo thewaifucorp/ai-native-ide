@@ -11,8 +11,7 @@ use std::{
     fs,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -116,7 +115,11 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     let _terminal = terminal_runtime
         .spawn_pty(terminal_spec, 24, 120)
         .expect("start host-owned workspace PTY");
-    for _ in 0..30 {
+    // Windows ConPTY can take substantially longer than a Unix PTY to create
+    // the child and flush its first line. Wait for a deadline rather than
+    // declaring a host failure after a scheduler-dependent 300 ms window.
+    let pty_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < pty_deadline {
         if terminal_events
             .lock()
             .expect("terminal event lock")
@@ -134,7 +137,7 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
         {
             break;
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
     }
     assert!(
         terminal_events
