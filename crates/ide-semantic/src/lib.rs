@@ -28,7 +28,7 @@ pub enum ReviewState {
     Dismissed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticFinding {
     pub id: String,
@@ -60,7 +60,7 @@ impl Default for EvaluationBudget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticReport {
     pub findings: Vec<SemanticFinding>,
