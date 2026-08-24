@@ -248,6 +248,9 @@ function App() {
         } else {
           appendAgentTranscript("system", describeAgentEvent(event));
         }
+        if (("Diff" in event || "Artifact" in event) && project && resource) {
+          void loadWorkspaceFiles(project, resource);
+        }
         setHostActivity((current) =>
           [describeAgentEvent(event), ...current].slice(0, 4),
         );
@@ -257,7 +260,7 @@ function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [agentSession]);
+  }, [agentSession, project, resource]);
   useEffect(() => {
     if (!terminal || terminal.state !== "running") return;
     let active = true;
@@ -1042,7 +1045,7 @@ function App() {
           <span className="dock-label">AGENTE</span>
           <strong>
             {agentSession
-              ? `${agentTarget} conectado · somente leitura`
+              ? `${agentTarget} conectado · ${agentSession.readOnly ? "somente leitura" : "escrita externa habilitada"}`
               : "Não conectado"}
           </strong>
           <p>
