@@ -21,6 +21,7 @@ import {
   hostClient,
   type AgentCapabilityCard,
   type AgentEvent,
+  type AgentTarget,
   type BenchmarkPreviewStatus,
   type HostCall,
   type PreviewFailureReport,
@@ -126,6 +127,7 @@ function App() {
     useState<HostCall<StartedAgentSession> | null>(null);
   const [agentCapability, setAgentCapability] =
     useState<HostCall<AgentCapabilityCard> | null>(null);
+  const [agentTarget, setAgentTarget] = useState<AgentTarget>("claude");
   const [agentPrompt, setAgentPrompt] = useState(
     "Revise a intenção e aponte o próximo risco verificável.",
   );
@@ -197,8 +199,8 @@ function App() {
   }, []);
   useEffect(() => {
     if (!resource) return;
-    void hostClient.agentCapabilityCard("claude").then(setAgentCapability);
-  }, [resource]);
+    void hostClient.agentCapabilityCard(agentTarget).then(setAgentCapability);
+  }, [agentTarget, resource]);
   useEffect(() => {
     if (!agentSession) return;
     let active = true;
@@ -387,7 +389,7 @@ function App() {
   async function startAgentSession() {
     if (!project || !resource) return;
     const result = await hostClient.startReadOnlyAgentSession(
-      "claude",
+      agentTarget,
       project.id,
       resource.id,
     );
@@ -688,7 +690,7 @@ function App() {
             {agentSession && (
               <section className="agent-workspace" aria-label="Trabalho com o agente">
                 <div className="section-label">
-                  <span>AGENTE</span>
+              <span>{agentTarget.toUpperCase()}</span>
                   <span>SESSÃO REAL</span>
                 </div>
                 <pre aria-live="polite">
@@ -926,7 +928,7 @@ function App() {
           <span className="dock-label">AGENTE</span>
           <strong>
             {agentSession
-              ? "Claude conectado · somente leitura"
+              ? `${agentTarget} conectado · somente leitura`
               : "Não conectado"}
           </strong>
           <p>
@@ -942,6 +944,26 @@ function App() {
                   ? agentSession.policyNote
                   : "Conecte um adapter só depois de escolher o recurso. A IDE mantém efeitos de escrita fora do agente."}
           </p>
+          {!agentSession && (
+            <div className="mode-group" aria-label="Adapter de agente">
+              {(["claude", "codex", "gemini", "opencode"] as AgentTarget[]).map(
+                (target) => (
+                  <button
+                    key={target}
+                    className={
+                      agentTarget === target
+                        ? "mode-button mode-button--active"
+                        : "mode-button"
+                    }
+                    onClick={() => setAgentTarget(target)}
+                    type="button"
+                  >
+                    {target}
+                  </button>
+                ),
+              )}
+            </div>
+          )}
           <button
             className="text-button"
             disabled={
@@ -956,7 +978,7 @@ function App() {
             }
             type="button"
           >
-            {agentSession ? "Encerrar sessão" : "Conectar Claude"}{" "}
+            {agentSession ? "Encerrar sessão" : `Conectar ${agentTarget}`}{" "}
             <span>→</span>
           </button>
           {agentSession && (
