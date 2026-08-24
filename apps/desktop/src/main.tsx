@@ -1204,12 +1204,17 @@ function App() {
         </section>
         <section className="dock-section">
           <span className="dock-label">ESCOPO</span>
-          <strong>Projeto inteiro</strong>
+          <strong>{resource ? "Recurso selecionado" : "Projeto inteiro"}</strong>
           <p>
             {resource
-              ? `${resource.kind === "repository" ? "Repositório" : "Diretório"} anexado · escopo ativo`
+              ? `${resource.kind === "repository" ? "Repositório" : "Diretório"} ativo: ${resource.canonicalPath}`
               : "Anexe um diretório para habilitar terminal, agente e efeitos."}
           </p>
+          {resources.length > 1 && (
+            <div className="guidance-empty">
+              <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
+            </div>
+          )}
         </section>
         <section className="dock-section">
           <span className="dock-label">APLICADO AGORA</span>
