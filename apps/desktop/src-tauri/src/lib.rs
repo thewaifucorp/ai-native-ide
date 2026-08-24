@@ -36,6 +36,7 @@ use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
     HygieneFinding, TruthDeclaration, TruthFinding,
 };
+use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -807,10 +808,118 @@ async fn truth_list(
 }
 
 #[tauri::command]
+async fn truth_add_consumer(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    id: String,
+    consumer: String,
+) -> Result<(), String> {
+    bridge
+        .truth_add_consumer(&id, &consumer)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Consumers of a subject, so a change to its authority can propose synchronization.
+#[tauri::command]
+async fn truth_consumers(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    subject: String,
+) -> Result<Vec<String>, String> {
+    Ok(bridge.truth_consumers(&subject).await)
+}
+
+#[tauri::command]
 async fn truth_conflicts(
     bridge: State<'_, Arc<DesktopBridge>>,
 ) -> Result<Vec<TruthFinding>, String> {
     Ok(bridge.truth_conflicts().await)
+}
+
+const HARNESS_TEXT_EXTENSIONS: [&str; 13] = [
+    "rs", "ts", "tsx", "js", "jsx", "json", "md", "toml", "yaml", "yml", "env", "txt", "css",
+];
+
+/// Runs the deterministic Layer-0 harness over a resource: git cleanliness,
+/// secret scan, dependency lockfiles and pending effects. It never runs paid
+/// inference and reports `unknown`/`not_run` distinctly from a pass.
+#[tauri::command]
+async fn run_harness_layer0(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+) -> Result<HarnessReport, String> {
+    let root = bridge
+        .workspace_root(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let git_porcelain = if root.join(".git").is_dir() {
+        let output = std::process::Command::new(
+            registered_git_executable().map_err(|error| error.to_string())?,
+        )
+        .args(["--no-optional-locks", "status", "--porcelain"])
+        .current_dir(&root)
+        .output()
+        .map_err(|error| error.to_string())?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        None
+    };
+
+    let listed = bridge
+        .list_workspace_files(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut files = Vec::new();
+    for file in listed.into_iter().take(400) {
+        let is_text = std::path::Path::new(&file.relative_path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| HARNESS_TEXT_EXTENSIONS.contains(&extension));
+        if !is_text {
+            continue;
+        }
+        if let Ok(contents) = bridge
+            .read_workspace_file(
+                &project_id,
+                &resource_id,
+                PathBuf::from(&file.relative_path),
+            )
+            .await
+        {
+            files.push((contents.relative_path, contents.content));
+        }
+    }
+
+    let mut dependency_locks = Vec::new();
+    for (manifest, lock) in [
+        ("Cargo.toml", "Cargo.lock"),
+        ("package.json", "package-lock.json"),
+        ("pyproject.toml", "poetry.lock"),
+    ] {
+        if root.join(manifest).is_file() {
+            dependency_locks.push(DependencyLock {
+                manifest: manifest.to_owned(),
+                lock: lock.to_owned(),
+                lock_present: root.join(lock).is_file(),
+            });
+        }
+    }
+
+    let pending_effects = bridge
+        .pending_effect_count(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(ide_harness::run_layer0(&HarnessInputs {
+        git_porcelain,
+        files,
+        dependency_locks,
+        pending_effects,
+    }))
 }
 
 /// Optional AAG navigation lookup. It degrades to an explicit `unknown` when the
@@ -939,7 +1048,10 @@ pub fn run() {
             guidance_hygiene,
             truth_declare,
             truth_list,
+            truth_add_consumer,
+            truth_consumers,
             truth_conflicts,
+            run_harness_layer0,
             aag_relations,
             agent_capability_card,
             start_agent_session,

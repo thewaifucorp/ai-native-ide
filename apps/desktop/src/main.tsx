@@ -22,6 +22,7 @@ import {
   type AagRelations,
   type AppliedGuidance,
   type CaptureDestination,
+  type HarnessReport,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -155,6 +156,7 @@ function App() {
   );
   const [aagCall, setAagCall] = useState<HostCall<AagRelations> | null>(null);
   const [appliedGuidance, setAppliedGuidance] = useState<AppliedGuidance[]>([]);
+  const [harness, setHarness] = useState<HostCall<HarnessReport> | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -574,6 +576,10 @@ function App() {
       setGuidanceText("");
       await refreshAppliedGuidance();
     }
+  }
+  async function runHarness() {
+    if (!project || !resource) return;
+    setHarness(await hostClient.runHarnessLayer0(project.id, resource.id));
   }
   async function queryAagRelations() {
     const subject = selectedFile ?? project?.title;
@@ -1339,6 +1345,56 @@ function App() {
               <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
             </div>
           )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">HARNESS · CAMADA 0</span>
+          <strong>
+            {harness?.state === "available"
+              ? `${harness.value.passed} ok · ${harness.value.failed} falhas · ${harness.value.unknown} unknown · ${harness.value.notRun} não rodou`
+              : "Checks determinísticos"}
+          </strong>
+          <p>
+            {harness?.state === "available"
+              ? "Fatos verificados sem inferência paga. unknown e não-rodou nunca contam como aprovação."
+              : harness?.state === "failed"
+                ? harness.message
+                : harness?.state === "unavailable"
+                  ? "Abra o app desktop para rodar os checks no recurso."
+                  : "Build/segredos/dependências/git/efeitos, com estado e evidência explícitos."}
+          </p>
+          {harness?.state === "available" && (
+            <div className="file-list" aria-label="Findings do harness">
+              {harness.value.findings.map((finding) => (
+                <div
+                  className={`activity-item activity-item--${finding.state === "passed" ? "done" : finding.state === "failed" ? "active" : "unknown"}`}
+                  key={finding.id}
+                >
+                  <span className="activity-index">
+                    {finding.state === "passed"
+                      ? "●"
+                      : finding.state === "failed"
+                        ? "▲"
+                        : "○"}
+                  </span>
+                  <div>
+                    <strong>{finding.title}</strong>
+                    <small>
+                      {finding.state.toUpperCase()} · {finding.evidence}
+                      {finding.remediation ? ` — ${finding.remediation}` : ""}
+                    </small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            className="text-button"
+            disabled={!project || !resource}
+            onClick={() => void runHarness()}
+            type="button"
+          >
+            Rodar checks determinísticos <span>→</span>
+          </button>
         </section>
         <section className="dock-section">
           <span className="dock-label">NAVEGAÇÃO (AAG)</span>

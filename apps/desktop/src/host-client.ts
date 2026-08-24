@@ -224,6 +224,29 @@ export type TruthFinding = {
   subject: string;
 };
 
+export type CheckState = "passed" | "failed" | "unknown" | "not_run";
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface HarnessFinding {
+  id: string;
+  checkId: string;
+  layer: number;
+  title: string;
+  state: CheckState;
+  severity: Severity;
+  claim: string;
+  evidence: string;
+  remediation: string | null;
+}
+
+export interface HarnessReport {
+  findings: HarnessFinding[];
+  passed: number;
+  failed: number;
+  unknown: number;
+  notRun: number;
+}
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -401,7 +424,13 @@ interface HostCommandMap {
     result: TruthDeclaration;
   };
   truth_list: { args: undefined; result: TruthDeclaration[] };
+  truth_add_consumer: { args: { id: string; consumer: string }; result: void };
+  truth_consumers: { args: { subject: string }; result: string[] };
   truth_conflicts: { args: undefined; result: TruthFinding[] };
+  run_harness_layer0: {
+    args: { projectId: string; resourceId: string };
+    result: HarnessReport;
+  };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -544,7 +573,13 @@ export interface HostClient {
     provenance: string,
   ): Promise<HostCall<TruthDeclaration>>;
   truthList(): Promise<HostCall<TruthDeclaration[]>>;
+  truthAddConsumer(id: string, consumer: string): Promise<HostCall<void>>;
+  truthConsumers(subject: string): Promise<HostCall<string[]>>;
   truthConflicts(): Promise<HostCall<TruthFinding[]>>;
+  runHarnessLayer0(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<HarnessReport>>;
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
@@ -713,7 +748,12 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
         provenance,
       }),
     truthList: () => call("truth_list", undefined),
+    truthAddConsumer: (id, consumer) =>
+      call("truth_add_consumer", { id, consumer }),
+    truthConsumers: (subject) => call("truth_consumers", { subject }),
     truthConflicts: () => call("truth_conflicts", undefined),
+    runHarnessLayer0: (projectId, resourceId) =>
+      call("run_harness_layer0", { projectId, resourceId }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>

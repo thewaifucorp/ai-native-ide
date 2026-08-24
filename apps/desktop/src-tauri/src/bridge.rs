@@ -481,6 +481,20 @@ impl DesktopBridge {
         })
     }
 
+    pub async fn pending_effect_count(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+    ) -> anyhow::Result<usize> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", resource_id)?;
+        let workspaces = self.workspaces.lock().await;
+        workspace_for(&workspaces, project_id, resource_id)?
+            .broker
+            .pending_count()
+            .await
+    }
+
     pub async fn approve_next_write(
         &self,
         project_id: &str,

@@ -121,6 +121,12 @@ impl WorkspaceEffectBroker {
         Ok(result.data)
     }
 
+    /// Number of effects awaiting approval for this broker's owner. Used by the
+    /// deterministic harness to report pending governed work honestly.
+    pub async fn pending_count(&self) -> anyhow::Result<usize> {
+        Ok(self.approvals.pending_for_owner(&self.owner).await?.len())
+    }
+
     pub async fn approve_next(&self) -> anyhow::Result<i64> {
         let pending = self.approvals.pending_for_owner(&self.owner).await?;
         let pending = pending

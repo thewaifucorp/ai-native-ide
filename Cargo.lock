@@ -28,6 +28,7 @@ dependencies = [
  "ide-agent",
  "ide-domain",
  "ide-guidance",
+ "ide-harness",
  "ide-reconciliation",
  "notify",
  "portable-pty",
@@ -1932,6 +1933,13 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ide-harness"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
