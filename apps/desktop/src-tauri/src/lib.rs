@@ -33,6 +33,7 @@ use bridge::{
 };
 use ide_config::{ConfigField, ConfigPatch, DetectedEnvironment, IdeConfig};
 use ide_context::{CompiledContext, ContextInputs, Navigation};
+use ide_diff::Hunk;
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
@@ -575,6 +576,80 @@ async fn propose_workspace_write(
     // The governed lifecycle is the source of truth for the Activity Strip: an
     // effect is announced as awaiting approval or as written with its real
     // causal revision, never as a renderer-side assumption.
+    if result["awaitingApproval"] == serde_json::Value::Bool(true) {
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::AwaitingApproval,
+            effect_id,
+            path,
+            activity_id: None,
+        });
+    } else if result["written"] == serde_json::Value::Bool(true) {
+        let activity_id = bridge
+            .effect_causal_links(&project_id, &resource_id, &effect_id)
+            .await
+            .ok()
+            .and_then(|links| links.activity_ids.into_iter().next());
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::Written,
+            effect_id,
+            path,
+            activity_id,
+        });
+    }
+    Ok(result)
+}
+
+/// Diffs the on-disk file against the editor's proposed content, hunk by hunk.
+#[tauri::command]
+async fn workspace_file_diff(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+    relative_path: String,
+    proposed: String,
+) -> Result<Vec<Hunk>, String> {
+    bridge
+        .diff_workspace_file(
+            &project_id,
+            &resource_id,
+            PathBuf::from(&relative_path),
+            &proposed,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Proposes a write of only the selected hunks, merged onto the on-disk file.
+/// It flows through the same governed effect route as a full write.
+#[tauri::command]
+async fn propose_partial_workspace_write(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    project_id: String,
+    request: WorkspaceWriteRequest,
+    selected_hunks: Vec<usize>,
+) -> Result<serde_json::Value, String> {
+    let merged = bridge
+        .merge_workspace_content(
+            &project_id,
+            &request.resource_id,
+            request.relative_path.clone(),
+            &request.content,
+            &selected_hunks,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let resource_id = request.resource_id.clone();
+    let effect_id = request.effect_id.clone();
+    let path = request.relative_path.display().to_string();
+    let merged_request = WorkspaceWriteRequest {
+        content: merged,
+        ..request
+    };
+    let result = bridge
+        .propose_write(&project_id, merged_request)
+        .await
+        .map_err(|error| error.to_string())?;
     if result["awaitingApproval"] == serde_json::Value::Bool(true) {
         runtime.publish(HostEvent::WorkspaceEffect {
             phase: EffectPhase::AwaitingApproval,
@@ -1288,6 +1363,8 @@ pub fn run() {
             read_workspace_file,
             workspace_diff,
             propose_workspace_write,
+            workspace_file_diff,
+            propose_partial_workspace_write,
             approve_next_workspace_write,
             rollback_workspace_write,
             start_benchmark_preview,

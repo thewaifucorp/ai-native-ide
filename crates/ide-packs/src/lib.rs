@@ -178,7 +178,7 @@ impl PackRegistry {
             .into_iter()
             .map(|pack| (pack.id.clone(), pack))
             .collect();
-        let mut registry = Self {
+        let registry = Self {
             path,
             installed,
             applied: snapshot.applied,

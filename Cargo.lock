@@ -28,6 +28,7 @@ dependencies = [
  "ide-agent",
  "ide-config",
  "ide-context",
+ "ide-diff",
  "ide-domain",
  "ide-guidance",
  "ide-harness",
@@ -1929,6 +1930,13 @@ name = "ide-context"
 version = "0.1.0"
 dependencies = [
  "ide-guidance",
+ "serde",
+]
+
+[[package]]
+name = "ide-diff"
+version = "0.1.0"
+dependencies = [
  "serde",
 ]
 

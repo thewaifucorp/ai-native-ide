@@ -27,6 +27,7 @@ ide-semantic = { path = "../../../crates/ide-semantic" }
 ide-context = { path = "../../../crates/ide-context" }
 ide-packs = { path = "../../../crates/ide-packs" }
 ide-lifecycle = { path = "../../../crates/ide-lifecycle" }
+ide-diff = { path = "../../../crates/ide-diff" }
 notify = "8.2.0"
 portable-pty = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }

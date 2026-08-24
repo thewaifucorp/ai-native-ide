@@ -12,6 +12,7 @@ members = [
   "crates/ide-context",
   "crates/ide-packs",
   "crates/ide-lifecycle",
+  "crates/ide-diff",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]

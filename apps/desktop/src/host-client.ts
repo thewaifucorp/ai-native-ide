@@ -68,6 +68,18 @@ export interface WorkspaceDiff {
   content: string;
 }
 
+export type LineTag = "context" | "added" | "removed";
+export interface DiffLine {
+  tag: LineTag;
+  text: string;
+}
+export interface Hunk {
+  id: number;
+  oldStart: number;
+  newStart: number;
+  lines: DiffLine[];
+}
+
 export interface OpenedSemanticProject {
   project: SemanticProjectRecord;
   resources: WorkspaceResource[];
@@ -642,6 +654,23 @@ interface HostCommandMap {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
   };
+  workspace_file_diff: {
+    args: {
+      projectId: string;
+      resourceId: string;
+      relativePath: string;
+      proposed: string;
+    };
+    result: Hunk[];
+  };
+  propose_partial_workspace_write: {
+    args: {
+      projectId: string;
+      request: WorkspaceWriteRequest;
+      selectedHunks: number[];
+    };
+    result: WorkspaceEffectResult;
+  };
   approve_next_workspace_write: {
     args: { projectId: string; resourceId: string };
     result: number;
@@ -835,6 +864,17 @@ export interface HostClient {
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
+  ): Promise<HostCall<WorkspaceEffectResult>>;
+  workspaceFileDiff(
+    projectId: string,
+    resourceId: string,
+    relativePath: string,
+    proposed: string,
+  ): Promise<HostCall<Hunk[]>>;
+  proposePartialWorkspaceWrite(
+    projectId: string,
+    request: WorkspaceWriteRequest,
+    selectedHunks: number[],
   ): Promise<HostCall<WorkspaceEffectResult>>;
   approveNextWorkspaceWrite(
     projectId: string,
@@ -1045,6 +1085,19 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
+    workspaceFileDiff: (projectId, resourceId, relativePath, proposed) =>
+      call("workspace_file_diff", {
+        projectId,
+        resourceId,
+        relativePath,
+        proposed,
+      }),
+    proposePartialWorkspaceWrite: (projectId, request, selectedHunks) =>
+      call("propose_partial_workspace_write", {
+        projectId,
+        request,
+        selectedHunks,
+      }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>
       call("approve_next_workspace_write", { projectId, resourceId }),
     rollbackWorkspaceWrite: (projectId, resourceId, effectId) =>

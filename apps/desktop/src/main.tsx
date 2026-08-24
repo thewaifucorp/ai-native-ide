@@ -32,6 +32,7 @@ import {
   type ReadinessVerdict,
   type ExportManifest,
   type PublishRecord,
+  type Hunk,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -182,6 +183,12 @@ function App() {
   );
   const [publications, setPublications] = useState<PublishRecord[]>([]);
   const [republishProblem, setRepublishProblem] = useState("");
+  const [hunks, setHunks] = useState<Hunk[]>([]);
+  const [selectedHunks, setSelectedHunks] = useState<number[]>([]);
+  const [partialPending, setPartialPending] = useState<{
+    effectId: string;
+    selected: number[];
+  } | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -705,6 +712,82 @@ function App() {
     const subject = selectedFile ?? project?.title;
     if (!subject) return;
     setAagCall(await hostClient.aagRelations(subject));
+  }
+  async function loadHunks() {
+    if (!project || !resource || !selectedFile) return;
+    const result = await hostClient.workspaceFileDiff(
+      project.id,
+      resource.id,
+      selectedFile,
+      rawDocument,
+    );
+    if (result.state === "available") {
+      setHunks(result.value);
+      setSelectedHunks(result.value.map((hunk) => hunk.id));
+    }
+  }
+  function toggleHunk(id: number) {
+    setSelectedHunks((current) =>
+      current.includes(id)
+        ? current.filter((value) => value !== id)
+        : [...current, id],
+    );
+  }
+  async function proposePartial() {
+    if (!project || !resource || !selectedFile) return;
+    const effectId = `partial-${project.id}-${Date.now()}`;
+    const result = await hostClient.proposePartialWorkspaceWrite(
+      project.id,
+      {
+        resourceId: resource.id,
+        effectId,
+        relativePath: selectedFile,
+        content: rawDocument,
+      },
+      selectedHunks,
+    );
+    if (result.state !== "available") {
+      setEffectState("failed");
+      return;
+    }
+    if (result.value.written) {
+      setLastFileEffectId(effectId);
+      setPartialPending(null);
+      setHunks([]);
+      setEffectState("written");
+      await loadWorkspaceFiles(project, resource);
+    } else {
+      setPartialPending({ effectId, selected: selectedHunks });
+      setEffectState("awaiting");
+    }
+  }
+  async function approvePartial() {
+    if (!project || !resource || !selectedFile || !partialPending) return;
+    const approval = await hostClient.approveNextWorkspaceWrite(
+      project.id,
+      resource.id,
+    );
+    if (approval.state !== "available") {
+      setEffectState("failed");
+      return;
+    }
+    const result = await hostClient.proposePartialWorkspaceWrite(
+      project.id,
+      {
+        resourceId: resource.id,
+        effectId: partialPending.effectId,
+        relativePath: selectedFile,
+        content: rawDocument,
+      },
+      partialPending.selected,
+    );
+    if (result.state === "available" && result.value.written) {
+      setLastFileEffectId(partialPending.effectId);
+      setPartialPending(null);
+      setHunks([]);
+      setEffectState("written");
+      await loadWorkspaceFiles(project, resource);
+    }
   }
   async function inspectWorkspaceDiff() {
     if (!project || !resource) return;
@@ -1357,6 +1440,34 @@ function App() {
                   <button className="text-button" disabled={!resource} onClick={() => void inspectWorkspaceDiff()} type="button">
                     Ver diff do checkpoint
                   </button>
+                  <button className="text-button" disabled={!selectedFile} onClick={() => void loadHunks()} type="button">
+                    Diff por hunk
+                  </button>
+                  {hunks.length > 0 && (
+                    <div className="file-list" aria-label="Hunks do arquivo">
+                      {hunks.map((hunk) => (
+                        <label key={hunk.id} className="text-button">
+                          <input
+                            checked={selectedHunks.includes(hunk.id)}
+                            onChange={() => toggleHunk(hunk.id)}
+                            type="checkbox"
+                          />{" "}
+                          hunk {hunk.id} · linha {hunk.oldStart + 1} ·{" "}
+                          {hunk.lines.filter((line) => line.tag === "added").length}+ /{" "}
+                          {hunk.lines.filter((line) => line.tag === "removed").length}-
+                        </label>
+                      ))}
+                      {partialPending ? (
+                        <button className="primary-action" onClick={() => void approvePartial()} type="button">
+                          Aprovar hunks →
+                        </button>
+                      ) : (
+                        <button className="outline-action" onClick={() => void proposePartial()} type="button">
+                          Propor hunks selecionados
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {workspaceDiff?.state === "available" && (
                     <pre>{workspaceDiff.value.content || "Nenhuma alteração não confirmada."}</pre>
                   )}

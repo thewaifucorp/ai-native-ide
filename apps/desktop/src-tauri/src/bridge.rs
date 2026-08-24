@@ -23,6 +23,7 @@ use ide_agent::{
     AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
 };
 use ide_config::{ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig};
+use ide_diff::Hunk;
 use ide_domain::{
     ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
@@ -673,6 +674,48 @@ impl DesktopBridge {
             .broker
             .pending_count()
             .await
+    }
+
+    /// Diffs the on-disk file against a proposed content, hunk by hunk, so a
+    /// person can accept only some changes without knowing Git.
+    pub async fn diff_workspace_file(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+        relative_path: PathBuf,
+        proposed: &str,
+    ) -> anyhow::Result<Vec<Hunk>> {
+        let original = match self
+            .read_workspace_file(project_id, resource_id, relative_path)
+            .await
+        {
+            Ok(contents) => contents.content,
+            Err(_) => String::new(),
+        };
+        Ok(ide_diff::diff(&original, proposed))
+    }
+
+    /// Merges only the selected hunks of a proposed change onto the on-disk file.
+    pub async fn merge_workspace_content(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+        relative_path: PathBuf,
+        proposed: &str,
+        selected_hunks: &[usize],
+    ) -> anyhow::Result<String> {
+        let original = match self
+            .read_workspace_file(project_id, resource_id, relative_path)
+            .await
+        {
+            Ok(contents) => contents.content,
+            Err(_) => String::new(),
+        };
+        Ok(ide_diff::merge_selected(
+            &original,
+            proposed,
+            selected_hunks,
+        ))
     }
 
     pub async fn approve_next_write(
