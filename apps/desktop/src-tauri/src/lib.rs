@@ -194,14 +194,17 @@ fn registered_git_executable() -> std::io::Result<PathBuf> {
     ))
 }
 
-/// Builds the fixed, host-owned workspace inspection command. Windows ConPTY
-/// needs a console launcher for short-lived console programs such as Git: a
-/// direct `git.exe` child can exit before its output pipe is drained. The
-/// renderer still selects neither the shell nor the command.
+/// Builds the fixed, host-owned workspace inspection command. Windows uses the
+/// registered `git` name through cmd.exe: the direct ConPTY crate builds a
+/// Windows command line itself and cannot safely quote an executable path such
+/// as `C:\\Program Files\\Git\\cmd\\git.exe`. The renderer still selects neither
+/// the shell nor the command.
 fn workspace_inspection_spec(scope: &WatchScope) -> std::io::Result<TrustedProcessSpec> {
-    let git = registered_git_executable()?;
     #[cfg(windows)]
     {
+        // Resolve before spawn so a PATH without the registered host extension
+        // fails closed instead of handing cmd.exe an arbitrary command name.
+        let _registered_git = registered_git_executable()?;
         let command_interpreter = std::env::var_os("ComSpec")
             .map(PathBuf::from)
             .ok_or_else(|| {
@@ -211,18 +214,15 @@ fn workspace_inspection_spec(scope: &WatchScope) -> std::io::Result<TrustedProce
                 )
             })?
             .canonicalize()?;
-        let command = format!(
-            "\"\"{}\" --no-pager status --short & timeout /t 1 /nobreak >nul\"",
-            git.display()
-        );
         TrustedProcessSpec::for_registered_extension(
             command_interpreter,
-            ["/d", "/s", "/c", command.as_str()],
+            ["/d", "/s", "/c", "git --no-pager status --short"],
             scope,
         )
     }
     #[cfg(not(windows))]
     {
+        let git = registered_git_executable()?;
         TrustedProcessSpec::for_registered_extension(
             git,
             ["--no-pager", "status", "--short"],
