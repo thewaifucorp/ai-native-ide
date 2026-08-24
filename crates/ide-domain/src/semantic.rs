@@ -156,6 +156,29 @@ impl SemanticProjectStore {
             .optional()?)
     }
 
+    /// Lists durable project contexts independently of their attached resources
+    /// and transient agent sessions. Hosts use this to restore a person's work
+    /// after restart without inventing a default project.
+    pub fn list_projects(&self) -> anyhow::Result<Vec<ProjectRecord>> {
+        let conn = self.connect()?;
+        let mut statement = conn.prepare(
+            "SELECT id, title, intent, created_at_ms, updated_at_ms
+             FROM semantic_projects ORDER BY updated_at_ms DESC, id ASC",
+        )?;
+        let projects = statement
+            .query_map([], |row| {
+                Ok(ProjectRecord {
+                    id: ProjectId(row.get(0)?),
+                    title: row.get(1)?,
+                    intent: row.get(2)?,
+                    created_at_ms: row.get(3)?,
+                    updated_at_ms: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(projects)
+    }
+
     /// Associates an existing directory/repository with a project. A canonical locator is
     /// deduplicated globally, so the same resource can safely belong to other projects.
     pub fn attach_local_resource(

@@ -187,6 +187,7 @@ interface HostCommandMap {
     args: { input: SemanticProjectInput };
     result: SemanticProjectRecord;
   };
+  list_semantic_projects: { args: undefined; result: SemanticProjectRecord[] };
   open_semantic_project: {
     args: { projectId: string };
     result: OpenedSemanticProject | null;
@@ -284,6 +285,7 @@ export interface HostClient {
   createSemanticProject(
     input: SemanticProjectInput,
   ): Promise<HostCall<SemanticProjectRecord>>;
+  listSemanticProjects(): Promise<HostCall<SemanticProjectRecord[]>>;
   openSemanticProject(
     projectId: string,
   ): Promise<HostCall<OpenedSemanticProject | null>>;
@@ -432,6 +434,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     emitProbe: () => call("emit_host_probe", undefined),
     createSemanticProject: (input) =>
       call("create_semantic_project", { input }),
+    listSemanticProjects: () => call("list_semantic_projects", undefined),
     openSemanticProject: (projectId) =>
       call("open_semantic_project", { projectId }),
     attachWorkspaceFromPicker: (projectId, resourceId) =>

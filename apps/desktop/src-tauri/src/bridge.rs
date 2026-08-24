@@ -193,6 +193,10 @@ impl DesktopBridge {
             .open_project(&ProjectId(project_id.to_owned()))
     }
 
+    pub fn list_projects(&self) -> anyhow::Result<Vec<ProjectRecord>> {
+        self.projects.list_projects()
+    }
+
     /// Restores the persisted project/resource association into this host
     /// process. Reopening a project must not require the renderer to select the
     /// same directory again: its canonical location was approved and persisted

@@ -107,6 +107,7 @@ function App() {
   const [section, setSection] = useState<(typeof navItems)[number]>("Overview");
   const [activeSignal, setActiveSignal] = useState<IntentSignal | null>(null);
   const [project, setProject] = useState<SemanticProjectRecord | null>(null);
+  const [projects, setProjects] = useState<SemanticProjectRecord[]>([]);
   const [projectCall, setProjectCall] =
     useState<HostCall<SemanticProjectRecord> | null>(null);
   const [resource, setResource] = useState<WorkspaceResource | null>(null);
@@ -155,6 +156,13 @@ function App() {
       return [...current, { role, text }];
     });
   }
+  useEffect(() => {
+    void hostClient.listSemanticProjects().then((result) => {
+      if (result.state !== "available") return;
+      setProjects(result.value);
+      if (result.value[0]) void openProject(result.value[0].id);
+    });
+  }, []);
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
     void hostClient
@@ -232,6 +240,24 @@ function App() {
     setActiveSignal(signal);
     setSection("Build");
   }
+  async function openProject(projectId: string) {
+    const result = await hostClient.openSemanticProject(projectId);
+    if (result.state !== "available" || !result.value) return;
+    setProject(result.value.project);
+    setResource(result.value.resources[0] ?? null);
+    setIntent(result.value.project.intent);
+    setAgentSession(null);
+    setAgentTranscript([]);
+    setSection("Overview");
+  }
+  function startNewProject() {
+    setProject(null);
+    setResource(null);
+    setIntent("");
+    setAgentSession(null);
+    setAgentTranscript([]);
+    setSection("Overview");
+  }
   async function createProject() {
     const projectId = projectIdentity(intent);
     const result = await hostClient.createSemanticProject({
@@ -242,6 +268,10 @@ function App() {
     setProjectCall(result);
     if (result.state === "available") {
       setProject(result.value);
+      setProjects((current) => [
+        result.value,
+        ...current.filter((candidate) => candidate.id !== result.value.id),
+      ]);
       setSection("Build");
     }
   }
@@ -434,16 +464,25 @@ function App() {
           AI
         </div>
         <div className="rail-divider" />
-        <button
-          className="project-chip project-chip--active"
-          aria-label={`Projeto ativo: ${project?.title ?? "nenhum projeto"}`}
-          type="button"
-        >
-          NP
-        </button>
+        {projects.map((candidate) => (
+          <button
+            key={candidate.id}
+            className={
+              candidate.id === project?.id
+                ? "project-chip project-chip--active"
+                : "project-chip"
+            }
+            aria-label={`Abrir projeto: ${candidate.title}`}
+            onClick={() => void openProject(candidate.id)}
+            type="button"
+          >
+            {candidate.title.slice(0, 2).toUpperCase()}
+          </button>
+        ))}
         <button
           className="project-chip"
           aria-label="Adicionar projeto"
+          onClick={startNewProject}
           type="button"
         >
           +
@@ -603,10 +642,11 @@ function App() {
               </span>
               <button
                 className="primary-action"
+                disabled={Boolean(project)}
                 onClick={() => void createProject()}
                 type="button"
               >
-                {project ? "Atualizar projeto" : "Começar a construir"}{" "}
+                {project ? "Projeto aberto" : "Começar a construir"}{" "}
                 <span>→</span>
               </button>
             </div>

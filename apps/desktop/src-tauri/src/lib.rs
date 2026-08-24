@@ -401,6 +401,13 @@ fn create_semantic_project(
 }
 
 #[tauri::command]
+fn list_semantic_projects(
+    bridge: State<'_, Arc<DesktopBridge>>,
+) -> Result<Vec<ProjectRecord>, String> {
+    bridge.list_projects().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn open_semantic_project(
     bridge: State<'_, Arc<DesktopBridge>>,
     runtime: State<'_, HostRuntime>,
@@ -663,6 +670,7 @@ pub fn run() {
             open_surface,
             emit_host_probe,
             create_semantic_project,
+            list_semantic_projects,
             open_semantic_project,
             attach_workspace_from_picker,
             propose_workspace_write,
