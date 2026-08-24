@@ -213,6 +213,16 @@ impl DesktopBridge {
         self.projects.list_projects()
     }
 
+    pub fn update_project_intent(
+        &self,
+        project_id: &str,
+        intent: String,
+    ) -> anyhow::Result<ProjectRecord> {
+        validate_identifier("project id", project_id)?;
+        self.projects
+            .update_project_intent(&ProjectId(project_id.to_owned()), intent)
+    }
+
     /// Restores the persisted project/resource association into this host
     /// process. Reopening a project must not require the renderer to select the
     /// same directory again: its canonical location was approved and persisted

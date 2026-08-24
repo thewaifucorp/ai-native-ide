@@ -156,6 +156,26 @@ impl SemanticProjectStore {
             .optional()?)
     }
 
+    /// Updates the durable project intent. The editable markdown artifact may
+    /// mirror this value, but the semantic project remains independently
+    /// recoverable when no resource is attached yet.
+    pub fn update_project_intent(
+        &self,
+        project_id: &ProjectId,
+        intent: String,
+    ) -> anyhow::Result<ProjectRecord> {
+        validate_text("project intent", &intent)?;
+        let conn = self.connect()?;
+        let changed = conn.execute(
+            "UPDATE semantic_projects SET intent = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![project_id.0, intent, now_ms()],
+        )?;
+        if changed != 1 {
+            bail!("semantic project does not exist")
+        }
+        Ok(self.project_from_connection(&conn, project_id)?)
+    }
+
     /// Lists durable project contexts independently of their attached resources
     /// and transient agent sessions. Hosts use this to restore a person's work
     /// after restart without inventing a default project.

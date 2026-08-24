@@ -409,6 +409,17 @@ fn list_semantic_projects(
 }
 
 #[tauri::command]
+fn update_semantic_project_intent(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    intent: String,
+) -> Result<ProjectRecord, String> {
+    bridge
+        .update_project_intent(&project_id, intent)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn open_semantic_project(
     bridge: State<'_, Arc<DesktopBridge>>,
     runtime: State<'_, HostRuntime>,
@@ -704,6 +715,7 @@ pub fn run() {
             emit_host_probe,
             create_semantic_project,
             list_semantic_projects,
+            update_semantic_project_intent,
             open_semantic_project,
             attach_workspace_from_picker,
             list_workspace_files,

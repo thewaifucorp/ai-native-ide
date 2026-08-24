@@ -400,7 +400,17 @@ function App() {
       return;
     }
     setEffectState(result.value.written ? "written" : "awaiting");
-    if (result.value.written) await loadWorkspaceFiles(project, resource);
+    if (result.value.written) {
+      const updated = await hostClient.updateSemanticProjectIntent(project.id, intent);
+      if (updated.state === "available") {
+        setProject(updated.value);
+        setProjects((current) => [
+          updated.value,
+          ...current.filter((candidate) => candidate.id !== updated.value.id),
+        ]);
+      }
+      await loadWorkspaceFiles(project, resource);
+    }
   }
   async function approveProjectIntent() {
     if (!project || !resource) return;

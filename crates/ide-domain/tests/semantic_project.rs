@@ -63,6 +63,34 @@ fn project_resources_and_scopes_survive_reopen_without_a_transcript() {
 }
 
 #[test]
+fn durable_project_intent_can_change_without_recreating_the_project() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let database = temp.path().join("semantic.sqlite3");
+    let store = SemanticProjectStore::open(&database).expect("open store");
+    let created = store
+        .create_project(project("project:intent"))
+        .expect("create project");
+
+    let updated = store
+        .update_project_intent(&created.id, "Build a local-first notes app".to_owned())
+        .expect("update intent");
+    assert_eq!(updated.id, created.id);
+    assert_eq!(updated.intent, "Build a local-first notes app");
+    assert!(updated.updated_at_ms >= created.updated_at_ms);
+
+    drop(store);
+    let reopened = SemanticProjectStore::open(&database).expect("reopen");
+    assert_eq!(
+        reopened
+            .open_project(&created.id)
+            .expect("read")
+            .expect("project")
+            .intent,
+        "Build a local-first notes app"
+    );
+}
+
+#[test]
 fn resource_is_reusable_but_session_scope_never_leaks_between_projects() {
     let temp = tempfile::tempdir().expect("temp dir");
     let shared_root = temp.path().join("shared");
