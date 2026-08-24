@@ -112,6 +112,28 @@ describe("host client", () => {
     });
   });
 
+  it("reads only a relative file through the selected resource boundary", async () => {
+    const invoke = vi
+      .fn<HostTransport["invoke"]>()
+      .mockResolvedValue({ relativePath: "src/app.ts", content: "export {};" });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(
+      client.readWorkspaceFile("auction", "auction-local", "src/app.ts"),
+    ).resolves.toMatchObject({
+      state: "available",
+      value: { relativePath: "src/app.ts" },
+    });
+    expect(invoke).toHaveBeenCalledWith("read_workspace_file", {
+      projectId: "auction",
+      resourceId: "auction-local",
+      relativePath: "src/app.ts",
+    });
+  });
+
   it("controls only an opaque host-owned terminal session", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
       terminalId: "terminal-1",
