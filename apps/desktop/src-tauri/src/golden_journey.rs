@@ -2,7 +2,7 @@ use super::host::OutputStream;
 use super::{
     benchmark_preview::{BenchmarkPreviewHost, PreviewReconciliationAction},
     bridge::{DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection, WorkspaceWriteRequest},
-    registered_git_executable, HostEvent, HostExtension, HostRuntime, TrustedProcessSpec,
+    registered_git_executable, workspace_inspection_spec, HostEvent, HostExtension, HostRuntime,
     WatchScope,
 };
 use ide_domain::ResourceKind;
@@ -106,12 +106,8 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
             .push_back(event);
     }));
     let terminal_scope = WatchScope::from_project_resource(&root).expect("scope workspace PTY");
-    let terminal_spec = TrustedProcessSpec::for_registered_extension(
-        registered_git_executable().expect("find registered Git"),
-        ["--no-pager", "status", "--short"],
-        &terminal_scope,
-    )
-    .expect("construct fixed workspace inspection");
+    let terminal_spec =
+        workspace_inspection_spec(&terminal_scope).expect("construct fixed workspace inspection");
     let _terminal = terminal_runtime
         .spawn_pty(terminal_spec, 24, 120)
         .expect("start host-owned workspace PTY");

@@ -140,13 +140,7 @@ async fn start_workspace_inspection(
         .await
         .map_err(|error| error.to_string())?;
     let scope = WatchScope::from_project_resource(root).map_err(|error| error.to_string())?;
-    let executable = registered_git_executable().map_err(|error| error.to_string())?;
-    let spec = TrustedProcessSpec::for_registered_extension(
-        executable,
-        ["--no-pager", "status", "--short"],
-        &scope,
-    )
-    .map_err(|error| error.to_string())?;
+    let spec = workspace_inspection_spec(&scope).map_err(|error| error.to_string())?;
     let pty = runtime
         .spawn_pty(spec, 24, 120)
         .map_err(|error| error.to_string())?;
@@ -198,6 +192,43 @@ fn registered_git_executable() -> std::io::Result<PathBuf> {
         std::io::ErrorKind::NotFound,
         "registered Git executable was not found in PATH",
     ))
+}
+
+/// Builds the fixed, host-owned workspace inspection command. Windows ConPTY
+/// needs a console launcher for short-lived console programs such as Git: a
+/// direct `git.exe` child can exit before its output pipe is drained. The
+/// renderer still selects neither the shell nor the command.
+fn workspace_inspection_spec(scope: &WatchScope) -> std::io::Result<TrustedProcessSpec> {
+    let git = registered_git_executable()?;
+    #[cfg(windows)]
+    {
+        let command_interpreter = std::env::var_os("ComSpec")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "registered Windows command interpreter was not found",
+                )
+            })?
+            .canonicalize()?;
+        let command = format!(
+            "\"\"{}\" --no-pager status --short & timeout /t 1 /nobreak >nul\"",
+            git.display()
+        );
+        TrustedProcessSpec::for_registered_extension(
+            command_interpreter,
+            ["/d", "/s", "/c", command.as_str()],
+            scope,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        TrustedProcessSpec::for_registered_extension(
+            git,
+            ["--no-pager", "status", "--short"],
+            scope,
+        )
+    }
 }
 
 #[tauri::command]
