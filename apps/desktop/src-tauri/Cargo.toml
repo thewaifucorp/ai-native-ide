@@ -27,3 +27,9 @@ tauri = "2.11.5"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-opener = "2.5.3"
 tokio = { version = "1.48.0", features = ["rt", "macros", "net", "sync", "io-util"] }
+
+[target.'cfg(windows)'.dependencies]
+# `portable-pty` 0.9's ConPTY reader can leave output permanently blocked on
+# Windows. Keep its portable backend elsewhere, but use the direct ConPTY
+# implementation for the Windows host extension.
+conpty = "0.7.0"

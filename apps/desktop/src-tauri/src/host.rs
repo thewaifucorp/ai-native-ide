@@ -13,6 +13,7 @@ use std::{
 };
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+#[cfg(not(windows))]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 
@@ -317,6 +318,7 @@ fn stream_lines(
 
 /// A real PTY host extension. It is not yet exposed as a renderer command: T05
 /// will bind it to project-scoped terminal capabilities and cancellation UX.
+#[cfg(not(windows))]
 pub struct ManagedPty {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Box<dyn std::io::Write + Send>,
@@ -325,6 +327,7 @@ pub struct ManagedPty {
     lifecycle: ProcessLifecycle,
 }
 
+#[cfg(not(windows))]
 impl ManagedPty {
     fn spawn(
         spec: TrustedProcessSpec,
@@ -416,6 +419,99 @@ impl ManagedPty {
 
     pub fn lifecycle(&self) -> ProcessLifecycle {
         self.lifecycle
+    }
+}
+
+/// Windows uses the direct ConPTY implementation instead of portable-pty.
+///
+/// portable-pty 0.9 can start a Windows child but leave its reader blocked
+/// forever (including for a short `git status`). The direct implementation
+/// owns the same Windows pseudo-console primitive while keeping its pipe
+/// handles independent from the process lifecycle.
+#[cfg(windows)]
+pub struct ManagedPty {
+    child: conpty::Process,
+    writer: conpty::io::PipeWriter,
+    sink: EventSink,
+    lifecycle: ProcessLifecycle,
+}
+
+#[cfg(windows)]
+impl ManagedPty {
+    fn spawn(
+        spec: TrustedProcessSpec,
+        rows: u16,
+        columns: u16,
+        sink: EventSink,
+    ) -> std::io::Result<Self> {
+        let mut command = Command::new(spec.program);
+        command.args(spec.args).current_dir(spec.working_directory);
+
+        let mut options = conpty::ProcessOptions::default();
+        options.set_console_size(Some((columns as i16, rows as i16)));
+        let mut child = options.spawn(command).map_err(io_error)?;
+        let reader = child.output().map_err(io_error)?;
+        let writer = child.input().map_err(io_error)?;
+        let pid = child.pid();
+
+        stream_lines(
+            HostExtension::Pty,
+            OutputStream::Pty,
+            reader,
+            Arc::clone(&sink),
+        );
+        sink(HostEvent::ProcessStarted {
+            extension: HostExtension::Pty,
+            pid,
+        });
+
+        Ok(Self {
+            child,
+            writer,
+            sink,
+            lifecycle: ProcessLifecycle::Running,
+        })
+    }
+
+    pub fn write(&mut self, input: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        self.writer.write_all(input)
+    }
+
+    pub fn resize(&mut self, rows: u16, columns: u16) -> std::io::Result<()> {
+        self.child
+            .resize(columns as i16, rows as i16)
+            .map_err(io_error)
+    }
+
+    pub fn stop(&mut self) -> std::io::Result<()> {
+        if self.lifecycle == ProcessLifecycle::Stopped {
+            return Ok(());
+        }
+        self.child.exit(1).map_err(io_error)?;
+        let exit_code = self.child.wait(None).map_err(io_error)?;
+        self.record_exit(exit_code as i32);
+        Ok(())
+    }
+
+    pub fn poll(&mut self) -> std::io::Result<ProcessLifecycle> {
+        if self.lifecycle == ProcessLifecycle::Running && !self.child.is_alive() {
+            let exit_code = self.child.wait(Some(0)).map_err(io_error)?;
+            self.record_exit(exit_code as i32);
+        }
+        Ok(self.lifecycle)
+    }
+
+    pub fn lifecycle(&self) -> ProcessLifecycle {
+        self.lifecycle
+    }
+
+    fn record_exit(&mut self, exit_code: i32) {
+        self.lifecycle = ProcessLifecycle::Stopped;
+        (self.sink)(HostEvent::ProcessExited {
+            extension: HostExtension::Pty,
+            exit_code: Some(exit_code),
+        });
     }
 }
 
