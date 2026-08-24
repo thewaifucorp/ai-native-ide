@@ -203,6 +203,9 @@ export interface HostEventPayload {
   exitCode?: number | null;
   extension?: "agentSubprocess" | "preview" | "pty" | "filesystemWatch";
   stream?: "stdout" | "stderr" | "pty";
+  phase?: "awaitingApproval" | "written" | "rolledBack";
+  effectId?: string;
+  activityId?: string | null;
 }
 
 interface HostCommandMap {

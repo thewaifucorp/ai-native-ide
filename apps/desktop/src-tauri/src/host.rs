@@ -64,6 +64,24 @@ pub enum HostEvent {
         path: PathBuf,
         detail: String,
     },
+    /// Governed workspace-effect lifecycle, surfaced so the Activity Strip shows
+    /// the real causal chain (proposed → approved → written/rolled back) rather
+    /// than a renderer-only guess. The activity id ties an executed effect to its
+    /// persisted semantic revision.
+    WorkspaceEffect {
+        phase: EffectPhase,
+        effect_id: String,
+        path: String,
+        activity_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EffectPhase {
+    AwaitingApproval,
+    Written,
+    RolledBack,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]

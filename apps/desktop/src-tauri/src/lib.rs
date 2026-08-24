@@ -36,7 +36,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub use host::{
-    ActiveWatch, HostEvent, HostExtension, HostRuntime, ManagedProcess, ManagedPty,
+    ActiveWatch, EffectPhase, HostEvent, HostExtension, HostRuntime, ManagedProcess, ManagedPty,
     PreviewSupervisor, ProcessLifecycle, TrustedProcessSpec, WatchScope,
 };
 pub use model::{HostSurface, PreviewHealth, ViabilityGate, ViabilityGateStatus};
@@ -549,13 +549,41 @@ async fn workspace_diff(
 #[tauri::command]
 async fn propose_workspace_write(
     bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
     project_id: String,
     request: WorkspaceWriteRequest,
 ) -> Result<serde_json::Value, String> {
-    bridge
+    let resource_id = request.resource_id.clone();
+    let effect_id = request.effect_id.clone();
+    let path = request.relative_path.display().to_string();
+    let result = bridge
         .propose_write(&project_id, request)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // The governed lifecycle is the source of truth for the Activity Strip: an
+    // effect is announced as awaiting approval or as written with its real
+    // causal revision, never as a renderer-side assumption.
+    if result["awaitingApproval"] == serde_json::Value::Bool(true) {
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::AwaitingApproval,
+            effect_id,
+            path,
+            activity_id: None,
+        });
+    } else if result["written"] == serde_json::Value::Bool(true) {
+        let activity_id = bridge
+            .effect_causal_links(&project_id, &resource_id, &effect_id)
+            .await
+            .ok()
+            .and_then(|links| links.activity_ids.into_iter().next());
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::Written,
+            effect_id,
+            path,
+            activity_id,
+        });
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -573,6 +601,7 @@ async fn approve_next_workspace_write(
 #[tauri::command]
 async fn rollback_workspace_write(
     bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
     project_id: String,
     resource_id: String,
     effect_id: String,
@@ -580,7 +609,14 @@ async fn rollback_workspace_write(
     bridge
         .rollback_write(&project_id, &resource_id, &effect_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    runtime.publish(HostEvent::WorkspaceEffect {
+        phase: EffectPhase::RolledBack,
+        effect_id,
+        path: String::new(),
+        activity_id: None,
+    });
+    Ok(())
 }
 
 #[tauri::command]

@@ -208,6 +208,24 @@ function App() {
     let unsubscribe: (() => void) | null = null;
     void hostClient
       .listenHostEvents((event) => {
+        if (event.kind === "workspaceEffect") {
+          const phaseLabel =
+            event.phase === "awaitingApproval"
+              ? "efeito aguardando aprovação"
+              : event.phase === "written"
+                ? "efeito aplicado"
+                : "efeito revertido";
+          const causal = event.activityId
+            ? ` · atividade ${event.activityId}`
+            : "";
+          setHostActivity((current) =>
+            [
+              `${phaseLabel}: ${event.effectId ?? ""}${event.path ? ` (${event.path})` : ""}${causal}`,
+              ...current,
+            ].slice(0, 6),
+          );
+          return;
+        }
         const detail =
           event.line ??
           event.message ??
