@@ -26,6 +26,10 @@ use ide_domain::{
     ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
 };
+use ide_guidance::{
+    ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft,
+    GuidanceRegistry, GuidanceScope, HygieneFinding, TruthDeclaration, TruthFinding, TruthRegistry,
+};
 use ide_reconciliation::CausalLinks;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -169,6 +173,8 @@ pub struct DesktopBridge {
     workspaces: Mutex<BTreeMap<String, AttachedWorkspace>>,
     effect_links: Mutex<BTreeMap<String, CausalLinks>>,
     agents: Mutex<BTreeMap<String, Arc<AcpxAgentFacade>>>,
+    guidance: Mutex<GuidanceRegistry>,
+    truth: Mutex<TruthRegistry>,
 }
 
 impl DesktopBridge {
@@ -191,7 +197,79 @@ impl DesktopBridge {
             workspaces: Mutex::new(BTreeMap::new()),
             effect_links: Mutex::new(BTreeMap::new()),
             agents: Mutex::new(BTreeMap::new()),
+            guidance: Mutex::new(GuidanceRegistry::open(data_directory.join("guidance"))?),
+            truth: Mutex::new(TruthRegistry::open(data_directory.join("truth"))?),
         })
+    }
+
+    // --- Guidance -------------------------------------------------------
+
+    pub async fn capture_guidance(
+        &self,
+        draft: GuidanceDraft,
+        destination: CaptureDestination,
+    ) -> anyhow::Result<Guidance> {
+        self.guidance.lock().await.capture(draft, destination)
+    }
+
+    pub async fn activate_guidance(&self, id: &str) -> anyhow::Result<Guidance> {
+        self.guidance.lock().await.activate(id)
+    }
+
+    pub async fn import_steering(
+        &self,
+        name: &str,
+        text: &str,
+        scope: GuidanceScope,
+    ) -> anyhow::Result<Guidance> {
+        self.guidance
+            .lock()
+            .await
+            .import_steering(name, text, scope, &self.owner)
+    }
+
+    pub async fn list_guidance(&self) -> Vec<Guidance> {
+        self.guidance.lock().await.list()
+    }
+
+    pub async fn guidance_applied_now(&self, context: ActivityContext) -> Vec<AppliedGuidance> {
+        self.guidance.lock().await.applied_now(&context)
+    }
+
+    pub async fn guidance_hygiene(&self) -> Vec<HygieneFinding> {
+        self.guidance.lock().await.hygiene()
+    }
+
+    // --- Local Truth Registry ------------------------------------------
+
+    pub async fn truth_declare(
+        &self,
+        subject: &str,
+        scope: GuidanceScope,
+        authority_path: &str,
+        precedence: i64,
+        provenance: &str,
+    ) -> anyhow::Result<TruthDeclaration> {
+        self.truth
+            .lock()
+            .await
+            .declare(subject, scope, authority_path, precedence, provenance)
+    }
+
+    pub async fn truth_add_consumer(&self, id: &str, consumer: &str) -> anyhow::Result<()> {
+        self.truth.lock().await.add_consumer(id, consumer)
+    }
+
+    pub async fn truth_list(&self) -> Vec<TruthDeclaration> {
+        self.truth.lock().await.list()
+    }
+
+    pub async fn truth_consumers(&self, subject: &str) -> Vec<String> {
+        self.truth.lock().await.consumers_of(subject)
+    }
+
+    pub async fn truth_conflicts(&self) -> Vec<TruthFinding> {
+        self.truth.lock().await.conflicts()
     }
 
     pub fn create_project(&self, input: ProjectIntentInput) -> anyhow::Result<ProjectRecord> {

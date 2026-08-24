@@ -4,6 +4,7 @@ members = [
   "crates/ide-domain",
   "crates/ide-agent",
   "crates/ide-reconciliation",
+  "crates/ide-guidance",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]

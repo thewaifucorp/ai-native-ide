@@ -27,6 +27,7 @@ dependencies = [
  "conpty",
  "ide-agent",
  "ide-domain",
+ "ide-guidance",
  "ide-reconciliation",
  "notify",
  "portable-pty",
@@ -1922,6 +1923,15 @@ dependencies = [
  "tempfile",
  "tokio",
  "walkdir",
+]
+
+[[package]]
+name = "ide-guidance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -20,6 +20,8 @@ import {
 import {
   hostClient,
   type AagRelations,
+  type AppliedGuidance,
+  type CaptureDestination,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -152,6 +154,9 @@ function App() {
     null,
   );
   const [aagCall, setAagCall] = useState<HostCall<AagRelations> | null>(null);
+  const [appliedGuidance, setAppliedGuidance] = useState<AppliedGuidance[]>([]);
+  const [guidanceName, setGuidanceName] = useState("");
+  const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
     createGameModeState(),
   );
@@ -286,6 +291,18 @@ function App() {
       window.clearInterval(timer);
     };
   }, [agentSession, project, resource]);
+  useEffect(() => {
+    void hostClient
+      .guidanceAppliedNow({
+        projectId: project?.id ?? null,
+        resourceId: resource?.id ?? null,
+        sessionId: agentSession?.sessionId ?? null,
+        application: null,
+      })
+      .then((result) => {
+        if (result.state === "available") setAppliedGuidance(result.value);
+      });
+  }, [project, resource, agentSession]);
   useEffect(() => {
     if (!preview || preview.health === "stopped") return;
     let active = true;
@@ -522,6 +539,41 @@ function App() {
     setSelectedFile(path);
     setRawDocument("");
     setNewFilePath("");
+  }
+  async function refreshAppliedGuidance() {
+    const result = await hostClient.guidanceAppliedNow({
+      projectId: project?.id ?? null,
+      resourceId: resource?.id ?? null,
+      sessionId: agentSession?.sessionId ?? null,
+      application: null,
+    });
+    if (result.state === "available") setAppliedGuidance(result.value);
+  }
+  async function captureGuidance(destination: CaptureDestination) {
+    const name = guidanceName.trim();
+    const text = guidanceText.trim();
+    if (!name || !text) return;
+    const scope = project
+      ? ({ kind: "project", project_id: project.id } as const)
+      : ({ kind: "person" } as const);
+    const result = await hostClient.captureGuidance(
+      {
+        name,
+        text,
+        guidanceType: "preference",
+        scope,
+        application: "general",
+        strength: "default",
+        owner: "local.owner",
+        provenance: "capturado na IDE",
+      },
+      destination,
+    );
+    if (result.state === "available") {
+      setGuidanceName("");
+      setGuidanceText("");
+      await refreshAppliedGuidance();
+    }
   }
   async function queryAagRelations() {
     const subject = selectedFile ?? project?.title;
@@ -1319,12 +1371,66 @@ function App() {
         </section>
         <section className="dock-section">
           <span className="dock-label">APLICADO AGORA</span>
-          <div className="guidance-empty">
-            <span>◌</span>
-            <p>
-              Nenhuma guidance ativa ainda. Uma decisão que você salvar
-              aparecerá aqui com origem e escopo.
-            </p>
+          {appliedGuidance.length ? (
+            <div className="file-list" aria-label="Guidance aplicada agora">
+              {appliedGuidance.map((applied) => (
+                <div className="guidance-empty" key={applied.guidance.id}>
+                  <strong>{applied.guidance.name}</strong>
+                  <p>{applied.guidance.text}</p>
+                  <small>{applied.reason}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="guidance-empty">
+              <span>◌</span>
+              <p>
+                Nenhuma guidance aplicável a esta atividade. Só o escopo
+                relevante entra no contexto do agente.
+              </p>
+            </div>
+          )}
+          <label className="intent-input-label" htmlFor="guidance-name">
+            Nova orientação
+          </label>
+          <input
+            id="guidance-name"
+            onChange={(event) => setGuidanceName(event.target.value)}
+            placeholder="Nome (ex.: tom de voz)"
+            value={guidanceName}
+          />
+          <textarea
+            aria-label="Texto da orientação"
+            onChange={(event) => setGuidanceText(event.target.value)}
+            placeholder="O que seguir daqui pra frente…"
+            rows={2}
+            value={guidanceText}
+          />
+          <div className="mode-group" aria-label="Destino da orientação">
+            <button
+              className="mode-button"
+              disabled={!guidanceName.trim() || !guidanceText.trim()}
+              onClick={() => void captureGuidance({ kind: "use_now" })}
+              type="button"
+            >
+              Só agora
+            </button>
+            <button
+              className="mode-button"
+              disabled={!guidanceName.trim() || !guidanceText.trim()}
+              onClick={() => void captureGuidance({ kind: "create_stable" })}
+              type="button"
+            >
+              Estável
+            </button>
+            <button
+              className="mode-button"
+              disabled={!guidanceName.trim() || !guidanceText.trim()}
+              onClick={() => void captureGuidance({ kind: "record_decision" })}
+              type="button"
+            >
+              Decisão
+            </button>
           </div>
         </section>
         <section className="dock-section dock-section--bottom">

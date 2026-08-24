@@ -32,6 +32,10 @@ use bridge::{
     WorkspaceWriteRequest,
 };
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
+use ide_guidance::{
+    ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
+    HygieneFinding, TruthDeclaration, TruthFinding,
+};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -719,6 +723,96 @@ async fn reconcile_benchmark_preview_failure(
         .map_err(|error| error.to_string())
 }
 
+/// Captures an instruction as guidance through one of the four honest
+/// destinations. The destination decides lifecycle; nothing is promoted to a
+/// permanent rule by inference.
+#[tauri::command]
+async fn capture_guidance(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    draft: GuidanceDraft,
+    destination: CaptureDestination,
+) -> Result<Guidance, String> {
+    bridge
+        .capture_guidance(draft, destination)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn activate_guidance(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    id: String,
+) -> Result<Guidance, String> {
+    bridge
+        .activate_guidance(&id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn import_steering(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    name: String,
+    text: String,
+    scope: GuidanceScope,
+) -> Result<Guidance, String> {
+    bridge
+        .import_steering(&name, &text, scope)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_guidance(bridge: State<'_, Arc<DesktopBridge>>) -> Result<Vec<Guidance>, String> {
+    Ok(bridge.list_guidance().await)
+}
+
+/// Compiles the guidance applicable to the current activity, most specific and
+/// strongest first, each with an explicit reason for inclusion.
+#[tauri::command]
+async fn guidance_applied_now(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    context: ActivityContext,
+) -> Result<Vec<AppliedGuidance>, String> {
+    Ok(bridge.guidance_applied_now(context).await)
+}
+
+#[tauri::command]
+async fn guidance_hygiene(
+    bridge: State<'_, Arc<DesktopBridge>>,
+) -> Result<Vec<HygieneFinding>, String> {
+    Ok(bridge.guidance_hygiene().await)
+}
+
+#[tauri::command]
+async fn truth_declare(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    subject: String,
+    scope: GuidanceScope,
+    authority_path: String,
+    precedence: i64,
+    provenance: String,
+) -> Result<TruthDeclaration, String> {
+    bridge
+        .truth_declare(&subject, scope, &authority_path, precedence, &provenance)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn truth_list(
+    bridge: State<'_, Arc<DesktopBridge>>,
+) -> Result<Vec<TruthDeclaration>, String> {
+    Ok(bridge.truth_list().await)
+}
+
+#[tauri::command]
+async fn truth_conflicts(
+    bridge: State<'_, Arc<DesktopBridge>>,
+) -> Result<Vec<TruthFinding>, String> {
+    Ok(bridge.truth_conflicts().await)
+}
+
 /// Optional AAG navigation lookup. It degrades to an explicit `unknown` when the
 /// provider is absent, so the IDE keeps working and never presents a missing
 /// graph as an empty-but-successful answer.
@@ -837,6 +931,15 @@ pub fn run() {
             stop_benchmark_preview,
             stop_and_capture_benchmark_preview_failure,
             reconcile_benchmark_preview_failure,
+            capture_guidance,
+            activate_guidance,
+            import_steering,
+            list_guidance,
+            guidance_applied_now,
+            guidance_hygiene,
+            truth_declare,
+            truth_list,
+            truth_conflicts,
             aag_relations,
             agent_capability_card,
             start_agent_session,

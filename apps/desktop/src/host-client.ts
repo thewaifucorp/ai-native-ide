@@ -122,6 +122,108 @@ export type AagRelations =
   | { known: { related_symbols: string[] } }
   | { unknown: { reason: string } };
 
+export type GuidanceScope =
+  | { kind: "person" }
+  | { kind: "project"; project_id: string }
+  | { kind: "resource"; resource_id: string }
+  | { kind: "path"; path: string }
+  | { kind: "task"; session_id: string };
+
+export type GuidanceType =
+  | "preference"
+  | "convention"
+  | "applicable_decision"
+  | "rule"
+  | "policy";
+export type GuidanceApplication =
+  | "writing"
+  | "code"
+  | "design"
+  | "tool"
+  | "agent"
+  | "effect"
+  | "general";
+export type GuidanceStrength = "suggestion" | "default" | "required" | "blocking";
+export type GuidanceState =
+  | "candidate"
+  | "active"
+  | "suspended"
+  | "superseded"
+  | "archived";
+export type GuidanceDuration =
+  | { kind: "session" }
+  | { kind: "task" }
+  | { kind: "until"; date: string }
+  | { kind: "permanent" };
+
+export type CaptureDestination =
+  | { kind: "use_now" }
+  | { kind: "incorporate"; set: string }
+  | { kind: "create_stable" }
+  | { kind: "record_decision" };
+
+export interface GuidanceDraft {
+  name: string;
+  text: string;
+  guidanceType: GuidanceType;
+  scope: GuidanceScope;
+  application: GuidanceApplication;
+  strength: GuidanceStrength;
+  owner: string;
+  provenance: string;
+}
+
+export interface Guidance {
+  id: string;
+  name: string;
+  guidanceType: GuidanceType;
+  scope: GuidanceScope;
+  application: GuidanceApplication;
+  strength: GuidanceStrength;
+  origin: "created" | "imported" | "suggested";
+  duration: GuidanceDuration;
+  priority: number;
+  owner: string;
+  provenance: string;
+  set: string;
+  text: string;
+  state: GuidanceState;
+  lastUsedMs: number;
+}
+
+export interface AppliedGuidance {
+  guidance: Guidance;
+  reason: string;
+}
+
+export type HygieneFinding =
+  | { kind: "duplicate"; ids: string[]; name: string }
+  | { kind: "point_rule_as_permanent"; id: string; name: string };
+
+export interface ActivityContext {
+  projectId?: string | null;
+  resourceId?: string | null;
+  path?: string | null;
+  sessionId?: string | null;
+  application?: GuidanceApplication | null;
+}
+
+export interface TruthDeclaration {
+  id: string;
+  subject: string;
+  scope: GuidanceScope;
+  authorityPath: string;
+  precedence: number;
+  consumers: string[];
+  provenance: string;
+}
+
+export type TruthFinding = {
+  kind: "authority_conflict";
+  ids: string[];
+  subject: string;
+};
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -273,6 +375,33 @@ interface HostCommandMap {
     args: { query: string };
     result: AagRelations;
   };
+  capture_guidance: {
+    args: { draft: GuidanceDraft; destination: CaptureDestination };
+    result: Guidance;
+  };
+  activate_guidance: { args: { id: string }; result: Guidance };
+  import_steering: {
+    args: { name: string; text: string; scope: GuidanceScope };
+    result: Guidance;
+  };
+  list_guidance: { args: undefined; result: Guidance[] };
+  guidance_applied_now: {
+    args: { context: ActivityContext };
+    result: AppliedGuidance[];
+  };
+  guidance_hygiene: { args: undefined; result: HygieneFinding[] };
+  truth_declare: {
+    args: {
+      subject: string;
+      scope: GuidanceScope;
+      authorityPath: string;
+      precedence: number;
+      provenance: string;
+    };
+    result: TruthDeclaration;
+  };
+  truth_list: { args: undefined; result: TruthDeclaration[] };
+  truth_conflicts: { args: undefined; result: TruthFinding[] };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -392,6 +521,30 @@ export interface HostClient {
     }>
   >;
   aagRelations(query: string): Promise<HostCall<AagRelations>>;
+  captureGuidance(
+    draft: GuidanceDraft,
+    destination: CaptureDestination,
+  ): Promise<HostCall<Guidance>>;
+  activateGuidance(id: string): Promise<HostCall<Guidance>>;
+  importSteering(
+    name: string,
+    text: string,
+    scope: GuidanceScope,
+  ): Promise<HostCall<Guidance>>;
+  listGuidance(): Promise<HostCall<Guidance[]>>;
+  guidanceAppliedNow(
+    context: ActivityContext,
+  ): Promise<HostCall<AppliedGuidance[]>>;
+  guidanceHygiene(): Promise<HostCall<HygieneFinding[]>>;
+  truthDeclare(
+    subject: string,
+    scope: GuidanceScope,
+    authorityPath: string,
+    precedence: number,
+    provenance: string,
+  ): Promise<HostCall<TruthDeclaration>>;
+  truthList(): Promise<HostCall<TruthDeclaration[]>>;
+  truthConflicts(): Promise<HostCall<TruthFinding[]>>;
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
@@ -542,6 +695,25 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     reconcileBenchmarkPreviewFailure: (divergenceId, action) =>
       call("reconcile_benchmark_preview_failure", { divergenceId, action }),
     aagRelations: (query) => call("aag_relations", { query }),
+    captureGuidance: (draft, destination) =>
+      call("capture_guidance", { draft, destination }),
+    activateGuidance: (id) => call("activate_guidance", { id }),
+    importSteering: (name, text, scope) =>
+      call("import_steering", { name, text, scope }),
+    listGuidance: () => call("list_guidance", undefined),
+    guidanceAppliedNow: (context) =>
+      call("guidance_applied_now", { context }),
+    guidanceHygiene: () => call("guidance_hygiene", undefined),
+    truthDeclare: (subject, scope, authorityPath, precedence, provenance) =>
+      call("truth_declare", {
+        subject,
+        scope,
+        authorityPath,
+        precedence,
+        provenance,
+      }),
+    truthList: () => call("truth_list", undefined),
+    truthConflicts: () => call("truth_conflicts", undefined),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>
