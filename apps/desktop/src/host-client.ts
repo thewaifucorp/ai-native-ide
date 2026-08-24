@@ -281,6 +281,36 @@ export type ConfigField =
   | "idle_paid_inference"
   | "local_aag";
 
+export interface ContextSegment {
+  origin: string;
+  scope: string;
+  reason: string;
+  text: string;
+  verbatim: boolean;
+  priority: number;
+}
+export interface CompiledContext {
+  segments: ContextSegment[];
+  droppedForBudget: string[];
+  usedChars: number;
+  budgetChars: number;
+}
+export interface Authority {
+  authorityPath: string;
+  precedence: number;
+  consumers: string[];
+}
+export interface EvidenceRef {
+  id: string;
+  summary: string;
+  source: string;
+}
+export interface Navigation {
+  subject: string;
+  authorities: Authority[];
+  evidence: EvidenceRef[];
+}
+
 export type FindingCategory = "ambiguity" | "missing_decision" | "risk";
 export type ReviewState = "open" | "accepted" | "dismissed";
 export interface SemanticFinding {
@@ -509,6 +539,16 @@ interface HostCommandMap {
     args: { intent: string; maxFindings?: number };
     result: SemanticReport;
   };
+  compile_agent_context: {
+    args: {
+      projectId: string;
+      resourceId?: string;
+      sessionId?: string;
+      budgetChars?: number;
+    };
+    result: CompiledContext;
+  };
+  navigate_subject: { args: { subject: string }; result: Navigation };
   mode_interruption_policy: {
     args: { class: EffectClass };
     result: InterruptionDecision;
@@ -679,6 +719,13 @@ export interface HostClient {
     intent: string,
     maxFindings?: number,
   ): Promise<HostCall<SemanticReport>>;
+  compileAgentContext(
+    projectId: string,
+    resourceId?: string,
+    sessionId?: string,
+    budgetChars?: number,
+  ): Promise<HostCall<CompiledContext>>;
+  navigateSubject(subject: string): Promise<HostCall<Navigation>>;
   modeInterruptionPolicy(
     effectClass: EffectClass,
   ): Promise<HostCall<InterruptionDecision>>;
@@ -869,6 +916,14 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     explainConfigField: (field) => call("explain_config_field", { field }),
     evaluateIntent: (intent, maxFindings) =>
       call("evaluate_intent", { intent, maxFindings }),
+    compileAgentContext: (projectId, resourceId, sessionId, budgetChars) =>
+      call("compile_agent_context", {
+        projectId,
+        resourceId,
+        sessionId,
+        budgetChars,
+      }),
+    navigateSubject: (subject) => call("navigate_subject", { subject }),
     modeInterruptionPolicy: (effectClass) =>
       call("mode_interruption_policy", { class: effectClass }),
     promotePrototype: (prototypeEffectId, checkpointEffectId, note) =>

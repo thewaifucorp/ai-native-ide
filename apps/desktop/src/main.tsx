@@ -27,6 +27,7 @@ import {
   type InterruptionDecision,
   type ConfigBuildMode,
   type SemanticReport,
+  type CompiledContext,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -165,6 +166,8 @@ function App() {
   const [modeInterruption, setModeInterruption] =
     useState<InterruptionDecision | null>(null);
   const [semantic, setSemantic] = useState<SemanticReport | null>(null);
+  const [compiledContext, setCompiledContext] =
+    useState<HostCall<CompiledContext> | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -624,6 +627,16 @@ function App() {
       setGuidanceText("");
       await refreshAppliedGuidance();
     }
+  }
+  async function loadCompiledContext() {
+    if (!project) return;
+    setCompiledContext(
+      await hostClient.compileAgentContext(
+        project.id,
+        resource?.id,
+        agentSession?.sessionId,
+      ),
+    );
   }
   async function runHarness() {
     if (!project || !resource) return;
@@ -1485,6 +1498,40 @@ function App() {
               </button>
             </>
           )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">CONTEXTO ENVIADO</span>
+          <strong>
+            {compiledContext?.state === "available"
+              ? `${compiledContext.value.usedChars}/${compiledContext.value.budgetChars} chars · ${compiledContext.value.segments.length} segmentos`
+              : "Compilado com proveniência"}
+          </strong>
+          <p>
+            {compiledContext?.state === "available"
+              ? `${compiledContext.value.droppedForBudget.length} descartados pelo budget. Policies e requisitos ficam verbatim.`
+              : "Só o escopo aplicável entra; origem e motivo de cada trecho ficam visíveis."}
+          </p>
+          {compiledContext?.state === "available" && (
+            <div className="file-list" aria-label="Segmentos do contexto">
+              {compiledContext.value.segments.map((segment) => (
+                <div className="guidance-empty" key={segment.origin}>
+                  <strong>
+                    {segment.origin}
+                    {segment.verbatim ? " · verbatim" : ""}
+                  </strong>
+                  <small>{segment.reason}</small>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            className="text-button"
+            disabled={!project}
+            onClick={() => void loadCompiledContext()}
+            type="button"
+          >
+            Ver contexto enviado <span>→</span>
+          </button>
         </section>
         <section className="dock-section">
           <span className="dock-label">HARNESS · CAMADA 0</span>

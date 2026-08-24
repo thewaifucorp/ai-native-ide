@@ -1,0 +1,307 @@
+//! Deterministic context compiler for the AI-Native IDE.
+//!
+//! Agents never receive every file. The compiler selects, orders and budgets the
+//! context for the current activity with explicit provenance, and preserves
+//! policies, requirements and blocking guidance verbatim — those are never
+//! compressed or dropped to fit a budget. It also maps a subject to its source
+//! of truth, authorities and evidence so navigation stays honest.
+
+use ide_guidance::{AppliedGuidance, GuidanceStrength, TruthDeclaration};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceRef {
+    pub id: String,
+    pub summary: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextInputs {
+    pub intent: String,
+    pub applied_guidance: Vec<AppliedGuidance>,
+    pub truth: Vec<TruthDeclaration>,
+    pub evidence: Vec<EvidenceRef>,
+    pub budget_chars: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSegment {
+    pub origin: String,
+    pub scope: String,
+    pub reason: String,
+    pub text: String,
+    /// Verbatim segments (policies, requirements, blocking/required guidance) are
+    /// never compressed or dropped, even when the budget is exceeded.
+    pub verbatim: bool,
+    pub priority: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompiledContext {
+    pub segments: Vec<ContextSegment>,
+    pub dropped_for_budget: Vec<String>,
+    pub used_chars: usize,
+    pub budget_chars: usize,
+}
+
+fn guidance_priority(strength: GuidanceStrength) -> u8 {
+    match strength {
+        GuidanceStrength::Blocking => 100,
+        GuidanceStrength::Required => 90,
+        GuidanceStrength::Default => 55,
+        GuidanceStrength::Suggestion => 45,
+    }
+}
+
+fn guidance_is_verbatim(strength: GuidanceStrength) -> bool {
+    matches!(
+        strength,
+        GuidanceStrength::Blocking | GuidanceStrength::Required
+    )
+}
+
+/// Compiles the context deterministically: strongest and most authoritative
+/// first, verbatim policies always kept, everything else dropped from the least
+/// important end until the budget is met.
+pub fn compile(inputs: &ContextInputs) -> CompiledContext {
+    let mut segments: Vec<ContextSegment> = Vec::new();
+
+    for applied in &inputs.applied_guidance {
+        let strength = applied.guidance.strength;
+        segments.push(ContextSegment {
+            origin: format!("guidance:{}", applied.guidance.id),
+            scope: applied.reason.clone(),
+            reason: applied.reason.clone(),
+            text: applied.guidance.text.clone(),
+            verbatim: guidance_is_verbatim(strength),
+            priority: guidance_priority(strength),
+        });
+    }
+
+    if !inputs.intent.trim().is_empty() {
+        segments.push(ContextSegment {
+            origin: "intent".to_owned(),
+            scope: "projeto".to_owned(),
+            reason: "intenção declarada do projeto".to_owned(),
+            text: inputs.intent.clone(),
+            verbatim: true,
+            priority: 80,
+        });
+    }
+
+    for declaration in &inputs.truth {
+        segments.push(ContextSegment {
+            origin: format!("truth:{}", declaration.id),
+            scope: declaration.subject.clone(),
+            reason: format!("autoridade sobre {}", declaration.subject),
+            text: format!(
+                "Autoridade de \"{}\": {}",
+                declaration.subject, declaration.authority_path
+            ),
+            verbatim: true,
+            priority: 70,
+        });
+    }
+
+    for evidence in &inputs.evidence {
+        segments.push(ContextSegment {
+            origin: format!("evidence:{}", evidence.id),
+            scope: evidence.source.clone(),
+            reason: "evidência observada".to_owned(),
+            text: evidence.summary.clone(),
+            verbatim: false,
+            priority: 40,
+        });
+    }
+
+    // Most important first; ties are broken by origin for determinism.
+    segments.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then(left.origin.cmp(&right.origin))
+    });
+
+    let mut kept: Vec<ContextSegment> = Vec::new();
+    let mut dropped_for_budget: Vec<String> = Vec::new();
+    let mut used_chars = 0usize;
+    for segment in segments {
+        let length = segment.text.chars().count();
+        if segment.verbatim || used_chars + length <= inputs.budget_chars {
+            used_chars += length;
+            kept.push(segment);
+        } else {
+            dropped_for_budget.push(segment.origin);
+        }
+    }
+
+    CompiledContext {
+        segments: kept,
+        dropped_for_budget,
+        used_chars,
+        budget_chars: inputs.budget_chars,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Authority {
+    pub authority_path: String,
+    pub precedence: i64,
+    pub consumers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Navigation {
+    pub subject: String,
+    pub authorities: Vec<Authority>,
+    pub evidence: Vec<EvidenceRef>,
+}
+
+/// Maps a subject to its authorities (source of truth) and the evidence whose
+/// source references it, so a person can navigate subject → SoT → evidence.
+pub fn navigate(inputs: &ContextInputs, subject: &str) -> Navigation {
+    let mut authorities: Vec<Authority> = inputs
+        .truth
+        .iter()
+        .filter(|declaration| declaration.subject == subject)
+        .map(|declaration| Authority {
+            authority_path: declaration.authority_path.clone(),
+            precedence: declaration.precedence,
+            consumers: declaration.consumers.clone(),
+        })
+        .collect();
+    authorities.sort_by(|left, right| right.precedence.cmp(&left.precedence));
+    let evidence = inputs
+        .evidence
+        .iter()
+        .filter(|evidence| evidence.source.contains(subject))
+        .cloned()
+        .collect();
+    Navigation {
+        subject: subject.to_owned(),
+        authorities,
+        evidence,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ide_guidance::{
+        Guidance, GuidanceApplication, GuidanceDuration, GuidanceOrigin, GuidanceScope,
+        GuidanceState, GuidanceType,
+    };
+
+    fn applied(name: &str, strength: GuidanceStrength, text: &str) -> AppliedGuidance {
+        AppliedGuidance {
+            guidance: Guidance {
+                id: name.to_owned(),
+                name: name.to_owned(),
+                guidance_type: GuidanceType::Policy,
+                scope: GuidanceScope::Person,
+                application: GuidanceApplication::General,
+                strength,
+                origin: GuidanceOrigin::Created,
+                duration: GuidanceDuration::Permanent,
+                priority: 0,
+                owner: "local".to_owned(),
+                provenance: "test".to_owned(),
+                set: "policies".to_owned(),
+                text: text.to_owned(),
+                state: GuidanceState::Active,
+                last_used_ms: 0,
+            },
+            reason: "escopo pessoal aplica".to_owned(),
+        }
+    }
+
+    fn truth(subject: &str, path: &str, precedence: i64) -> TruthDeclaration {
+        TruthDeclaration {
+            id: format!("truth-{subject}"),
+            subject: subject.to_owned(),
+            scope: GuidanceScope::Person,
+            authority_path: path.to_owned(),
+            precedence,
+            consumers: vec!["cart".to_owned()],
+            provenance: "test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn blocking_guidance_is_verbatim_and_never_dropped_by_budget() {
+        let inputs = ContextInputs {
+            intent: "construir checkout".to_owned(),
+            applied_guidance: vec![
+                applied(
+                    "policy",
+                    GuidanceStrength::Blocking,
+                    "NUNCA registrar cartão",
+                ),
+                applied(
+                    "pref",
+                    GuidanceStrength::Suggestion,
+                    "x".repeat(500).as_str(),
+                ),
+            ],
+            truth: vec![],
+            evidence: vec![],
+            budget_chars: 10,
+        };
+        let compiled = compile(&inputs);
+        // The blocking policy and the intent survive even though the budget is
+        // tiny; the low-priority preference is dropped.
+        assert!(compiled
+            .segments
+            .iter()
+            .any(|segment| segment.origin == "guidance:policy" && segment.verbatim));
+        assert!(compiled
+            .segments
+            .iter()
+            .any(|segment| segment.origin == "intent"));
+        assert!(compiled
+            .dropped_for_budget
+            .contains(&"guidance:pref".to_owned()));
+    }
+
+    #[test]
+    fn compile_orders_by_priority() {
+        let inputs = ContextInputs {
+            intent: String::new(),
+            applied_guidance: vec![
+                applied("weak", GuidanceStrength::Suggestion, "a"),
+                applied("strong", GuidanceStrength::Blocking, "b"),
+            ],
+            truth: vec![],
+            evidence: vec![],
+            budget_chars: 1000,
+        };
+        let compiled = compile(&inputs);
+        assert_eq!(compiled.segments[0].origin, "guidance:strong");
+    }
+
+    #[test]
+    fn navigate_maps_subject_to_authorities_and_evidence() {
+        let inputs = ContextInputs {
+            intent: String::new(),
+            applied_guidance: vec![],
+            truth: vec![truth("checkout", "docs/checkout.md", 10)],
+            evidence: vec![EvidenceRef {
+                id: "e1".to_owned(),
+                summary: "teste do checkout passou".to_owned(),
+                source: "checkout-suite".to_owned(),
+            }],
+            budget_chars: 1000,
+        };
+        let navigation = navigate(&inputs, "checkout");
+        assert_eq!(navigation.authorities.len(), 1);
+        assert_eq!(navigation.authorities[0].authority_path, "docs/checkout.md");
+        assert_eq!(navigation.evidence.len(), 1);
+    }
+}

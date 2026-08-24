@@ -32,6 +32,7 @@ use bridge::{
     WorkspaceWriteRequest,
 };
 use ide_config::{ConfigField, ConfigPatch, DetectedEnvironment, IdeConfig};
+use ide_context::{CompiledContext, ContextInputs, Navigation};
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
@@ -920,6 +921,59 @@ async fn promote_prototype(
         .await
 }
 
+/// Compiles the context that would be sent to an agent for the current activity,
+/// with explicit provenance and a budget. Policies, requirements and blocking
+/// guidance are kept verbatim; lower-priority material is dropped to fit.
+#[tauri::command]
+async fn compile_agent_context(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: Option<String>,
+    session_id: Option<String>,
+    budget_chars: Option<usize>,
+) -> Result<CompiledContext, String> {
+    let project = bridge
+        .open_project(&project_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "the requested semantic project does not exist".to_owned())?;
+    let applied_guidance = bridge
+        .guidance_applied_now(ActivityContext {
+            project_id: Some(project_id.clone()),
+            resource_id,
+            path: None,
+            session_id,
+            application: None,
+        })
+        .await;
+    let truth = bridge.truth_list().await;
+    let inputs = ContextInputs {
+        intent: project.intent,
+        applied_guidance,
+        truth,
+        evidence: Vec::new(),
+        budget_chars: budget_chars.unwrap_or(4000),
+    };
+    Ok(ide_context::compile(&inputs))
+}
+
+/// Maps a subject to its authorities and evidence, so a person can navigate
+/// subject → source of truth → evidence.
+#[tauri::command]
+async fn navigate_subject(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    subject: String,
+) -> Result<Navigation, String> {
+    let truth = bridge.truth_list().await;
+    let inputs = ContextInputs {
+        intent: String::new(),
+        applied_guidance: Vec::new(),
+        truth,
+        evidence: Vec::new(),
+        budget_chars: 0,
+    };
+    Ok(ide_context::navigate(&inputs, &subject))
+}
+
 /// Runs the deterministic Layer-1 semantic evaluators over the declared intent.
 /// It surfaces ambiguities, missing decisions and domain risks as reviewable
 /// hypotheses with evidence, confidence and remediation — no paid inference.
@@ -1156,6 +1210,8 @@ pub fn run() {
             mode_interruption_policy,
             promote_prototype,
             evaluate_intent,
+            compile_agent_context,
+            navigate_subject,
             aag_relations,
             agent_capability_card,
             start_agent_session,
