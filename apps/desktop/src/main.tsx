@@ -36,6 +36,11 @@ const starterIntent =
   "Quero criar um leilão simples de posições para divulgar ferramentas.";
 const navItems = ["Overview", "Build", "Resources", "Evidence"] as const;
 
+type AgentTranscriptEntry = {
+  role: "user" | "agent" | "system";
+  text: string;
+};
+
 function SignalCard({
   signal,
   onUse,
@@ -107,6 +112,7 @@ function App() {
     "Revise a intenção e aponte o próximo risco verificável.",
   );
   const [agentTask, setAgentTask] = useState<HostCall<number> | null>(null);
+  const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptEntry[]>([]);
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
@@ -123,6 +129,15 @@ function App() {
   );
   const signals = useMemo(() => analyzeIntent(intent), [intent]);
   const nextStep = nextStepFor(intent, signals);
+  function appendAgentTranscript(role: AgentTranscriptEntry["role"], text: string) {
+    setAgentTranscript((current) => {
+      const last = current.at(-1);
+      if (role === "agent" && last?.role === "agent") {
+        return [...current.slice(0, -1), { role, text: `${last.text}${text}` }];
+      }
+      return [...current, { role, text }];
+    });
+  }
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
     void hostClient
@@ -177,6 +192,11 @@ function App() {
         if (!active || result.state !== "available") return;
         const event = result.value;
         if (!event) return;
+        if ("MessageDelta" in event) {
+          appendAgentTranscript("agent", event.MessageDelta.text);
+        } else {
+          appendAgentTranscript("system", describeAgentEvent(event));
+        }
         setHostActivity((current) =>
           [describeAgentEvent(event), ...current].slice(0, 4),
         );
@@ -334,7 +354,15 @@ function App() {
       resource.id,
     );
     setAgentCall(result);
-    if (result.state === "available") setAgentSession(result.value);
+    if (result.state === "available") {
+      setAgentSession(result.value);
+      setAgentTranscript([
+        {
+          role: "system",
+          text: "Sessão conectada. O agente recebe o workspace anexado e sua intenção; escrita continua fora desta sessão read-only.",
+        },
+      ]);
+    }
   }
   async function cancelAgentSession() {
     if (!agentSession) return;
@@ -343,12 +371,17 @@ function App() {
   }
   async function submitAgentTask() {
     if (!agentSession) return;
+    const prompt = `Intenção atual do projeto:\n${intent}\n\nPedido do usuário:\n${agentPrompt}`;
+    appendAgentTranscript("user", agentPrompt);
     const result = await hostClient.submitAgentTask(
       agentSession.sessionId,
-      agentPrompt,
+      prompt,
       false,
     );
     setAgentTask(result);
+    if (result.state === "failed") {
+      appendAgentTranscript("system", `O host recusou a tarefa: ${result.message}`);
+    }
   }
   async function startWorkspaceTerminal() {
     if (!project || !resource) return;
@@ -604,6 +637,38 @@ function App() {
             <h2 id="build-heading">
               Um próximo passo, não uma parede de configuração.
             </h2>
+            {agentSession && (
+              <section className="agent-workspace" aria-label="Trabalho com o agente">
+                <div className="section-label">
+                  <span>AGENTE</span>
+                  <span>SESSÃO REAL</span>
+                </div>
+                <pre aria-live="polite">
+                  {agentTranscript.length
+                    ? agentTranscript
+                        .map((entry) => `[${entry.role}] ${entry.text}`)
+                        .join("\n\n")
+                    : "Aguardando resposta do agente…"}
+                </pre>
+                <label className="intent-input-label" htmlFor="agent-task">
+                  Próxima instrução
+                </label>
+                <textarea
+                  id="agent-task"
+                  value={agentPrompt}
+                  onChange={(event) => setAgentPrompt(event.target.value)}
+                  rows={3}
+                />
+                <button
+                  className="primary-action"
+                  disabled={!agentPrompt.trim()}
+                  onClick={() => void submitAgentTask()}
+                  type="button"
+                >
+                  Enviar ao agente <span>→</span>
+                </button>
+              </section>
+            )}
             <div className="next-step">
               <div>
                 <span className="eyebrow">PRÓXIMA DECISÃO</span>
@@ -848,27 +913,10 @@ function App() {
           </button>
           {agentSession && (
             <div className="guidance-empty">
-              <label htmlFor="agent-task">Tarefa do agente</label>
-              <textarea
-                id="agent-task"
-                value={agentPrompt}
-                onChange={(event) => setAgentPrompt(event.target.value)}
-                rows={2}
-              />
-              <button
-                className="text-button"
-                disabled={!agentPrompt.trim()}
-                onClick={() => void submitAgentTask()}
-                type="button"
-              >
-                Enviar leitura <span>→</span>
-              </button>
               <p>
                 {agentTask?.state === "available"
-                  ? `Tarefa ${agentTask.value} enviada à sessão; alterações continuam fora do agente.`
-                  : agentTask?.state === "failed"
-                    ? `A sessão recusou a tarefa: ${agentTask.message}`
-                    : ""}
+                  ? `Tarefa ${agentTask.value} enviada. O transcript aparece na superfície de trabalho.`
+                  : "A superfície de trabalho mantém a conversa e a saída do agente."}
               </p>
             </div>
           )}
