@@ -101,14 +101,13 @@ describe("host client", () => {
     });
 
     await expect(
-      client.attachWorkspaceFromPicker("auction", "auction-local"),
+      client.attachWorkspaceFromPicker("auction"),
     ).resolves.toEqual({
       state: "available",
       value: null,
     });
     expect(invoke).toHaveBeenCalledWith("attach_workspace_from_picker", {
       projectId: "auction",
-      resourceId: "auction-local",
     });
   });
 

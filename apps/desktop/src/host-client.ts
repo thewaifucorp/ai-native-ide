@@ -207,7 +207,7 @@ interface HostCommandMap {
     result: OpenedSemanticProject | null;
   };
   attach_workspace_from_picker: {
-    args: { projectId: string; resourceId: string };
+    args: { projectId: string };
     result: WorkspaceResource | null;
   };
   list_workspace_files: {
@@ -322,7 +322,6 @@ export interface HostClient {
   ): Promise<HostCall<OpenedSemanticProject | null>>;
   attachWorkspaceFromPicker(
     projectId: string,
-    resourceId: string,
   ): Promise<HostCall<WorkspaceResource | null>>;
   listWorkspaceFiles(
     projectId: string,
@@ -480,8 +479,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("update_semantic_project_intent", { projectId, intent }),
     openSemanticProject: (projectId) =>
       call("open_semantic_project", { projectId }),
-    attachWorkspaceFromPicker: (projectId, resourceId) =>
-      call("attach_workspace_from_picker", { projectId, resourceId }),
+    attachWorkspaceFromPicker: (projectId) =>
+      call("attach_workspace_from_picker", { projectId }),
     listWorkspaceFiles: (projectId, resourceId) =>
       call("list_workspace_files", { projectId, resourceId }),
     readWorkspaceFile: (projectId, resourceId, relativePath) =>

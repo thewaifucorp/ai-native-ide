@@ -111,6 +111,7 @@ function App() {
   const [projectCall, setProjectCall] =
     useState<HostCall<SemanticProjectRecord> | null>(null);
   const [resource, setResource] = useState<WorkspaceResource | null>(null);
+  const [resources, setResources] = useState<WorkspaceResource[]>([]);
   const [preview, setPreview] = useState<BenchmarkPreviewStatus | null>(null);
   const [previewCall, setPreviewCall] =
     useState<HostCall<BenchmarkPreviewStatus> | null>(null);
@@ -286,6 +287,7 @@ function App() {
     setProject(result.value.project);
     const restoredResource = result.value.resources[0] ?? null;
     setResource(restoredResource);
+    setResources(result.value.resources);
     setIntent(result.value.project.intent);
     setAgentSession(null);
     setAgentTranscript([]);
@@ -295,6 +297,7 @@ function App() {
   function startNewProject() {
     setProject(null);
     setResource(null);
+    setResources([]);
     setIntent("");
     setAgentSession(null);
     setAgentTranscript([]);
@@ -322,14 +325,23 @@ function App() {
   }
   async function attachWorkspace() {
     if (!project) return;
-    const result = await hostClient.attachWorkspaceFromPicker(
-      project.id,
-      `${project.id}-local`,
-    );
+    const result = await hostClient.attachWorkspaceFromPicker(project.id);
     if (result.state === "available" && result.value) {
-      setResource(result.value);
-      await loadWorkspaceFiles(project, result.value);
+      const attachedResource = result.value;
+      setResource(attachedResource);
+      setResources((current) => [
+        attachedResource,
+        ...current.filter((candidate) => candidate.id !== attachedResource.id),
+      ]);
+      await loadWorkspaceFiles(project, attachedResource);
     }
+  }
+  async function selectResource(nextResource: WorkspaceResource) {
+    if (!project) return;
+    setResource(nextResource);
+    setAgentSession(null);
+    setAgentTranscript([]);
+    await loadWorkspaceFiles(project, nextResource);
   }
   async function startPreview() {
     if (!project) return;
@@ -609,7 +621,7 @@ function App() {
             type="button"
           >
             {resource
-              ? `${resource.kind === "repository" ? "repo" : "diretório"} anexado`
+              ? `${resource.kind === "repository" ? "repo" : "diretório"} ativo (${resources.length})`
               : project
                 ? "Anexar diretório"
                 : "Crie o projeto primeiro"}{" "}
@@ -640,6 +652,20 @@ function App() {
           ))}
         </nav>
         <section className="navigator-note">
+          {resources.length > 1 && (
+            <div className="resource-selector" aria-label="Recursos anexados">
+              {resources.map((candidate) => (
+                <button
+                  className={candidate.id === resource?.id ? "mode-button mode-button--active" : "mode-button"}
+                  key={candidate.id}
+                  onClick={() => void selectResource(candidate)}
+                  type="button"
+                >
+                  {candidate.kind === "repository" ? "repo" : "dir"}
+                </button>
+              ))}
+            </div>
+          )}
           <span className="eyebrow">MODO</span>
           <div className="mode-group" aria-label="Modo de construção">
             {(["full-vibes", "hybrid", "spec"] as BuildMode[]).map((item) => (

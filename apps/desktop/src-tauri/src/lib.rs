@@ -456,7 +456,6 @@ async fn attach_workspace_from_picker(
     runtime: State<'_, HostRuntime>,
     watchers: State<'_, WorkspaceWatchRegistry>,
     project_id: String,
-    resource_id: String,
 ) -> Result<Option<Resource>, String> {
     let Some(selected) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
@@ -471,7 +470,7 @@ async fn attach_workspace_from_picker(
         ResourceKind::Directory
     };
     let resource = bridge
-        .attach_workspace(&project_id, &resource_id, kind, selection)
+        .attach_native_workspace_selection(&project_id, kind, selection)
         .await
         .map_err(|error| error.to_string())?;
     watchers.watch_resource(&runtime, Arc::clone(&*bridge), project_id, &resource)?;

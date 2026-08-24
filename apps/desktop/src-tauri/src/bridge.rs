@@ -270,6 +270,20 @@ impl DesktopBridge {
         Ok(resource)
     }
 
+    /// Native selection is the authority for the resource identity. Deriving
+    /// it from the canonical root lets the same resource be attached to more
+    /// than one semantic project without the renderer inventing a duplicate ID.
+    pub async fn attach_native_workspace_selection(
+        &self,
+        project_id: &str,
+        kind: ResourceKind,
+        selection: TrustedWorkspaceSelection,
+    ) -> anyhow::Result<Resource> {
+        let resource_id = stable_resource_id(selection.root());
+        self.attach_workspace(project_id, &resource_id, kind, selection)
+            .await
+    }
+
     async fn register_workspace(
         &self,
         project_id: ProjectId,
@@ -732,6 +746,18 @@ fn validate_relative_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn stable_resource_id(root: &Path) -> String {
+    // FNV-1a is sufficient here: this is an opaque local identity, not a
+    // security credential. The canonical path remains uniqueness-enforced by
+    // SQLite, while the fixed hexadecimal representation is renderer-safe.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in root.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("resource-{hash:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,5 +780,12 @@ mod tests {
     fn target_selection_is_closed_and_never_a_command() {
         assert_eq!(AcpxTarget::Claude.as_acpx_agent(), "claude");
         assert_eq!(AcpxTarget::OpenCode.as_acpx_agent(), "opencode");
+    }
+
+    #[test]
+    fn canonical_resource_identity_is_stable_and_renderer_safe() {
+        let id = stable_resource_id(Path::new("/workspace/example"));
+        assert_eq!(id, stable_resource_id(Path::new("/workspace/example")));
+        assert!(validate_identifier("resource id", &id).is_ok());
     }
 }
