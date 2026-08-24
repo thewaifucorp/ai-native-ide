@@ -81,12 +81,24 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
       - name: Build Windows installers
-        run: npm run build
+        run: npm run build -- --bundles nsis
+      - name: Smoke installed Windows artifact
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis -Filter '*.exe' -Recurse |
+            Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not produced.' }
+          $installRoot = Join-Path $env:LOCALAPPDATA 'AI-Native IDE'
+          if (Test-Path $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NSIS installer exited with $($process.ExitCode)." }
+          $app = Get-ChildItem $installRoot -Filter 'ai-native-ide-desktop.exe' -Recurse |
+            Select-Object -First 1
+          if (-not $app) { throw "Installed app executable is missing from $installRoot." }
+          Write-Host "Installed app: $($app.FullName)"
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
           name: ai-native-ide-windows-${{ github.sha }}
-          path: |
-            target/release/bundle/msi/**
-            target/release/bundle/nsis/**
+          path: target/release/bundle/nsis/**
           if-no-files-found: error

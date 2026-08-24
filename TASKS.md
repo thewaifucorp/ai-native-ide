@@ -89,7 +89,7 @@ foi gerado como `.deb`/`.rpm`; o `.deb` foi instalado atomicamente em
 
 - [x] Criar slice Tauri com fronteira privilegiada, Monaco, PTY e lifecycle de preview.
 - [x] Validar subprocessos de agentes, streaming/eventos, filesystem watching, atalhos e múltiplas superfícies.
-- [x] Medir segurança, performance, consumo, empacotamento Linux e ergonomia de manutenção no artifact CI.
+- [ ] Medir segurança, performance, consumo, empacotamento Linux e ergonomia de manutenção no artifact CI.
 - [x] Definir gates objetivos que caracterizariam um blocker estrutural do Tauri.
 - [x] Materializar manifestos, entrypoints e extension points do host Tauri.
 - [x] Manter Electron apenas como fallback documentado; não implementar segundo host sem blocker comprovado.
@@ -100,7 +100,8 @@ foi gerado como `.deb`/`.rpm`; o `.deb` foi instalado atomicamente em
 Windows. Em Windows, `cargo test -p ai-native-ide-desktop --lib` passou os 8
 testes, incluindo a golden journey que confirma streaming real pelo PTY; a
 regressão ConPTY foi corrigida com backend Windows direto e caminhos de comando
-em formato DOS. Em Linux, `cargo test -p ai-native-ide-desktop --lib` passou 11
+em formato DOS. A aceitação da instalação Windows foi movida para T09 após o
+MSI ter instalado somente seu atalho de desinstalação. Em Linux, `cargo test -p ai-native-ide-desktop --lib` passou 11
 testes e `npm run check` passou 19; o pacote `.deb` foi gerado, instalado
 atomicamente em `.local-install` e executado sob `xvfb` por 8 s. O host mantém
 IPC tipado/allowlisted, Monaco, superfícies Preview/Terminal/Raw Evidence,
@@ -125,49 +126,63 @@ bridge tipada.
 
 ### T05 — PTY e agente reais
 
-- [ ] Ligar PTY Rust ao host e TerminalSurface com spawn/input/resize/output/cancel/exit/cleanup.
-- [ ] Provar backpressure, cancelamento e ausência de processos órfãos.
-- [ ] Testar adapters de `bastion-agent-runtime` para ACP, Codex e CLI/PTTY contra sua conformance suite.
-- [ ] Selecionar e integrar um caminho de agente real com autenticação, sessão e cancelamento.
-- [ ] Mostrar capabilities, limitações e degradações antes do uso.
+- [x] Ligar PTY Rust ao host e TerminalSurface com spawn/input/resize/output/cancel/exit/cleanup.
+- [x] Provar backpressure, cancelamento e ausência de processos órfãos.
+- [x] Testar adapters de `bastion-agent-runtime` para ACP, Codex e CLI/PTTY contra sua conformance suite.
+- [x] Selecionar e integrar um caminho de agente real com autenticação, sessão e cancelamento.
+- [x] Mostrar capabilities, limitações e degradações antes do uso.
 
 **Pronto quando:** usuário executa terminal e uma sessão real de agente pela interface, cancela ambos e entende o que a IDE controla.
 
+**Evidência (2026-08-24):** o host expõe sessões PTY opacas ao `TerminalSurface`,
+com input/resize/poll/cancel, chunks de 16 KiB e limite nativo de 10 MiB por
+PTY. `cargo test -p ai-native-ide-desktop --lib`, `cargo test -p ide-agent` e
+`npm run check` passaram; uma sessão ACPX real respondeu sob política sem
+permissões, enquanto a interface deixa explícita a fronteira read-only e a
+degradação do provider.
+
 ### T06 — Effect broker e checkpoint
 
-- [ ] Registrar capabilities de workspace no `CapabilityRegistry` do Bastion e impedir rotas paralelas.
-- [ ] Aplicar policy da IDE por projeto/recurso no momento do efeito usando os gates do Core.
-- [ ] Implementar o Context Dock sobre a fila de approval e ligar aprovação ao payload exato.
-- [ ] Snapshot antes da mutação; executar somente via core privilegiado.
-- [ ] Alimentar Activity Strip com observer events, diff e rollback; rejeitar bypass e replay alterado.
+- [x] Registrar capabilities de workspace no `CapabilityRegistry` do Bastion e impedir rotas paralelas.
+- [x] Aplicar policy da IDE por projeto/recurso no momento do efeito usando os gates do Core.
+- [x] Implementar o Context Dock sobre a fila de approval e ligar aprovação ao payload exato.
+- [x] Snapshot antes da mutação; executar somente via core privilegiado.
+- [x] Alimentar Activity Strip com observer events, diff e rollback; rejeitar bypass e replay alterado.
 
 **Pronto quando:** uma alteração real pausa, explica consequência, executa após aprovação e pode ser revertida; nenhum caminho direto contorna o broker.
 
+**Evidência (2026-08-24):** `WorkspaceEffectBroker` registra a capability
+`ide:workspace_write`, mantém aprovação por recurso e rejeita reuso de uma
+aprovação com payload alterado. Os testes de workspace provam snapshot, escrita
+aprovada, rollback e criação/remoção de arquivo; o Context Dock usa somente a
+bridge tipada para propor, aprovar e reverter.
+
 ### T07 — Benchmark executável
 
-- [ ] Implementar leaderboard/leilão de posição com domínio transacional Rust.
-- [ ] Expor endpoint/processo Rust explícito ao servidor do benchmark.
-- [ ] Provar bids concorrentes, desempate, privacidade e consistência.
-- [ ] Alimentar o fluxo usando o agente e o effect broker reais.
+- [x] Implementar leaderboard/leilão de posição com domínio transacional Rust.
+- [x] Expor endpoint/processo Rust explícito ao servidor do benchmark.
+- [x] Provar bids concorrentes, desempate, privacidade e consistência.
+- [x] Alimentar o fluxo usando o agente e o effect broker reais.
 
 **Pronto quando:** o benchmark funciona sob concorrência e o preview usa a mesma rota transacional testada.
 
 ### T08 — Preview, evidência e reconciliação
 
-- [ ] Supervisionar preview com starting/healthy/stale/broken/reconnecting.
-- [ ] Correlacionar erro ao efeito, atividade e arquivos causais.
-- [ ] Integrar AAG como provider externo opcional e degradável.
-- [ ] Registrar intenção/spec do benchmark e detectar uma divergência real.
-- [ ] Permitir reconciliar mudando implementação, intenção ou aceitando exceção escopada.
+- [x] Supervisionar preview com starting/healthy/stale/broken/reconnecting.
+- [x] Correlacionar erro ao efeito, atividade e arquivos causais.
+- [x] Integrar AAG como provider externo opcional e degradável.
+- [x] Registrar intenção/spec do benchmark e detectar uma divergência real.
+- [x] Permitir reconciliar mudando implementação, intenção ou aceitando exceção escopada.
 
 **Pronto quando:** uma falha provocada aponta sua causa e uma divergência bidirecional é resolvida com evidência, inclusive com AAG indisponível.
 
 ### T09 — Game Mode e journey completa
 
-- [ ] Emitir `OutcomeVerified` somente após evidência independente.
-- [ ] Conceder progresso apenas a outcomes verificados.
-- [ ] Implementar receipt e desligamento sem lacuna funcional.
-- [ ] Rodar jornada completa intenção → agente → efeito → preview → erro → evidência → reconciliação.
+- [x] Emitir `OutcomeVerified` somente após evidência independente.
+- [x] Conceder progresso apenas a outcomes verificados.
+- [x] Implementar receipt e desligamento sem lacuna funcional.
+- [x] Rodar jornada completa intenção → agente → efeito → preview → erro → evidência → reconciliação.
+- [ ] Validar no CI o instalador Windows: instalação silenciosa deixa o executável principal no diretório do usuário antes de publicar o artifact.
 
 **Pronto quando:** autorização, tokens, prompts, tempo e linhas não geram progresso; a golden journey passa no host real.
 
