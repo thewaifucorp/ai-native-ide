@@ -135,6 +135,22 @@ pub struct StartedAgentSession {
     pub policy_note: &'static str,
 }
 
+/// A renderer-safe file descriptor. Paths are always relative to an attached
+/// resource and have already passed the host confinement check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFile {
+    pub relative_path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileContents {
+    pub relative_path: String,
+    pub content: String,
+}
+
 struct AttachedWorkspace {
     project_id: ProjectId,
     root: PathBuf,
@@ -530,6 +546,54 @@ impl DesktopBridge {
             .clone())
     }
 
+    /// Enumerates a bounded, source-oriented view of an attached resource.
+    /// This never follows a symlink outside the resource and deliberately skips
+    /// dependency/VCS directories that would make the editor unusable.
+    pub async fn list_workspace_files(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+    ) -> anyhow::Result<Vec<WorkspaceFile>> {
+        let root = self.workspace_root(project_id, resource_id).await?;
+        let mut files = Vec::new();
+        collect_workspace_files(&root, &root, &mut files)?;
+        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(files)
+    }
+
+    /// Reads a UTF-8 text file inside the selected resource. `canonicalize`
+    /// after the relative-path validation prevents a symlink from turning a
+    /// harmless renderer path into an out-of-workspace read.
+    pub async fn read_workspace_file(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+        relative_path: PathBuf,
+    ) -> anyhow::Result<WorkspaceFileContents> {
+        validate_relative_path(&relative_path)?;
+        let root = self.workspace_root(project_id, resource_id).await?;
+        let path = root.join(&relative_path).canonicalize().with_context(|| {
+            format!("workspace file does not exist: {}", relative_path.display())
+        })?;
+        if !path.starts_with(&root) || !path.is_file() {
+            bail!("workspace file is outside the selected resource or is not a file")
+        }
+        let metadata = path.metadata()?;
+        if metadata.len() > 1_048_576 {
+            bail!("workspace file exceeds the 1 MiB editor limit")
+        }
+        let content = fs::read_to_string(&path).with_context(|| {
+            format!(
+                "workspace file is not valid UTF-8: {}",
+                relative_path.display()
+            )
+        })?;
+        Ok(WorkspaceFileContents {
+            relative_path: relative_path.display().to_string(),
+            content,
+        })
+    }
+
     /// Records a filesystem mutation as an external causal revision. Called by
     /// the host watch callback; errors are returned to that trusted callback and
     /// never become renderer-controlled paths or effect IDs.
@@ -563,6 +627,53 @@ impl DesktopBridge {
             .cloned()
             .context("unknown IDE-owned agent session")
     }
+}
+
+const MAX_EDITOR_FILES: usize = 2_000;
+
+fn collect_workspace_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<WorkspaceFile>,
+) -> anyhow::Result<()> {
+    if files.len() >= MAX_EDITOR_FILES {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory)? {
+        if files.len() >= MAX_EDITOR_FILES {
+            break;
+        }
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let name = entry.file_name();
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if matches!(
+                name.to_str(),
+                Some(".git" | "node_modules" | "target" | ".next")
+            ) {
+                continue;
+            }
+            collect_workspace_files(root, &path, files)?;
+        } else if file_type.is_file() {
+            let metadata = entry.metadata()?;
+            if metadata.len() <= 1_048_576 {
+                let relative_path = path
+                    .strip_prefix(root)
+                    .context("workspace file escaped selected resource")?
+                    .display()
+                    .to_string();
+                files.push(WorkspaceFile {
+                    relative_path,
+                    size_bytes: metadata.len(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn workspace_for<'a>(

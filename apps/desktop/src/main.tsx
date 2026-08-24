@@ -28,13 +28,12 @@ import {
   type SemanticProjectRecord,
   type StartedAgentSession,
   type TerminalRunStatus,
+  type WorkspaceFile,
   type WorkspaceResource,
 } from "./host-client";
 import { TerminalSurface } from "./terminal-surface";
 import "./styles.css";
 
-const starterIntent =
-  "Quero criar um leilão simples de posições para divulgar ferramentas.";
 const navItems = ["Overview", "Build", "Resources", "Evidence"] as const;
 
 type AgentTranscriptEntry = {
@@ -102,7 +101,7 @@ function describeAgentEvent(event: AgentEvent): string {
 }
 
 function App() {
-  const [intent, setIntent] = useState(starterIntent);
+  const [intent, setIntent] = useState("");
   const [mode, setMode] = useState<BuildMode>("hybrid");
   const [depth, setDepth] = useState<Depth>("essential");
   const [section, setSection] = useState<(typeof navItems)[number]>("Overview");
@@ -139,9 +138,10 @@ function App() {
     useState<HostCall<TerminalRunStatus> | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [hostActivity, setHostActivity] = useState<string[]>([]);
-  const [rawDocument, setRawDocument] = useState(
-    `# intent.md\n\n${starterIntent}\n\nmode: hybrid\nactive-scope: local resource\npreview: not-run\n`,
-  );
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [rawDocument, setRawDocument] = useState("");
+  const [fileEffectId, setFileEffectId] = useState<string | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
   );
@@ -158,6 +158,39 @@ function App() {
       }
       return [...current, { role, text }];
     });
+  }
+  async function openWorkspaceFile(
+    activeProject: SemanticProjectRecord,
+    activeResource: WorkspaceResource,
+    relativePath: string,
+  ) {
+    const result = await hostClient.readWorkspaceFile(
+      activeProject.id,
+      activeResource.id,
+      relativePath,
+    );
+    if (result.state !== "available") return;
+    setSelectedFile(result.value.relativePath);
+    setRawDocument(result.value.content);
+  }
+  async function loadWorkspaceFiles(
+    activeProject: SemanticProjectRecord,
+    activeResource: WorkspaceResource,
+  ) {
+    const result = await hostClient.listWorkspaceFiles(
+      activeProject.id,
+      activeResource.id,
+    );
+    if (result.state !== "available") return;
+    setWorkspaceFiles(result.value);
+    const initial = result.value.find(
+      (file) => file.relativePath === "project.intent.md",
+    ) ?? result.value[0];
+    if (initial) await openWorkspaceFile(activeProject, activeResource, initial.relativePath);
+    else {
+      setSelectedFile(null);
+      setRawDocument("");
+    }
   }
   useEffect(() => {
     void hostClient.listSemanticProjects().then((result) => {
@@ -247,11 +280,13 @@ function App() {
     const result = await hostClient.openSemanticProject(projectId);
     if (result.state !== "available" || !result.value) return;
     setProject(result.value.project);
-    setResource(result.value.resources[0] ?? null);
+    const restoredResource = result.value.resources[0] ?? null;
+    setResource(restoredResource);
     setIntent(result.value.project.intent);
     setAgentSession(null);
     setAgentTranscript([]);
     setSection("Overview");
+    if (restoredResource) await loadWorkspaceFiles(result.value.project, restoredResource);
   }
   function startNewProject() {
     setProject(null);
@@ -259,6 +294,9 @@ function App() {
     setIntent("");
     setAgentSession(null);
     setAgentTranscript([]);
+    setWorkspaceFiles([]);
+    setSelectedFile(null);
+    setRawDocument("");
     setSection("Overview");
   }
   async function createProject() {
@@ -284,7 +322,10 @@ function App() {
       project.id,
       `${project.id}-local`,
     );
-    if (result.state === "available" && result.value) setResource(result.value);
+    if (result.state === "available" && result.value) {
+      setResource(result.value);
+      await loadWorkspaceFiles(project, result.value);
+    }
   }
   async function startPreview() {
     if (!project) return;
@@ -359,6 +400,7 @@ function App() {
       return;
     }
     setEffectState(result.value.written ? "written" : "awaiting");
+    if (result.value.written) await loadWorkspaceFiles(project, resource);
   }
   async function approveProjectIntent() {
     if (!project || !resource) return;
@@ -386,6 +428,38 @@ function App() {
     } else {
       setEffectState("failed");
     }
+  }
+  async function proposeSelectedFile(effectId: string) {
+    if (!project || !resource || !selectedFile) return;
+    const result = await hostClient.proposeWorkspaceWrite(project.id, {
+      resourceId: resource.id,
+      effectId,
+      relativePath: selectedFile,
+      content: rawDocument,
+    });
+    if (result.state !== "available") {
+      setEffectState("failed");
+      return;
+    }
+    setEffectState(result.value.written ? "written" : "awaiting");
+    if (result.value.written) {
+      setFileEffectId(null);
+      await loadWorkspaceFiles(project, resource);
+    }
+  }
+  async function saveWorkspaceFile() {
+    const effectId = `edit-${project?.id ?? "workspace"}-${Date.now()}`;
+    setFileEffectId(effectId);
+    await proposeSelectedFile(effectId);
+  }
+  async function approveWorkspaceFile() {
+    if (!project || !resource || !fileEffectId) return;
+    const approval = await hostClient.approveNextWorkspaceWrite(project.id, resource.id);
+    if (approval.state !== "available") {
+      setEffectState("failed");
+      return;
+    }
+    await proposeSelectedFile(fileEffectId);
   }
   async function startAgentSession() {
     if (!project || !resource) return;
@@ -883,11 +957,19 @@ function App() {
               <div className="raw-grid">
                 <div
                   className="monaco-editor"
-                  aria-label="Editor Monaco de intent.md"
+                  aria-label="Editor Monaco do arquivo selecionado"
                   style={{ background: "#181a17", height: 300, padding: 0 }}
                 >
                   <Editor
-                    defaultLanguage="markdown"
+                    language={
+                      selectedFile?.endsWith(".json")
+                        ? "json"
+                        : selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx")
+                          ? "typescript"
+                          : selectedFile?.endsWith(".css")
+                            ? "css"
+                            : "markdown"
+                    }
                     theme="vs-dark"
                     value={rawDocument}
                     onChange={(value) => setRawDocument(value ?? "")}
@@ -904,13 +986,31 @@ function App() {
                 <div>
                   <span className="eyebrow">PONTE DO HOST</span>
                   <p>
-                    Arquivos, terminal, preview e logs entram pela bridge
-                    tipada Tauri → Rust. O editor permanece no mesmo estado
-                    do projeto; gravar no workspace continua um efeito aprovado.
+                    {selectedFile
+                      ? `Editando ${selectedFile}. Salvar passa pelo effect broker do host.`
+                      : "Selecione um arquivo do recurso anexado para editar."}
                   </p>
-                  <button className="outline-action" type="button">
-                    Ver contrato do host
-                  </button>
+                  <div className="file-list" aria-label="Arquivos do workspace">
+                    {workspaceFiles.map((file) => (
+                      <button
+                        className={file.relativePath === selectedFile ? "text-button file-button--active" : "text-button"}
+                        key={file.relativePath}
+                        onClick={() => project && resource && void openWorkspaceFile(project, resource, file.relativePath)}
+                        type="button"
+                      >
+                        {file.relativePath}
+                      </button>
+                    ))}
+                  </div>
+                  {effectState === "awaiting" && fileEffectId ? (
+                    <button className="primary-action" onClick={() => void approveWorkspaceFile()} type="button">
+                      Aprovar edição →
+                    </button>
+                  ) : (
+                    <button className="outline-action" disabled={!selectedFile} onClick={() => void saveWorkspaceFile()} type="button">
+                      Salvar edição
+                    </button>
+                  )}
                 </div>
               </div>
             </section>

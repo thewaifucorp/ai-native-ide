@@ -53,6 +53,16 @@ export interface WorkspaceResource {
   createdAtMs: number;
 }
 
+export interface WorkspaceFile {
+  relativePath: string;
+  sizeBytes: number;
+}
+
+export interface WorkspaceFileContents {
+  relativePath: string;
+  content: string;
+}
+
 export interface OpenedSemanticProject {
   project: SemanticProjectRecord;
   resources: WorkspaceResource[];
@@ -196,6 +206,14 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string };
     result: WorkspaceResource | null;
   };
+  list_workspace_files: {
+    args: { projectId: string; resourceId: string };
+    result: WorkspaceFile[];
+  };
+  read_workspace_file: {
+    args: { projectId: string; resourceId: string; relativePath: string };
+    result: WorkspaceFileContents;
+  };
   start_benchmark_preview: {
     args: { projectId: string };
     result: BenchmarkPreviewStatus;
@@ -298,6 +316,15 @@ export interface HostClient {
     projectId: string,
     resourceId: string,
   ): Promise<HostCall<WorkspaceResource | null>>;
+  listWorkspaceFiles(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<WorkspaceFile[]>>;
+  readWorkspaceFile(
+    projectId: string,
+    resourceId: string,
+    relativePath: string,
+  ): Promise<HostCall<WorkspaceFileContents>>;
   startBenchmarkPreview(
     projectId: string,
   ): Promise<HostCall<BenchmarkPreviewStatus>>;
@@ -445,6 +472,10 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("open_semantic_project", { projectId }),
     attachWorkspaceFromPicker: (projectId, resourceId) =>
       call("attach_workspace_from_picker", { projectId, resourceId }),
+    listWorkspaceFiles: (projectId, resourceId) =>
+      call("list_workspace_files", { projectId, resourceId }),
+    readWorkspaceFile: (projectId, resourceId, relativePath) =>
+      call("read_workspace_file", { projectId, resourceId, relativePath }),
     startBenchmarkPreview: (projectId) =>
       call("start_benchmark_preview", { projectId }),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),

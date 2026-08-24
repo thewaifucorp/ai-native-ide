@@ -27,7 +27,8 @@ use benchmark_preview::{
 };
 use bridge::{
     AcpxTarget, AgentCapabilityCard, AgentTaskRequest, DesktopBridge, ProjectIntentInput,
-    StartedAgentSession, TrustedWorkspaceSelection, WorkspaceWriteRequest,
+    StartedAgentSession, TrustedWorkspaceSelection, WorkspaceFile, WorkspaceFileContents,
+    WorkspaceWriteRequest,
 };
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use model::{HostStatus, TauriViabilityReport};
@@ -467,6 +468,31 @@ async fn attach_workspace_from_picker(
 }
 
 #[tauri::command]
+async fn list_workspace_files(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+) -> Result<Vec<WorkspaceFile>, String> {
+    bridge
+        .list_workspace_files(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn read_workspace_file(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+    relative_path: PathBuf,
+) -> Result<WorkspaceFileContents, String> {
+    bridge
+        .read_workspace_file(&project_id, &resource_id, relative_path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn propose_workspace_write(
     bridge: State<'_, Arc<DesktopBridge>>,
     project_id: String,
@@ -680,6 +706,8 @@ pub fn run() {
             list_semantic_projects,
             open_semantic_project,
             attach_workspace_from_picker,
+            list_workspace_files,
+            read_workspace_file,
             propose_workspace_write,
             approve_next_workspace_write,
             rollback_workspace_write,
