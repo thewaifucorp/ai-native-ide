@@ -12,6 +12,12 @@ use std::{
     thread,
 };
 
+#[cfg(windows)]
+use std::{
+    ffi::OsString,
+    os::windows::ffi::{OsStrExt, OsStringExt},
+};
+
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 #[cfg(not(windows))]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -88,7 +94,7 @@ pub struct WatchScope {
 impl WatchScope {
     pub fn from_project_resource(root: impl AsRef<Path>) -> std::io::Result<Self> {
         Ok(Self {
-            root: root.as_ref().canonicalize()?,
+            root: host_canonical_path(root.as_ref())?,
         })
     }
 
@@ -111,7 +117,7 @@ impl TrustedProcessSpec {
         args: impl IntoIterator<Item = impl Into<String>>,
         working_directory: &WatchScope,
     ) -> std::io::Result<Self> {
-        let program = program.as_ref().canonicalize()?;
+        let program = host_canonical_path(program.as_ref())?;
         if !program.is_file() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -124,6 +130,40 @@ impl TrustedProcessSpec {
             working_directory: working_directory.root.clone(),
         })
     }
+}
+
+fn host_canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    #[cfg(windows)]
+    {
+        Ok(windows_command_path(canonical))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(canonical)
+    }
+}
+
+/// Windows canonicalization returns verbatim `\\\\?\\` paths. They are correct
+/// for Win32 file APIs, but `cmd.exe` treats them as unsupported UNC paths and
+/// silently changes the current directory. Host-owned terminal commands need
+/// the ordinary DOS spelling instead.
+#[cfg(windows)]
+fn windows_command_path(path: PathBuf) -> PathBuf {
+    let units = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    const VERBATIM: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    const VERBATIM_UNC: [u16; 4] = [b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16];
+
+    if units.starts_with(&VERBATIM) {
+        if units[VERBATIM.len()..].starts_with(&VERBATIM_UNC) {
+            let mut unc = vec![b'\\' as u16, b'\\' as u16];
+            unc.extend_from_slice(&units[VERBATIM.len() + VERBATIM_UNC.len()..]);
+            return PathBuf::from(OsString::from_wide(&unc));
+        }
+        return PathBuf::from(OsString::from_wide(&units[VERBATIM.len()..]));
+    }
+
+    path
 }
 
 pub struct HostRuntime {
