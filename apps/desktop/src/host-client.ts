@@ -281,6 +281,28 @@ export type ConfigField =
   | "idle_paid_inference"
   | "local_aag";
 
+export type FindingCategory = "ambiguity" | "missing_decision" | "risk";
+export type ReviewState = "open" | "accepted" | "dismissed";
+export interface SemanticFinding {
+  id: string;
+  evaluator: string;
+  evaluatorVersion: string;
+  layer: number;
+  category: FindingCategory;
+  claim: string;
+  evidence: string;
+  confidence: number;
+  severity: Severity;
+  remediation: string;
+  reviewState: ReviewState;
+}
+export interface SemanticReport {
+  findings: SemanticFinding[];
+  withheldForBudget: number;
+  evaluatorsRun: string[];
+  contentHash: string;
+}
+
 export type EffectClass = "prototype" | "durable";
 export type InterruptionDecision =
   | "proceed"
@@ -483,6 +505,10 @@ interface HostCommandMap {
   set_config: { args: { patch: ConfigPatch }; result: IdeConfig };
   reset_config_field: { args: { field: ConfigField }; result: IdeConfig };
   explain_config_field: { args: { field: ConfigField }; result: string };
+  evaluate_intent: {
+    args: { intent: string; maxFindings?: number };
+    result: SemanticReport;
+  };
   mode_interruption_policy: {
     args: { class: EffectClass };
     result: InterruptionDecision;
@@ -649,6 +675,10 @@ export interface HostClient {
   setConfig(patch: ConfigPatch): Promise<HostCall<IdeConfig>>;
   resetConfigField(field: ConfigField): Promise<HostCall<IdeConfig>>;
   explainConfigField(field: ConfigField): Promise<HostCall<string>>;
+  evaluateIntent(
+    intent: string,
+    maxFindings?: number,
+  ): Promise<HostCall<SemanticReport>>;
   modeInterruptionPolicy(
     effectClass: EffectClass,
   ): Promise<HostCall<InterruptionDecision>>;
@@ -837,6 +867,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     setConfig: (patch) => call("set_config", { patch }),
     resetConfigField: (field) => call("reset_config_field", { field }),
     explainConfigField: (field) => call("explain_config_field", { field }),
+    evaluateIntent: (intent, maxFindings) =>
+      call("evaluate_intent", { intent, maxFindings }),
     modeInterruptionPolicy: (effectClass) =>
       call("mode_interruption_policy", { class: effectClass }),
     promotePrototype: (prototypeEffectId, checkpointEffectId, note) =>

@@ -39,6 +39,7 @@ use ide_guidance::{
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
+use ide_semantic::{EvaluationBudget, SemanticReport};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -919,6 +920,17 @@ async fn promote_prototype(
         .await
 }
 
+/// Runs the deterministic Layer-1 semantic evaluators over the declared intent.
+/// It surfaces ambiguities, missing decisions and domain risks as reviewable
+/// hypotheses with evidence, confidence and remediation — no paid inference.
+#[tauri::command]
+fn evaluate_intent(intent: String, max_findings: Option<usize>) -> SemanticReport {
+    let budget = max_findings
+        .map(|max_findings| EvaluationBudget { max_findings })
+        .unwrap_or_default();
+    ide_semantic::evaluate(&intent, budget)
+}
+
 const HARNESS_TEXT_EXTENSIONS: [&str; 13] = [
     "rs", "ts", "tsx", "js", "jsx", "json", "md", "toml", "yaml", "yml", "env", "txt", "css",
 ];
@@ -1143,6 +1155,7 @@ pub fn run() {
             explain_config_field,
             mode_interruption_policy,
             promote_prototype,
+            evaluate_intent,
             aag_relations,
             agent_capability_card,
             start_agent_session,

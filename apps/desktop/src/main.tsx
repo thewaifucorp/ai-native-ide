@@ -26,6 +26,7 @@ import {
   type IdeConfig,
   type InterruptionDecision,
   type ConfigBuildMode,
+  type SemanticReport,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -163,6 +164,7 @@ function App() {
   const [config, setConfig] = useState<IdeConfig | null>(null);
   const [modeInterruption, setModeInterruption] =
     useState<InterruptionDecision | null>(null);
+  const [semantic, setSemantic] = useState<SemanticReport | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -240,6 +242,18 @@ function App() {
       if (result.state === "available") setModeInterruption(result.value);
     });
   }, [mode, config]);
+  useEffect(() => {
+    if (!intent.trim()) {
+      setSemantic(null);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void hostClient.evaluateIntent(intent).then((result) => {
+        if (result.state === "available") setSemantic(result.value);
+      });
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [intent]);
   useEffect(() => {
     void hostClient.listSemanticProjects().then((result) => {
       if (result.state !== "available") return;
@@ -969,6 +983,32 @@ function App() {
                 <SignalCard key={signal.id} signal={signal} onUse={useSignal} />
               ))}
             </div>
+            {semantic && semantic.findings.length > 0 && (
+              <div className="signal-grid" aria-label="Avaliação semântica">
+                {semantic.findings.map((finding) => (
+                  <article
+                    className={`signal signal--${finding.severity === "high" || finding.severity === "critical" ? "risk" : finding.severity === "medium" ? "decision" : "concept"}`}
+                    key={finding.id}
+                  >
+                    <div className="signal__meta">
+                      <span>{finding.category.replace("_", " ")}</span>
+                      <span className="signal__dot" />
+                    </div>
+                    <h3>{finding.claim}</h3>
+                    <p>
+                      {finding.evidence} · confiança{" "}
+                      {Math.round(finding.confidence * 100)}% · {finding.severity}
+                    </p>
+                    <p>{finding.remediation}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+            {semantic && semantic.withheldForBudget > 0 && (
+              <span className="signal-count">
+                +{semantic.withheldForBudget} retidos pelo budget
+              </span>
+            )}
           </section>
           <section className="build-section" aria-labelledby="build-heading">
             <div className="section-label">

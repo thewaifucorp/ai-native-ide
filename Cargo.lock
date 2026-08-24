@@ -32,6 +32,7 @@ dependencies = [
  "ide-harness",
  "ide-modes",
  "ide-reconciliation",
+ "ide-semantic",
  "notify",
  "portable-pty",
  "serde",
@@ -1967,6 +1968,14 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ide-semantic"
+version = "0.1.0"
+dependencies = [
+ "ide-harness",
+ "serde",
 ]
 
 [[package]]
