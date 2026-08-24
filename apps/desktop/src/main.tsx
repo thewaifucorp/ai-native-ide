@@ -267,6 +267,20 @@ function App() {
     };
   }, [agentSession, project, resource]);
   useEffect(() => {
+    if (!preview || preview.health === "stopped") return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void hostClient.pollBenchmarkPreview().then((result) => {
+        if (!active || result.state !== "available" || !result.value) return;
+        setPreview(result.value);
+      });
+    }, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [preview]);
+  useEffect(() => {
     if (!terminal || terminal.state !== "running") return;
     let active = true;
     const timer = window.setInterval(() => {
@@ -917,15 +931,14 @@ function App() {
                 <span>PREVIEW</span>
                 <span
                   className={
-                    preview
+                    preview?.health === "healthy"
                       ? "status-healthy"
-                      : previewFailure
-                        ? "status-unknown"
-                        : "status-unknown"
+                      : "status-unknown"
                   }
+                  title={preview?.detail ?? undefined}
                 >
                   {preview
-                    ? "● HEALTHY"
+                    ? `● ${preview.health.toUpperCase()}`
                     : previewFailure
                       ? "● BROKEN"
                       : "○ NOT-RUN"}

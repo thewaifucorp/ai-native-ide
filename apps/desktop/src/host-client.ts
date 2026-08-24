@@ -73,10 +73,21 @@ export interface OpenedSemanticProject {
   resources: WorkspaceResource[];
 }
 
+export type PreviewHealth =
+  | "starting"
+  | "healthy"
+  | "stale"
+  | "broken"
+  | "reconnecting"
+  | "stopped";
+
 export interface BenchmarkPreviewStatus {
   projectId: string;
   url: string;
-  state: "healthy" | "stopped";
+  /** Live lifecycle state derived from a real loopback probe. */
+  health: PreviewHealth;
+  detail: string | null;
+  changedAtMs: number;
 }
 
 export interface PreviewFailure {
@@ -231,6 +242,10 @@ interface HostCommandMap {
     args: { projectId: string };
     result: BenchmarkPreviewStatus;
   };
+  poll_benchmark_preview: {
+    args: undefined;
+    result: BenchmarkPreviewStatus | null;
+  };
   stop_benchmark_preview: {
     args: undefined;
     result: BenchmarkPreviewStatus | null;
@@ -348,6 +363,7 @@ export interface HostClient {
   startBenchmarkPreview(
     projectId: string,
   ): Promise<HostCall<BenchmarkPreviewStatus>>;
+  pollBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
   stopBenchmarkPreview(): Promise<HostCall<BenchmarkPreviewStatus | null>>;
   stopAndCaptureBenchmarkPreviewFailure(
     projectId: string,
@@ -502,6 +518,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("workspace_diff", { projectId, resourceId }),
     startBenchmarkPreview: (projectId) =>
       call("start_benchmark_preview", { projectId }),
+    pollBenchmarkPreview: () => call("poll_benchmark_preview", undefined),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),
     stopAndCaptureBenchmarkPreviewFailure: (projectId, resourceId, effectId) =>
       call("stop_and_capture_benchmark_preview_failure", {

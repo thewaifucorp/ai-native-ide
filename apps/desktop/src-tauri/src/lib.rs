@@ -601,9 +601,27 @@ async fn start_benchmark_preview(
         .start(&project_id)
         .await
         .map_err(|error| error.to_string())?;
+    // Publish the health the host actually observed, never an assumed value.
     runtime.publish(HostEvent::PreviewHealth {
-        health: PreviewHealth::Healthy,
+        health: status.health,
     });
+    Ok(status)
+}
+
+/// Re-probes the running preview and reports its live lifecycle state. This is
+/// how `starting → healthy → stale → broken → reconnecting` becomes observable
+/// to the renderer instead of a one-shot assertion at start time.
+#[tauri::command]
+async fn poll_benchmark_preview(
+    previews: State<'_, BenchmarkPreviewHost>,
+    runtime: State<'_, HostRuntime>,
+) -> Result<Option<BenchmarkPreviewStatus>, String> {
+    let status = previews.poll().await;
+    if let Some(status) = status.as_ref() {
+        runtime.publish(HostEvent::PreviewHealth {
+            health: status.health,
+        });
+    }
     Ok(status)
 }
 
@@ -768,6 +786,7 @@ pub fn run() {
             approve_next_workspace_write,
             rollback_workspace_write,
             start_benchmark_preview,
+            poll_benchmark_preview,
             stop_benchmark_preview,
             stop_and_capture_benchmark_preview_failure,
             reconcile_benchmark_preview_failure,

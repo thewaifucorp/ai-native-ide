@@ -8,8 +8,9 @@ use anyhow::Context;
 use benchmark_service::{router, BenchmarkStore};
 use ide_reconciliation::{
     CausalLinks, Divergence, ExceptionScope, IntentSpecRecord, PreviewEvidenceLedger,
-    PreviewFailure, PreviewHealthCheck, PreviewHealthCheckObservation, Reconciliation,
-    ReconciliationChoice, ReconciliationStore,
+    PreviewFailure, PreviewHealth as SupervisorHealth, PreviewHealthCheck,
+    PreviewHealthCheckObservation, PreviewSupervisor, Reconciliation, ReconciliationChoice,
+    ReconciliationStore,
 };
 use serde::Serialize;
 use std::{
@@ -29,7 +30,93 @@ use tokio::{
 pub struct BenchmarkPreviewStatus {
     pub project_id: String,
     pub url: String,
-    pub state: &'static str,
+    /// Live health derived from a real loopback probe, not a host assertion.
+    pub health: crate::model::PreviewHealth,
+    pub detail: Option<String>,
+    pub changed_at_ms: u64,
+}
+
+/// Result of an actual loopback health probe against a running preview.
+enum PreviewProbe {
+    /// `/health` answered `204`.
+    Up,
+    /// The server accepted the connection but did not answer a healthy check.
+    Degraded(String),
+    /// The server could not be reached at all.
+    Down(String),
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn to_model_health(health: &SupervisorHealth) -> crate::model::PreviewHealth {
+    match health {
+        SupervisorHealth::Starting => crate::model::PreviewHealth::Starting,
+        SupervisorHealth::Healthy => crate::model::PreviewHealth::Healthy,
+        SupervisorHealth::Stale => crate::model::PreviewHealth::Stale,
+        SupervisorHealth::Broken => crate::model::PreviewHealth::Broken,
+        SupervisorHealth::Reconnecting => crate::model::PreviewHealth::Reconnecting,
+    }
+}
+
+fn status_from(
+    project_id: &str,
+    url: &str,
+    supervisor: &PreviewSupervisor,
+) -> BenchmarkPreviewStatus {
+    let state = supervisor.state();
+    BenchmarkPreviewStatus {
+        project_id: project_id.to_owned(),
+        url: url.to_owned(),
+        health: to_model_health(&state.health),
+        detail: state.detail.clone(),
+        changed_at_ms: state.changed_at_ms,
+    }
+}
+
+/// The next legal supervisor state for an observed probe. `None` keeps the
+/// current state (and its `changed_at_ms`), so a steady preview does not churn.
+/// Every returned target is a single legal transition from `current`.
+fn next_health(current: &SupervisorHealth, probe: &PreviewProbe) -> Option<SupervisorHealth> {
+    use SupervisorHealth::*;
+    let target = match probe {
+        PreviewProbe::Up => match current {
+            Starting => Healthy,
+            Healthy => return None,
+            Stale => Healthy,
+            Broken => Reconnecting,
+            Reconnecting => Healthy,
+        },
+        PreviewProbe::Degraded(_) => match current {
+            Starting => Stale,
+            Healthy => Stale,
+            Stale => return None,
+            Broken => Reconnecting,
+            Reconnecting => Stale,
+        },
+        PreviewProbe::Down(_) => match current {
+            Broken => return None,
+            _ => Broken,
+        },
+    };
+    Some(target)
+}
+
+fn apply_probe(supervisor: &mut PreviewSupervisor, probe: &PreviewProbe) {
+    let Some(next) = next_health(&supervisor.state().health, probe) else {
+        return;
+    };
+    let detail = match probe {
+        PreviewProbe::Up => None,
+        PreviewProbe::Degraded(detail) | PreviewProbe::Down(detail) => Some(detail.clone()),
+    };
+    // The target is always a legal one-step transition and `now_ms` is
+    // monotonic against the supervisor, so a transition error is unreachable.
+    let _ = supervisor.transition(next, now_ms(), detail);
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -51,6 +138,7 @@ struct RunningPreview {
     status: BenchmarkPreviewStatus,
     shutdown: oneshot::Sender<()>,
     task: JoinHandle<()>,
+    supervisor: PreviewSupervisor,
 }
 
 pub struct BenchmarkPreviewHost {
@@ -98,17 +186,34 @@ impl BenchmarkPreviewHost {
                 })
                 .await;
         });
-        let status = BenchmarkPreviewStatus {
-            project_id: project_id.to_owned(),
-            url: format!("http://{address}"),
-            state: "healthy",
-        };
+        let url = format!("http://{address}");
+        // The lifecycle starts before any observation, then advances only on a
+        // real loopback probe. No state is asserted without evidence.
+        let mut supervisor = PreviewSupervisor::starting(now_ms());
+        apply_probe(&mut supervisor, &classify_health(&url).await);
+        let status = status_from(project_id, &url, &supervisor);
         *running = Some(RunningPreview {
             status: status.clone(),
             shutdown,
             task,
+            supervisor,
         });
         Ok(status)
+    }
+
+    /// Runs a real loopback health probe against the active preview and advances
+    /// the lifecycle. Returns `None` when no preview is running.
+    pub async fn poll(&self) -> Option<BenchmarkPreviewStatus> {
+        let mut running = self.running.lock().await;
+        let active = running.as_mut()?;
+        let probe = classify_health(&active.status.url).await;
+        apply_probe(&mut active.supervisor, &probe);
+        active.status = status_from(
+            &active.status.project_id,
+            &active.status.url,
+            &active.supervisor,
+        );
+        Some(active.status.clone())
     }
 
     pub async fn stop(&self) -> Option<BenchmarkPreviewStatus> {
@@ -116,7 +221,9 @@ impl BenchmarkPreviewHost {
         let _ = active.shutdown.send(());
         let _ = active.task.await;
         Some(BenchmarkPreviewStatus {
-            state: "stopped",
+            health: crate::model::PreviewHealth::Stopped,
+            detail: Some("preview stopped by host".to_owned()),
+            changed_at_ms: now_ms(),
             ..active.status
         })
     }
@@ -216,28 +323,93 @@ impl BenchmarkPreviewHost {
     }
 }
 
-async fn probe_health(url: &str) -> anyhow::Result<()> {
-    let address = url
-        .strip_prefix("http://")
-        .context("preview URL must use loopback HTTP")?;
-    let mut stream = tokio::net::TcpStream::connect(address)
-        .await
-        .with_context(|| format!("connect preview health endpoint {url}"))?;
-    stream
+/// Classifies a real loopback health probe. A connect failure is `Down`; an
+/// accepted connection that does not answer `204` is `Degraded`. The host never
+/// manufactures a health verdict — every branch reflects an observed socket.
+async fn classify_health(url: &str) -> PreviewProbe {
+    let Some(address) = url.strip_prefix("http://") else {
+        return PreviewProbe::Down("preview URL must use loopback HTTP".to_owned());
+    };
+    let mut stream = match tokio::net::TcpStream::connect(address).await {
+        Ok(stream) => stream,
+        Err(error) => return PreviewProbe::Down(format!("connect {url}: {error}")),
+    };
+    if let Err(error) = stream
         .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await?;
+        .await
+    {
+        return PreviewProbe::Down(format!("write {url}: {error}"));
+    }
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).await?;
-    anyhow::ensure!(
-        response.starts_with(b"HTTP/1.1 204"),
-        "preview health endpoint returned a non-204 response"
-    );
-    Ok(())
+    if let Err(error) = stream.read_to_end(&mut response).await {
+        return PreviewProbe::Degraded(format!("read {url}: {error}"));
+    }
+    if response.starts_with(b"HTTP/1.1 204") {
+        PreviewProbe::Up
+    } else {
+        PreviewProbe::Degraded(format!("health endpoint {url} returned a non-204 response"))
+    }
+}
+
+async fn probe_health(url: &str) -> anyhow::Result<()> {
+    match classify_health(url).await {
+        PreviewProbe::Up => Ok(()),
+        PreviewProbe::Degraded(detail) | PreviewProbe::Down(detail) => {
+            anyhow::bail!(detail)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_advances_only_through_legal_lifecycle_transitions() {
+        use SupervisorHealth::*;
+        // A first healthy probe leaves `Starting`.
+        assert_eq!(next_health(&Starting, &PreviewProbe::Up), Some(Healthy));
+        // A steady healthy preview does not churn its state.
+        assert_eq!(next_health(&Healthy, &PreviewProbe::Up), None);
+        // A lost connection breaks a healthy preview, then holds broken.
+        assert_eq!(
+            next_health(&Healthy, &PreviewProbe::Down(String::new())),
+            Some(Broken)
+        );
+        assert_eq!(
+            next_health(&Broken, &PreviewProbe::Down(String::new())),
+            None
+        );
+        // Recovery is observed as reconnecting before it is trusted as healthy.
+        assert_eq!(next_health(&Broken, &PreviewProbe::Up), Some(Reconnecting));
+        assert_eq!(next_health(&Reconnecting, &PreviewProbe::Up), Some(Healthy));
+        // A reachable-but-unhealthy server is stale, never silently healthy.
+        assert_eq!(
+            next_health(&Healthy, &PreviewProbe::Degraded(String::new())),
+            Some(Stale)
+        );
+        assert_eq!(next_health(&Stale, &PreviewProbe::Up), Some(Healthy));
+    }
+
+    #[tokio::test]
+    async fn a_running_preview_reports_real_healthy_state_and_polls() {
+        let directory = std::env::temp_dir().join(format!(
+            "ai-native-ide-preview-live-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after epoch")
+                .as_nanos()
+        ));
+        let host = BenchmarkPreviewHost::open(directory.clone()).expect("open preview host");
+        let started = host.start("auction").await.expect("start preview");
+        assert_eq!(started.health, crate::model::PreviewHealth::Healthy);
+        let polled = host.poll().await.expect("running preview polls");
+        assert_eq!(polled.health, crate::model::PreviewHealth::Healthy);
+        assert!(polled.url.starts_with("http://127.0.0.1:"));
+        host.stop().await;
+        assert!(host.poll().await.is_none());
+        fs::remove_dir_all(directory).expect("remove preview test directory");
+    }
 
     #[tokio::test]
     async fn stopped_preview_produces_causal_failed_health_evidence() {
