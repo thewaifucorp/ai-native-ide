@@ -58,6 +58,13 @@ struct OpenedSemanticProject {
     resources: Vec<Resource>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceDiff {
+    available: bool,
+    content: String,
+}
+
 /// Retains host-created PTYs so an explicit cancel always reaches the child.
 /// The renderer sees only an opaque ID and cannot provide an executable/path.
 struct TerminalRegistry {
@@ -503,6 +510,43 @@ async fn read_workspace_file(
 }
 
 #[tauri::command]
+async fn workspace_diff(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    resource_id: String,
+) -> Result<WorkspaceDiff, String> {
+    let root = bridge
+        .workspace_root(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !root.join(".git").is_dir() {
+        return Ok(WorkspaceDiff {
+            available: false,
+            content: "Este recurso não é um repositório Git; não há diff de checkpoint disponível."
+                .to_owned(),
+        });
+    }
+    let output =
+        std::process::Command::new(registered_git_executable().map_err(|error| error.to_string())?)
+            .args(["--no-pager", "diff", "--no-ext-diff", "--binary"])
+            .current_dir(root)
+            .output()
+            .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    let mut content = String::from_utf8_lossy(&output.stdout).into_owned();
+    if content.len() > 1_048_576 {
+        content.truncate(1_048_576);
+        content.push_str("\n\n[diff truncado em 1 MiB]");
+    }
+    Ok(WorkspaceDiff {
+        available: true,
+        content,
+    })
+}
+
+#[tauri::command]
 async fn propose_workspace_write(
     bridge: State<'_, Arc<DesktopBridge>>,
     project_id: String,
@@ -719,6 +763,7 @@ pub fn run() {
             attach_workspace_from_picker,
             list_workspace_files,
             read_workspace_file,
+            workspace_diff,
             propose_workspace_write,
             approve_next_workspace_write,
             rollback_workspace_write,

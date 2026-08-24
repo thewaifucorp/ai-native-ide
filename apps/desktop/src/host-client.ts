@@ -63,6 +63,11 @@ export interface WorkspaceFileContents {
   content: string;
 }
 
+export interface WorkspaceDiff {
+  available: boolean;
+  content: string;
+}
+
 export interface OpenedSemanticProject {
   project: SemanticProjectRecord;
   resources: WorkspaceResource[];
@@ -218,6 +223,10 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string; relativePath: string };
     result: WorkspaceFileContents;
   };
+  workspace_diff: {
+    args: { projectId: string; resourceId: string };
+    result: WorkspaceDiff;
+  };
   start_benchmark_preview: {
     args: { projectId: string };
     result: BenchmarkPreviewStatus;
@@ -332,6 +341,10 @@ export interface HostClient {
     resourceId: string,
     relativePath: string,
   ): Promise<HostCall<WorkspaceFileContents>>;
+  workspaceDiff(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<WorkspaceDiff>>;
   startBenchmarkPreview(
     projectId: string,
   ): Promise<HostCall<BenchmarkPreviewStatus>>;
@@ -485,6 +498,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("list_workspace_files", { projectId, resourceId }),
     readWorkspaceFile: (projectId, resourceId, relativePath) =>
       call("read_workspace_file", { projectId, resourceId, relativePath }),
+    workspaceDiff: (projectId, resourceId) =>
+      call("workspace_diff", { projectId, resourceId }),
     startBenchmarkPreview: (projectId) =>
       call("start_benchmark_preview", { projectId }),
     stopBenchmarkPreview: () => call("stop_benchmark_preview", undefined),

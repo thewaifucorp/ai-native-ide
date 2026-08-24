@@ -28,6 +28,7 @@ import {
   type SemanticProjectRecord,
   type StartedAgentSession,
   type TerminalRunStatus,
+  type WorkspaceDiff,
   type WorkspaceFile,
   type WorkspaceResource,
 } from "./host-client";
@@ -144,6 +145,7 @@ function App() {
   const [rawDocument, setRawDocument] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
   const [fileEffectId, setFileEffectId] = useState<string | null>(null);
+  const [workspaceDiff, setWorkspaceDiff] = useState<HostCall<WorkspaceDiff> | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
   );
@@ -484,6 +486,10 @@ function App() {
     setSelectedFile(path);
     setRawDocument("");
     setNewFilePath("");
+  }
+  async function inspectWorkspaceDiff() {
+    if (!project || !resource) return;
+    setWorkspaceDiff(await hostClient.workspaceDiff(project.id, resource.id));
   }
   async function approveWorkspaceFile() {
     if (!project || !resource || !fileEffectId) return;
@@ -1071,6 +1077,12 @@ function App() {
                     <button className="outline-action" disabled={!selectedFile} onClick={() => void saveWorkspaceFile()} type="button">
                       Salvar edição
                     </button>
+                  )}
+                  <button className="text-button" disabled={!resource} onClick={() => void inspectWorkspaceDiff()} type="button">
+                    Ver diff do checkpoint
+                  </button>
+                  {workspaceDiff?.state === "available" && (
+                    <pre>{workspaceDiff.value.content || "Nenhuma alteração não confirmada."}</pre>
                   )}
                 </div>
               </div>
