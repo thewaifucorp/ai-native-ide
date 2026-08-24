@@ -84,6 +84,42 @@ describe("host client", () => {
     });
   });
 
+  it("controls only an opaque host-owned terminal session", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
+      terminalId: "terminal-1",
+      state: "running",
+      detail: "host-owned shell",
+    });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(
+      client.startWorkspaceTerminal("auction", "auction-local"),
+    ).resolves.toMatchObject({ state: "available" });
+    await client.writeWorkspaceTerminal("terminal-1", "status\n");
+    await client.resizeWorkspaceTerminal("terminal-1", 30, 100);
+    await client.pollWorkspaceTerminal("terminal-1");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "start_workspace_terminal", {
+      projectId: "auction",
+      resourceId: "auction-local",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "write_workspace_terminal", {
+      terminalId: "terminal-1",
+      input: "status\n",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "resize_workspace_terminal", {
+      terminalId: "terminal-1",
+      rows: 30,
+      columns: 100,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(4, "poll_workspace_terminal", {
+      terminalId: "terminal-1",
+    });
+  });
+
   it("reopens persisted project resources through the typed host boundary", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue(null);
     const client = createHostClient({

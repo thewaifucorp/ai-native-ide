@@ -160,6 +160,114 @@ async fn start_workspace_inspection(
     })
 }
 
+/// Creates an interactive shell selected by the host and scoped to an attached
+/// workspace. The renderer can send input only after receiving this opaque ID;
+/// it never chooses an executable, command line, or filesystem location.
+#[tauri::command]
+async fn start_workspace_terminal(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    terminals: State<'_, TerminalRegistry>,
+    project_id: String,
+    resource_id: String,
+) -> Result<TerminalRunStatus, String> {
+    let root = bridge
+        .workspace_root(&project_id, &resource_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let scope = WatchScope::from_project_resource(root).map_err(|error| error.to_string())?;
+    let spec = workspace_terminal_spec(&scope).map_err(|error| error.to_string())?;
+    let pty = runtime
+        .spawn_pty(spec, 24, 120)
+        .map_err(|error| error.to_string())?;
+    let terminal_id = format!(
+        "terminal-{}",
+        terminals.next_id.fetch_add(1, Ordering::Relaxed)
+    );
+    terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned")
+        .insert(terminal_id.clone(), pty);
+    Ok(TerminalRunStatus {
+        terminal_id,
+        state: "running",
+        detail: "Shell do host aberto no recurso anexado; saída é texto bruto e a sessão pode ser encerrada.",
+    })
+}
+
+#[tauri::command]
+fn write_workspace_terminal(
+    terminals: State<'_, TerminalRegistry>,
+    terminal_id: String,
+    input: String,
+) -> Result<(), String> {
+    if input.is_empty() || input.len() > 16 * 1024 {
+        return Err("terminal input must contain at most 16 KiB".to_owned());
+    }
+    let mut sessions = terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned");
+    let terminal = sessions
+        .get_mut(&terminal_id)
+        .ok_or_else(|| "unknown IDE-owned terminal session".to_owned())?;
+    terminal
+        .write(input.as_bytes())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resize_workspace_terminal(
+    terminals: State<'_, TerminalRegistry>,
+    terminal_id: String,
+    rows: u16,
+    columns: u16,
+) -> Result<(), String> {
+    if !(8..=200).contains(&rows) || !(20..=500).contains(&columns) {
+        return Err("terminal dimensions are outside the host limits".to_owned());
+    }
+    let mut sessions = terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned");
+    let terminal = sessions
+        .get_mut(&terminal_id)
+        .ok_or_else(|| "unknown IDE-owned terminal session".to_owned())?;
+    terminal
+        .resize(rows, columns)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn poll_workspace_terminal(
+    terminals: State<'_, TerminalRegistry>,
+    terminal_id: String,
+) -> Result<TerminalRunStatus, String> {
+    let mut sessions = terminals
+        .sessions
+        .lock()
+        .expect("terminal registry lock poisoned");
+    let lifecycle = sessions
+        .get_mut(&terminal_id)
+        .ok_or_else(|| "unknown IDE-owned terminal session".to_owned())?
+        .poll()
+        .map_err(|error| error.to_string())?;
+    let stopped = lifecycle == ProcessLifecycle::Stopped;
+    if stopped {
+        sessions.remove(&terminal_id);
+    }
+    Ok(TerminalRunStatus {
+        terminal_id,
+        state: if stopped { "stopped" } else { "running" },
+        detail: if stopped {
+            "A sessão terminou e o host liberou os recursos do PTY."
+        } else {
+            "A sessão ainda está ativa no recurso anexado."
+        },
+    })
+}
+
 #[tauri::command]
 fn cancel_workspace_inspection(
     terminals: State<'_, TerminalRegistry>,
@@ -228,6 +336,30 @@ fn workspace_inspection_spec(scope: &WatchScope) -> std::io::Result<TrustedProce
             ["--no-pager", "status", "--short"],
             scope,
         )
+    }
+}
+
+fn workspace_terminal_spec(scope: &WatchScope) -> std::io::Result<TrustedProcessSpec> {
+    #[cfg(windows)]
+    {
+        let command_interpreter =
+            std::env::var_os("ComSpec")
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "registered Windows command interpreter was not found",
+                    )
+                })?;
+        TrustedProcessSpec::for_registered_extension(
+            command_interpreter,
+            std::iter::empty::<String>(),
+            scope,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        TrustedProcessSpec::for_registered_extension("/bin/sh", std::iter::empty::<String>(), scope)
     }
 }
 
@@ -546,6 +678,10 @@ pub fn run() {
             next_agent_event,
             cancel_agent_session,
             start_workspace_inspection,
+            start_workspace_terminal,
+            write_workspace_terminal,
+            resize_workspace_terminal,
+            poll_workspace_terminal,
             cancel_workspace_inspection
         ])
         .run(tauri::generate_context!())

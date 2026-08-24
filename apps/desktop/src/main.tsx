@@ -29,6 +29,7 @@ import {
   type TerminalRunStatus,
   type WorkspaceResource,
 } from "./host-client";
+import { TerminalSurface } from "./terminal-surface";
 import "./styles.css";
 
 const starterIntent =
@@ -109,6 +110,7 @@ function App() {
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
+  const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [hostActivity, setHostActivity] = useState<string[]>([]);
   const [rawDocument, setRawDocument] = useState(
     `# intent.md\n\n${starterIntent}\n\nmode: hybrid\nactive-scope: local resource\npreview: not-run\n`,
@@ -134,6 +136,19 @@ function App() {
         setHostActivity((current) =>
           [`${event.kind}: ${detail}`, ...current].slice(0, 4),
         );
+        if (event.extension !== "pty") return;
+        const terminalLine = event.line;
+        if (event.kind === "processOutput" && terminalLine !== undefined) {
+          setTerminalOutput((current) =>
+            [...current, terminalLine.slice(0, 16 * 1024)].slice(-500),
+          );
+        }
+        if (event.kind === "processExited") {
+          setTerminalOutput((current) => [
+            ...current,
+            `\n[processo encerrado: ${event.exitCode ?? "sem código"}]`,
+          ]);
+        }
       })
       .then((stop) => {
         unsubscribe = stop;
@@ -172,6 +187,20 @@ function App() {
       window.clearInterval(timer);
     };
   }, [agentSession]);
+  useEffect(() => {
+    if (!terminal || terminal.state !== "running") return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void hostClient.pollWorkspaceTerminal(terminal.terminalId).then((result) => {
+        if (!active || result.state !== "available") return;
+        if (result.value.state === "stopped") setTerminal(result.value);
+      });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [terminal]);
   function useSignal(signal: IntentSignal) {
     setActiveSignal(signal);
     setSection("Build");
@@ -321,19 +350,40 @@ function App() {
     );
     setAgentTask(result);
   }
-  async function startWorkspaceInspection() {
+  async function startWorkspaceTerminal() {
     if (!project || !resource) return;
-    const result = await hostClient.startWorkspaceInspection(
+    const result = await hostClient.startWorkspaceTerminal(
       project.id,
       resource.id,
     );
     setTerminalCall(result);
-    if (result.state === "available") setTerminal(result.value);
+    if (result.state === "available") {
+      setTerminalOutput([]);
+      setTerminal(result.value);
+      void hostClient.resizeWorkspaceTerminal(result.value.terminalId, 24, 120);
+    }
   }
   async function cancelWorkspaceInspection() {
     if (!terminal) return;
     await hostClient.cancelWorkspaceInspection(terminal.terminalId);
-    setTerminal(null);
+    setTerminal({
+      ...terminal,
+      state: "stopped",
+      detail: "A sessão foi encerrada e a saída bruta permanece disponível acima.",
+    });
+  }
+  async function submitTerminalInput(input: string) {
+    if (!terminal) return;
+    const result = await hostClient.writeWorkspaceTerminal(
+      terminal.terminalId,
+      input,
+    );
+    if (result.state === "failed") {
+      setTerminalOutput((current) => [
+        ...current,
+        `[host recusou entrada: ${result.message}]`,
+      ]);
+    }
   }
 
   return (
@@ -826,28 +876,38 @@ function App() {
         <section className="dock-section">
           <span className="dock-label">TERMINAL</span>
           <strong>
-            {terminal ? "Inspeção PTY em execução" : "Somente leitura"}
+            {terminal?.state === "running" ? "PTY em execução" : "Terminal do workspace"}
           </strong>
           <p>
             {terminalCall?.state === "failed"
               ? `O host recusou o terminal: ${terminalCall.message}`
               : terminal
                 ? terminal.detail
-                : "Execute uma inspeção Git limitada ao recurso; comandos livres entram somente com a política de terminal da fase seguinte."}
+                : "O host abre o shell no recurso anexado; a UI não escolhe executável nem caminho."}
           </p>
           <button
             className="text-button"
             disabled={!project || !resource}
             onClick={() =>
               void (terminal
-                ? cancelWorkspaceInspection()
-                : startWorkspaceInspection())
+                ? terminal.state === "running"
+                  ? cancelWorkspaceInspection()
+                  : startWorkspaceTerminal()
+                : startWorkspaceTerminal())
             }
             type="button"
           >
-            {terminal ? "Cancelar inspeção" : "Inspecionar recurso"}{" "}
+            {terminal?.state === "running" ? "Encerrar terminal" : "Abrir terminal"}{" "}
             <span>→</span>
           </button>
+          {terminal && (
+            <TerminalSurface
+              lines={terminalOutput}
+              onCancel={() => void cancelWorkspaceInspection()}
+              onSubmit={(input) => void submitTerminalInput(input)}
+              running={terminal.state === "running"}
+            />
+          )}
         </section>
         <section className="dock-section">
           <span className="dock-label">ESCOPO</span>

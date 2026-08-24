@@ -162,7 +162,7 @@ export type AgentEvent =
 
 export interface TerminalRunStatus {
   terminalId: string;
-  state: "running";
+  state: "running" | "stopped";
   detail: string;
 }
 
@@ -175,6 +175,8 @@ export interface HostEventPayload {
   detail?: string;
   path?: string;
   exitCode?: number | null;
+  extension?: "agentSubprocess" | "preview" | "pty" | "filesystemWatch";
+  stream?: "stdout" | "stderr" | "pty";
 }
 
 interface HostCommandMap {
@@ -242,6 +244,22 @@ interface HostCommandMap {
   cancel_agent_session: { args: { sessionId: string }; result: void };
   start_workspace_inspection: {
     args: { projectId: string; resourceId: string };
+    result: TerminalRunStatus;
+  };
+  start_workspace_terminal: {
+    args: { projectId: string; resourceId: string };
+    result: TerminalRunStatus;
+  };
+  write_workspace_terminal: {
+    args: { terminalId: string; input: string };
+    result: void;
+  };
+  resize_workspace_terminal: {
+    args: { terminalId: string; rows: number; columns: number };
+    result: void;
+  };
+  poll_workspace_terminal: {
+    args: { terminalId: string };
     result: TerminalRunStatus;
   };
   cancel_workspace_inspection: { args: { terminalId: string }; result: void };
@@ -322,6 +340,22 @@ export interface HostClient {
   startWorkspaceInspection(
     projectId: string,
     resourceId: string,
+  ): Promise<HostCall<TerminalRunStatus>>;
+  startWorkspaceTerminal(
+    projectId: string,
+    resourceId: string,
+  ): Promise<HostCall<TerminalRunStatus>>;
+  writeWorkspaceTerminal(
+    terminalId: string,
+    input: string,
+  ): Promise<HostCall<void>>;
+  resizeWorkspaceTerminal(
+    terminalId: string,
+    rows: number,
+    columns: number,
+  ): Promise<HostCall<void>>;
+  pollWorkspaceTerminal(
+    terminalId: string,
   ): Promise<HostCall<TerminalRunStatus>>;
   cancelWorkspaceInspection(terminalId: string): Promise<HostCall<void>>;
   listenHostEvents(
@@ -421,6 +455,14 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       call("cancel_agent_session", { sessionId }),
     startWorkspaceInspection: (projectId, resourceId) =>
       call("start_workspace_inspection", { projectId, resourceId }),
+    startWorkspaceTerminal: (projectId, resourceId) =>
+      call("start_workspace_terminal", { projectId, resourceId }),
+    writeWorkspaceTerminal: (terminalId, input) =>
+      call("write_workspace_terminal", { terminalId, input }),
+    resizeWorkspaceTerminal: (terminalId, rows, columns) =>
+      call("resize_workspace_terminal", { terminalId, rows, columns }),
+    pollWorkspaceTerminal: (terminalId) =>
+      call("poll_workspace_terminal", { terminalId }),
     cancelWorkspaceInspection: (terminalId) =>
       call("cancel_workspace_inspection", { terminalId }),
     async listenHostEvents(listener) {
