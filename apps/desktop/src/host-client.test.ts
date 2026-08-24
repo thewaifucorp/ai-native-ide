@@ -20,6 +20,34 @@ describe("host client", () => {
     expect(loadTransport).not.toHaveBeenCalled();
   });
 
+  it("recognizes the Tauri v2 IPC bridge when the optional global API is disabled", async () => {
+    const runtime = globalThis as typeof globalThis & {
+      isTauri?: unknown;
+      __TAURI_INTERNALS__?: unknown;
+    };
+    const originalIsTauri = runtime.isTauri;
+    const originalInternals = runtime.__TAURI_INTERNALS__;
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
+      host: "tauri",
+    });
+    runtime.isTauri = undefined;
+    runtime.__TAURI_INTERNALS__ = { invoke: () => undefined };
+
+    try {
+      const client = createHostClient({
+        loadTransport: async () => ({ invoke }),
+      });
+      await expect(client.status()).resolves.toMatchObject({
+        state: "available",
+        value: { host: "tauri" },
+      });
+      expect(invoke).toHaveBeenCalledWith("host_status", undefined);
+    } finally {
+      runtime.isTauri = originalIsTauri;
+      runtime.__TAURI_INTERNALS__ = originalInternals;
+    }
+  });
+
   it("uses only the allowlisted command and DTO when the native host is available", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
       id: "auction",

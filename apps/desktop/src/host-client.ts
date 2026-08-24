@@ -374,8 +374,16 @@ const unavailableReason =
   "O host Tauri não está disponível nesta sessão; nenhum efeito foi executado.";
 
 function defaultNativeHostCheck(): boolean {
+  // Tauri v2 injects its IPC bridge as `__TAURI_INTERNALS__`. `isTauri` is
+  // optional (and absent when the global API is disabled), so using it as the
+  // sole check made every installed Windows build behave like a browser preview.
+  const runtime = globalThis as typeof globalThis & {
+    isTauri?: unknown;
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  };
   return (
-    (globalThis as typeof globalThis & { isTauri?: unknown }).isTauri === true
+    runtime.isTauri === true ||
+    typeof runtime.__TAURI_INTERNALS__?.invoke === "function"
   );
 }
 

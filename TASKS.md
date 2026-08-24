@@ -181,7 +181,7 @@ bridge tipada para propor, aprovar e reverter.
 - [x] Emitir `OutcomeVerified` somente após evidência independente.
 - [x] Conceder progresso apenas a outcomes verificados.
 - [x] Implementar receipt e desligamento sem lacuna funcional.
-- [x] Rodar jornada completa intenção → agente → efeito → preview → erro → evidência → reconciliação.
+- [ ] Rodar jornada completa intenção → agente → efeito → preview → erro → evidência → reconciliação.
 - [ ] Validar no CI o instalador Windows: instalação silenciosa deixa o executável principal no diretório do usuário antes de publicar o artifact.
 
 **Pronto quando:** autorização, tokens, prompts, tempo e linhas não geram progresso; a golden journey passa no host real.
