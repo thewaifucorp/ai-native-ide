@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use super::host::OutputStream;
 use super::{
     benchmark_preview::{BenchmarkPreviewHost, PreviewReconciliationAction},
@@ -13,7 +12,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-#[cfg(unix)]
 use std::{
     thread,
     time::{Duration, Instant},
@@ -113,52 +111,33 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     let terminal_scope = WatchScope::from_project_resource(&root).expect("scope workspace PTY");
     let terminal_spec =
         workspace_inspection_spec(&terminal_scope).expect("construct fixed workspace inspection");
-    let _terminal = terminal_runtime
+    let mut terminal = terminal_runtime
         .spawn_pty(terminal_spec, 24, 120)
         .expect("start host-owned workspace PTY");
-    #[cfg(unix)]
-    {
-        let pty_deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < pty_deadline {
-            if terminal_events
-                .lock()
-                .expect("terminal event lock")
-                .iter()
-                .any(|event| {
-                    matches!(
-                        event,
-                        HostEvent::ProcessOutput {
-                            extension: HostExtension::Pty,
-                            stream: OutputStream::Pty,
-                            line,
-                        } if line.contains("benchmark.intent.md")
-                    )
-                })
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            terminal_events
-                .lock()
-                .expect("terminal event lock")
-                .iter()
-                .any(|event| matches!(
+    let pty_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < pty_deadline {
+        if terminal_events
+            .lock()
+            .expect("terminal event lock")
+            .iter()
+            .any(|event| {
+                matches!(
                     event,
                     HostEvent::ProcessOutput {
                         extension: HostExtension::Pty,
                         stream: OutputStream::Pty,
                         line,
                     } if line.contains("benchmark.intent.md")
-                )),
-            "host PTY must stream the fixed workspace inspection"
-        );
+                )
+            })
+        {
+            break;
+        }
+        terminal.poll().expect("poll host-owned workspace PTY");
+        thread::sleep(Duration::from_millis(20));
     }
-    // ConPTY creation is covered on Windows; T05 owns its byte-stream
-    // conformance suite. Gate 1's PTY output proof runs against the packaged
-    // Linux host, which is the supported artifact for this phase.
-    #[cfg(windows)]
+    let terminal_diagnostics =
+        format!("{:?}", terminal_events.lock().expect("terminal event lock"));
     assert!(
         terminal_events
             .lock()
@@ -166,12 +145,13 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
             .iter()
             .any(|event| matches!(
                 event,
-                HostEvent::ProcessStarted {
+                HostEvent::ProcessOutput {
                     extension: HostExtension::Pty,
-                    ..
-                }
+                    stream: OutputStream::Pty,
+                    line,
+                } if line.contains("benchmark.intent.md")
             )),
-        "host must create the Windows ConPTY workspace inspection"
+        "host PTY must stream the fixed workspace inspection; events: {terminal_diagnostics}"
     );
 
     let previews = BenchmarkPreviewHost::open(data.join("previews")).expect("open preview host");

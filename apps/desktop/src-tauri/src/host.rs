@@ -35,6 +35,11 @@ pub enum HostEvent {
         stream: OutputStream,
         line: String,
     },
+    ProcessStreamError {
+        extension: HostExtension,
+        stream: OutputStream,
+        detail: String,
+    },
     ProcessExited {
         extension: HostExtension,
         exit_code: Option<i32>,
@@ -297,7 +302,14 @@ fn stream_lines(
                     stream,
                     line,
                 }),
-                Err(_) => break,
+                Err(error) => {
+                    sink(HostEvent::ProcessStreamError {
+                        extension,
+                        stream,
+                        detail: error.to_string(),
+                    });
+                    break;
+                }
             }
         }
     });
@@ -379,6 +391,23 @@ impl ManagedPty {
             exit_code: Some(status.exit_code() as i32),
         });
         Ok(())
+    }
+
+    /// Polls the child without taking ownership of the PTY. This makes a
+    /// short-lived command's exit observable even when a platform reader fails
+    /// to yield output, which is essential for diagnosing ConPTY behavior.
+    pub fn poll(&mut self) -> std::io::Result<ProcessLifecycle> {
+        if self.lifecycle == ProcessLifecycle::Stopped {
+            return Ok(self.lifecycle);
+        }
+        if let Some(status) = self.child.try_wait().map_err(io_error)? {
+            self.lifecycle = ProcessLifecycle::Stopped;
+            (self.sink)(HostEvent::ProcessExited {
+                extension: HostExtension::Pty,
+                exit_code: Some(status.exit_code() as i32),
+            });
+        }
+        Ok(self.lifecycle)
     }
 
     pub fn lifecycle(&self) -> ProcessLifecycle {
