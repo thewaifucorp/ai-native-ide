@@ -5,6 +5,7 @@
 //! APIs: an untrusted renderer never supplies an executable, a shell command, or
 //! an unrestricted filesystem path.
 
+mod aag;
 mod benchmark_preview;
 mod bridge;
 #[cfg(test)]
@@ -718,6 +719,16 @@ async fn reconcile_benchmark_preview_failure(
         .map_err(|error| error.to_string())
 }
 
+/// Optional AAG navigation lookup. It degrades to an explicit `unknown` when the
+/// provider is absent, so the IDE keeps working and never presents a missing
+/// graph as an empty-but-successful answer.
+#[tauri::command]
+async fn aag_relations(query: String) -> Result<ide_reconciliation::AagRelations, String> {
+    tokio::task::spawn_blocking(move || aag::relations_for(&query))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn agent_capability_card(
     bridge: State<'_, Arc<DesktopBridge>>,
@@ -826,6 +837,7 @@ pub fn run() {
             stop_benchmark_preview,
             stop_and_capture_benchmark_preview_failure,
             reconcile_benchmark_preview_failure,
+            aag_relations,
             agent_capability_card,
             start_agent_session,
             submit_agent_task,

@@ -117,6 +117,11 @@ export interface PreviewFailureReport {
 export type PreviewReconciliationAction =
   "change_implementation" | "change_intent" | "accept_preview_exception";
 
+/** AAG is a degradable navigation provider; its absence stays an explicit unknown. */
+export type AagRelations =
+  | { known: { related_symbols: string[] } }
+  | { unknown: { reason: string } };
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -264,6 +269,10 @@ interface HostCommandMap {
       status: "pending_verification" | "accepted_scoped_exception";
     };
   };
+  aag_relations: {
+    args: { query: string };
+    result: AagRelations;
+  };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -382,6 +391,7 @@ export interface HostClient {
       status: "pending_verification" | "accepted_scoped_exception";
     }>
   >;
+  aagRelations(query: string): Promise<HostCall<AagRelations>>;
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
@@ -531,6 +541,7 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       }),
     reconcileBenchmarkPreviewFailure: (divergenceId, action) =>
       call("reconcile_benchmark_preview_failure", { divergenceId, action }),
+    aagRelations: (query) => call("aag_relations", { query }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>

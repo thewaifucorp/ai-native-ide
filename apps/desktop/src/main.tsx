@@ -19,6 +19,7 @@ import {
 } from "./game-mode";
 import {
   hostClient,
+  type AagRelations,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -150,6 +151,7 @@ function App() {
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
   );
+  const [aagCall, setAagCall] = useState<HostCall<AagRelations> | null>(null);
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
     createGameModeState(),
   );
@@ -520,6 +522,11 @@ function App() {
     setSelectedFile(path);
     setRawDocument("");
     setNewFilePath("");
+  }
+  async function queryAagRelations() {
+    const subject = selectedFile ?? project?.title;
+    if (!subject) return;
+    setAagCall(await hostClient.aagRelations(subject));
   }
   async function inspectWorkspaceDiff() {
     if (!project || !resource) return;
@@ -1280,6 +1287,35 @@ function App() {
               <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
             </div>
           )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">NAVEGAÇÃO (AAG)</span>
+          <strong>
+            {aagCall?.state === "available"
+              ? "known" in aagCall.value
+                ? `${aagCall.value.known.related_symbols.length} relações`
+                : "Indisponível · unknown"
+              : "Provider opcional"}
+          </strong>
+          <p>
+            {aagCall?.state === "available"
+              ? "known" in aagCall.value
+                ? aagCall.value.known.related_symbols.slice(0, 6).join(" · ")
+                : aagCall.value.unknown.reason
+              : aagCall?.state === "failed"
+                ? aagCall.message
+                : aagCall?.state === "unavailable"
+                  ? "Abra o app desktop para consultar o AAG."
+                  : "AAG observa relações do que existe; sua ausência fica explícita como unknown, sem quebrar a IDE."}
+          </p>
+          <button
+            className="text-button"
+            disabled={!project}
+            onClick={() => void queryAagRelations()}
+            type="button"
+          >
+            Consultar relações <span>→</span>
+          </button>
         </section>
         <section className="dock-section">
           <span className="dock-label">APLICADO AGORA</span>
