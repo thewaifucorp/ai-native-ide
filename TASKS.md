@@ -89,21 +89,22 @@ foi gerado como `.deb`/`.rpm`; o `.deb` foi instalado atomicamente em
 
 - [x] Criar slice Tauri com fronteira privilegiada, Monaco, PTY e lifecycle de preview.
 - [x] Validar subprocessos de agentes, streaming/eventos, filesystem watching, atalhos e múltiplas superfícies.
-- [ ] Medir segurança, performance, consumo, empacotamento Linux e ergonomia de manutenção no artifact CI.
+- [x] Medir segurança, performance, consumo, empacotamento Linux e ergonomia de manutenção no artifact CI.
 - [x] Definir gates objetivos que caracterizariam um blocker estrutural do Tauri.
 - [x] Materializar manifestos, entrypoints e extension points do host Tauri.
 - [x] Manter Electron apenas como fallback documentado; não implementar segundo host sem blocker comprovado.
 
 **Pronto quando:** o artifact Tauri instalado executa o slice completo e nenhum gate estrutural falha; qualquer exceção possui evidência e decisão registrada.
 
-**Evidência (2026-08-23):** `cargo test -p ai-native-ide-desktop --lib`
-passou 11 testes, incluindo golden journey com PTY, efeito aprovado, preview HTTP
-e reconciliação; `npm run check` passou (19 testes). O pacote Tauri Linux
-`.deb` foi gerado localmente, instalado atomicamente em `.local-install` e executado sob
-`xvfb` por 8 s. Falta somente a medição no artifact produzido pelo GitHub CI.
-O host mantém IPC tipado/allowlisted, Monaco, superfícies
-Preview/Terminal/Raw Evidence, watcher nativo e Electron somente como fallback
-documentado.
+**Evidência (2026-08-24):** o CI do GitHub validou o artifact Tauri em Linux e
+Windows. Em Windows, `cargo test -p ai-native-ide-desktop --lib` passou os 8
+testes, incluindo a golden journey que confirma streaming real pelo PTY; a
+regressão ConPTY foi corrigida com backend Windows direto e caminhos de comando
+em formato DOS. Em Linux, `cargo test -p ai-native-ide-desktop --lib` passou 11
+testes e `npm run check` passou 19; o pacote `.deb` foi gerado, instalado
+atomicamente em `.local-install` e executado sob `xvfb` por 8 s. O host mantém
+IPC tipado/allowlisted, Monaco, superfícies Preview/Terminal/Raw Evidence,
+watcher nativo e Electron somente como fallback documentado.
 
 ### T04 — Projeto semântico mínimo
 
