@@ -10,6 +10,7 @@ members = [
   "crates/ide-modes",
   "crates/ide-semantic",
   "crates/ide-context",
+  "crates/ide-packs",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]

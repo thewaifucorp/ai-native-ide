@@ -28,6 +28,8 @@ import {
   type ConfigBuildMode,
   type SemanticReport,
   type CompiledContext,
+  type Pack,
+  type ReadinessVerdict,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -168,6 +170,11 @@ function App() {
   const [semantic, setSemantic] = useState<SemanticReport | null>(null);
   const [compiledContext, setCompiledContext] =
     useState<HostCall<CompiledContext> | null>(null);
+  const [packs, setPacks] = useState<Pack[]>([]);
+  const [appliedPacks, setAppliedPacks] = useState<string[]>([]);
+  const [packReadiness, setPackReadiness] = useState<ReadinessVerdict | null>(
+    null,
+  );
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -627,6 +634,25 @@ function App() {
       setGuidanceText("");
       await refreshAppliedGuidance();
     }
+  }
+  useEffect(() => {
+    void hostClient.listPacks().then((result) => {
+      if (result.state === "available") setPacks(result.value);
+    });
+    void hostClient.appliedPacks().then((result) => {
+      if (result.state === "available") setAppliedPacks(result.value);
+    });
+  }, []);
+  async function togglePack(pack: Pack) {
+    const isApplied = appliedPacks.includes(pack.id);
+    const result = isApplied
+      ? await hostClient.revertPack(pack.id)
+      : await hostClient.applyPack(pack.id);
+    if (result.state === "available") setAppliedPacks(result.value);
+  }
+  async function checkPackReadiness(pack: Pack) {
+    const result = await hostClient.packReadiness(pack.id, [], []);
+    if (result.state === "available") setPackReadiness(result.value);
   }
   async function loadCompiledContext() {
     if (!project) return;
@@ -1498,6 +1524,41 @@ function App() {
               </button>
             </>
           )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">PACKS DE DOMÍNIO</span>
+          <p>
+            {packReadiness
+              ? `${packReadiness.packId}: ${packReadiness.ready ? "pronto" : "bloqueado"} — ${packReadiness.note}`
+              : "Declarativos, explicáveis e reversíveis; readiness só em checkpoint."}
+          </p>
+          {packs.map((pack) => (
+            <div className="guidance-empty" key={pack.id}>
+              <strong>
+                {pack.name}
+                {appliedPacks.includes(pack.id) ? " · aplicado" : ""}
+              </strong>
+              <small>
+                {pack.checks.length} checks · {pack.reversible ? "reversível" : "não reversível"}
+              </small>
+              <div className="mode-group">
+                <button
+                  className="mode-button"
+                  onClick={() => void togglePack(pack)}
+                  type="button"
+                >
+                  {appliedPacks.includes(pack.id) ? "Reverter" : "Aplicar"}
+                </button>
+                <button
+                  className="mode-button"
+                  onClick={() => void checkPackReadiness(pack)}
+                  type="button"
+                >
+                  Readiness
+                </button>
+              </div>
+            </div>
+          ))}
         </section>
         <section className="dock-section">
           <span className="dock-label">CONTEXTO ENVIADO</span>

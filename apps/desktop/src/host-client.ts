@@ -281,6 +281,40 @@ export type ConfigField =
   | "idle_paid_inference"
   | "local_aag";
 
+export type PackCapability =
+  | "read_workspace"
+  | "run_deterministic_check"
+  | "offer_guidance";
+export interface PackCheck {
+  id: string;
+  title: string;
+  subject: string;
+  criterion: string;
+  layer: number;
+}
+export interface PackGuide {
+  id: string;
+  title: string;
+  text: string;
+}
+export interface Pack {
+  id: string;
+  name: string;
+  domain: string;
+  description: string;
+  checks: PackCheck[];
+  guides: PackGuide[];
+  capabilities: PackCapability[];
+  reversible: boolean;
+}
+export interface ReadinessVerdict {
+  packId: string;
+  ready: boolean;
+  missingChecks: string[];
+  failedChecks: string[];
+  note: string;
+}
+
 export interface ContextSegment {
   origin: string;
   scope: string;
@@ -549,6 +583,14 @@ interface HostCommandMap {
     result: CompiledContext;
   };
   navigate_subject: { args: { subject: string }; result: Navigation };
+  list_packs: { args: undefined; result: Pack[] };
+  applied_packs: { args: undefined; result: string[] };
+  apply_pack: { args: { packId: string }; result: string[] };
+  revert_pack: { args: { packId: string }; result: string[] };
+  pack_readiness: {
+    args: { packId: string; passed: string[]; failed: string[] };
+    result: ReadinessVerdict;
+  };
   mode_interruption_policy: {
     args: { class: EffectClass };
     result: InterruptionDecision;
@@ -726,6 +768,15 @@ export interface HostClient {
     budgetChars?: number,
   ): Promise<HostCall<CompiledContext>>;
   navigateSubject(subject: string): Promise<HostCall<Navigation>>;
+  listPacks(): Promise<HostCall<Pack[]>>;
+  appliedPacks(): Promise<HostCall<string[]>>;
+  applyPack(packId: string): Promise<HostCall<string[]>>;
+  revertPack(packId: string): Promise<HostCall<string[]>>;
+  packReadiness(
+    packId: string,
+    passed: string[],
+    failed: string[],
+  ): Promise<HostCall<ReadinessVerdict>>;
   modeInterruptionPolicy(
     effectClass: EffectClass,
   ): Promise<HostCall<InterruptionDecision>>;
@@ -924,6 +975,12 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
         budgetChars,
       }),
     navigateSubject: (subject) => call("navigate_subject", { subject }),
+    listPacks: () => call("list_packs", undefined),
+    appliedPacks: () => call("applied_packs", undefined),
+    applyPack: (packId) => call("apply_pack", { packId }),
+    revertPack: (packId) => call("revert_pack", { packId }),
+    packReadiness: (packId, passed, failed) =>
+      call("pack_readiness", { packId, passed, failed }),
     modeInterruptionPolicy: (effectClass) =>
       call("mode_interruption_policy", { class: effectClass }),
     promotePrototype: (prototypeEffectId, checkpointEffectId, note) =>

@@ -40,6 +40,7 @@ use ide_guidance::{
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
+use ide_packs::{Pack, ReadinessVerdict};
 use ide_semantic::{EvaluationBudget, SemanticReport};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -921,6 +922,53 @@ async fn promote_prototype(
         .await
 }
 
+#[tauri::command]
+async fn list_packs(bridge: State<'_, Arc<DesktopBridge>>) -> Result<Vec<Pack>, String> {
+    Ok(bridge.list_packs().await)
+}
+
+#[tauri::command]
+async fn applied_packs(bridge: State<'_, Arc<DesktopBridge>>) -> Result<Vec<String>, String> {
+    Ok(bridge.applied_packs().await)
+}
+
+#[tauri::command]
+async fn apply_pack(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    pack_id: String,
+) -> Result<Vec<String>, String> {
+    bridge
+        .apply_pack(&pack_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn revert_pack(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    pack_id: String,
+) -> Result<Vec<String>, String> {
+    bridge
+        .revert_pack(&pack_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Evaluates a pack's readiness at a checkpoint from observed check results.
+/// Missing or failed checks block readiness — never counted as a pass.
+#[tauri::command]
+async fn pack_readiness(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    pack_id: String,
+    passed: Vec<String>,
+    failed: Vec<String>,
+) -> Result<ReadinessVerdict, String> {
+    bridge
+        .pack_readiness(&pack_id, passed, failed)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Compiles the context that would be sent to an agent for the current activity,
 /// with explicit provenance and a budget. Policies, requirements and blocking
 /// guidance are kept verbatim; lower-priority material is dropped to fit.
@@ -1212,6 +1260,11 @@ pub fn run() {
             evaluate_intent,
             compile_agent_context,
             navigate_subject,
+            list_packs,
+            applied_packs,
+            apply_pack,
+            revert_pack,
+            pack_readiness,
             aag_relations,
             agent_capability_card,
             start_agent_session,

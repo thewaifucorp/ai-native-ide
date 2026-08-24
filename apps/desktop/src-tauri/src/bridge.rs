@@ -32,6 +32,7 @@ use ide_guidance::{
     GuidanceRegistry, GuidanceScope, HygieneFinding, TruthDeclaration, TruthFinding, TruthRegistry,
 };
 use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
+use ide_packs::{Pack, PackRegistry, ReadinessVerdict};
 use ide_reconciliation::CausalLinks;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -178,6 +179,7 @@ pub struct DesktopBridge {
     guidance: Mutex<GuidanceRegistry>,
     truth: Mutex<TruthRegistry>,
     config: Mutex<ConfigStore>,
+    packs: Mutex<PackRegistry>,
 }
 
 impl DesktopBridge {
@@ -203,7 +205,45 @@ impl DesktopBridge {
             guidance: Mutex::new(GuidanceRegistry::open(data_directory.join("guidance"))?),
             truth: Mutex::new(TruthRegistry::open(data_directory.join("truth"))?),
             config: Mutex::new(ConfigStore::open(data_directory.join("config"))?),
+            packs: Mutex::new(PackRegistry::open(data_directory.join("packs"))?),
         })
+    }
+
+    // --- Domain packs ---------------------------------------------------
+
+    pub async fn list_packs(&self) -> Vec<Pack> {
+        self.packs.lock().await.list()
+    }
+
+    pub async fn applied_packs(&self) -> Vec<String> {
+        self.packs.lock().await.applied()
+    }
+
+    pub async fn apply_pack(&self, pack_id: &str) -> anyhow::Result<Vec<String>> {
+        let mut packs = self.packs.lock().await;
+        packs.apply(pack_id)?;
+        Ok(packs.applied())
+    }
+
+    pub async fn revert_pack(&self, pack_id: &str) -> anyhow::Result<Vec<String>> {
+        let mut packs = self.packs.lock().await;
+        packs.revert(pack_id)?;
+        Ok(packs.applied())
+    }
+
+    pub async fn pack_readiness(
+        &self,
+        pack_id: &str,
+        passed: Vec<String>,
+        failed: Vec<String>,
+    ) -> anyhow::Result<ReadinessVerdict> {
+        let packs = self.packs.lock().await;
+        let pack = packs
+            .list()
+            .into_iter()
+            .find(|pack| pack.id == pack_id)
+            .with_context(|| format!("unknown pack {pack_id}"))?;
+        Ok(ide_packs::readiness(&pack, &passed, &failed))
     }
 
     // --- Configuration --------------------------------------------------

@@ -32,6 +32,7 @@ dependencies = [
  "ide-guidance",
  "ide-harness",
  "ide-modes",
+ "ide-packs",
  "ide-reconciliation",
  "ide-semantic",
  "notify",
@@ -1969,6 +1970,15 @@ version = "0.1.0"
 dependencies = [
  "ide-config",
  "serde",
+]
+
+[[package]]
+name = "ide-packs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
