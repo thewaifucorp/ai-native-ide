@@ -29,8 +29,10 @@ use ide_domain::{
 };
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft,
-    GuidanceRegistry, GuidanceScope, HygieneFinding, TruthDeclaration, TruthFinding, TruthRegistry,
+    GuidanceRegistry, GuidanceScope, GuidanceState, HygieneFinding, TruthDeclaration, TruthFinding,
+    TruthRegistry,
 };
+use ide_lifecycle::{ExportInputs, ExportManifest, ExportedResource, PublishLog, PublishRecord};
 use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, PackRegistry, ReadinessVerdict};
 use ide_reconciliation::CausalLinks;
@@ -180,6 +182,8 @@ pub struct DesktopBridge {
     truth: Mutex<TruthRegistry>,
     config: Mutex<ConfigStore>,
     packs: Mutex<PackRegistry>,
+    publish_log: Mutex<PublishLog>,
+    exports_dir: PathBuf,
 }
 
 impl DesktopBridge {
@@ -206,7 +210,94 @@ impl DesktopBridge {
             truth: Mutex::new(TruthRegistry::open(data_directory.join("truth"))?),
             config: Mutex::new(ConfigStore::open(data_directory.join("config"))?),
             packs: Mutex::new(PackRegistry::open(data_directory.join("packs"))?),
+            publish_log: Mutex::new(PublishLog::open(data_directory.join("lifecycle"))?),
+            exports_dir: data_directory.join("exports"),
         })
+    }
+
+    // --- Export / publish / republish -----------------------------------
+
+    /// Assembles a portable export manifest and writes it locally. No ShinAI
+    /// infrastructure is required and no absolute machine path is exported.
+    pub async fn export_project(&self, project_id: &str) -> anyhow::Result<ExportManifest> {
+        validate_identifier("project id", project_id)?;
+        let project = self
+            .open_project(project_id)?
+            .context("the requested semantic project does not exist")?;
+        let resources = self
+            .projects
+            .resources_for_project(&ProjectId(project_id.to_owned()))?
+            .into_iter()
+            .map(|resource| ExportedResource {
+                id: resource.id.0,
+                kind: match resource.kind {
+                    ResourceKind::Repository => "repository",
+                    ResourceKind::Directory => "directory",
+                }
+                .to_owned(),
+                label: resource
+                    .canonical_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("recurso")
+                    .to_owned(),
+            })
+            .collect();
+        let applied_guidance = self
+            .guidance
+            .lock()
+            .await
+            .list()
+            .into_iter()
+            .filter(|guidance| guidance.state == GuidanceState::Active)
+            .map(|guidance| guidance.id)
+            .collect();
+        let applied_packs = self.packs.lock().await.applied();
+        let version = self
+            .publish_log
+            .lock()
+            .await
+            .history(project_id)
+            .last()
+            .map(|record| record.version.clone())
+            .unwrap_or_else(|| "0.0.1".to_owned());
+        let manifest = ide_lifecycle::build_export_manifest(&ExportInputs {
+            project_id: project_id.to_owned(),
+            title: project.title,
+            intent: project.intent,
+            version,
+            resources,
+            applied_guidance,
+            applied_packs,
+        });
+        fs::create_dir_all(&self.exports_dir)
+            .with_context(|| format!("create exports directory {}", self.exports_dir.display()))?;
+        let json = serde_json::to_vec_pretty(&manifest)?;
+        fs::write(self.exports_dir.join(format!("{project_id}.json")), json)
+            .with_context(|| format!("write export for {project_id}"))?;
+        Ok(manifest)
+    }
+
+    pub async fn publish_project(&self, project_id: &str) -> anyhow::Result<PublishRecord> {
+        validate_identifier("project id", project_id)?;
+        self.publish_log.lock().await.publish(project_id)
+    }
+
+    pub async fn republish_project(
+        &self,
+        project_id: &str,
+        problem: &str,
+        related_resources: Vec<String>,
+    ) -> anyhow::Result<PublishRecord> {
+        validate_identifier("project id", project_id)?;
+        self.publish_log
+            .lock()
+            .await
+            .republish(project_id, problem, related_resources)
+    }
+
+    pub async fn publish_history(&self, project_id: &str) -> Vec<PublishRecord> {
+        self.publish_log.lock().await.history(project_id)
     }
 
     // --- Domain packs ---------------------------------------------------

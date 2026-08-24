@@ -177,7 +177,7 @@ pub fn navigate(inputs: &ContextInputs, subject: &str) -> Navigation {
             consumers: declaration.consumers.clone(),
         })
         .collect();
-    authorities.sort_by(|left, right| right.precedence.cmp(&left.precedence));
+    authorities.sort_by_key(|authority| std::cmp::Reverse(authority.precedence));
     let evidence = inputs
         .evidence
         .iter()

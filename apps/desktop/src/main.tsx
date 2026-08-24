@@ -30,6 +30,8 @@ import {
   type CompiledContext,
   type Pack,
   type ReadinessVerdict,
+  type ExportManifest,
+  type PublishRecord,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -175,6 +177,11 @@ function App() {
   const [packReadiness, setPackReadiness] = useState<ReadinessVerdict | null>(
     null,
   );
+  const [exportManifest, setExportManifest] = useState<ExportManifest | null>(
+    null,
+  );
+  const [publications, setPublications] = useState<PublishRecord[]>([]);
+  const [republishProblem, setRepublishProblem] = useState("");
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -653,6 +660,32 @@ function App() {
   async function checkPackReadiness(pack: Pack) {
     const result = await hostClient.packReadiness(pack.id, [], []);
     if (result.state === "available") setPackReadiness(result.value);
+  }
+  async function exportProject() {
+    if (!project) return;
+    const result = await hostClient.exportProject(project.id);
+    if (result.state === "available") setExportManifest(result.value);
+  }
+  async function publishProject() {
+    if (!project) return;
+    const result = await hostClient.publishProject(project.id);
+    if (result.state === "available") {
+      const history = await hostClient.publishHistory(project.id);
+      if (history.state === "available") setPublications(history.value);
+    }
+  }
+  async function republishProject() {
+    if (!project || !republishProblem.trim()) return;
+    const result = await hostClient.republishProject(
+      project.id,
+      republishProblem.trim(),
+      resource ? [resource.id] : [],
+    );
+    if (result.state === "available") {
+      setRepublishProblem("");
+      const history = await hostClient.publishHistory(project.id);
+      if (history.state === "available") setPublications(history.value);
+    }
   }
   async function loadCompiledContext() {
     if (!project) return;
@@ -1522,6 +1555,64 @@ function App() {
               >
                 Detectar recursos <span>→</span>
               </button>
+            </>
+          )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">CICLO DE VIDA</span>
+          <strong>
+            {publications.length
+              ? `v${publications[publications.length - 1].version} publicada`
+              : exportManifest
+                ? `v${exportManifest.version} exportada`
+                : "Export e publish locais"}
+          </strong>
+          <p>
+            {exportManifest
+              ? exportManifest.portabilityNote
+              : "Exporte/publique sem lock-in nem infra ShinAI. Republicar preserva o histórico."}
+          </p>
+          <div className="mode-group">
+            <button
+              className="mode-button"
+              disabled={!project}
+              onClick={() => void exportProject()}
+              type="button"
+            >
+              Exportar
+            </button>
+            <button
+              className="mode-button"
+              disabled={!project}
+              onClick={() => void publishProject()}
+              type="button"
+            >
+              Publicar
+            </button>
+          </div>
+          {publications.length > 0 && (
+            <>
+              <input
+                onChange={(event) => setRepublishProblem(event.target.value)}
+                placeholder="Problema observado…"
+                value={republishProblem}
+              />
+              <button
+                className="text-button"
+                disabled={!republishProblem.trim()}
+                onClick={() => void republishProject()}
+                type="button"
+              >
+                Republicar com correção <span>→</span>
+              </button>
+              <div className="file-list" aria-label="Histórico de publicações">
+                {publications.map((record) => (
+                  <div className="guidance-empty" key={record.version}>
+                    <strong>v{record.version}</strong>
+                    <small>{record.problem ?? record.note}</small>
+                  </div>
+                ))}
+              </div>
             </>
           )}
         </section>

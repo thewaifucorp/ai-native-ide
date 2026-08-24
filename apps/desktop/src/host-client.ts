@@ -281,6 +281,30 @@ export type ConfigField =
   | "idle_paid_inference"
   | "local_aag";
 
+export interface ExportedResource {
+  id: string;
+  kind: string;
+  label: string;
+}
+export interface ExportManifest {
+  projectId: string;
+  title: string;
+  intent: string;
+  version: string;
+  resources: ExportedResource[];
+  appliedGuidance: string[];
+  appliedPacks: string[];
+  portabilityNote: string;
+}
+export interface PublishRecord {
+  projectId: string;
+  version: string;
+  problem: string | null;
+  relatedResources: string[];
+  note: string;
+}
+export type ConfirmationDecision = "proceed" | "confirm_first";
+
 export type PackCapability =
   | "read_workspace"
   | "run_deterministic_check"
@@ -591,6 +615,17 @@ interface HostCommandMap {
     args: { packId: string; passed: string[]; failed: string[] };
     result: ReadinessVerdict;
   };
+  export_project: { args: { projectId: string }; result: ExportManifest };
+  publish_project: { args: { projectId: string }; result: PublishRecord };
+  republish_project: {
+    args: { projectId: string; problem: string; relatedResources: string[] };
+    result: PublishRecord;
+  };
+  publish_history: { args: { projectId: string }; result: PublishRecord[] };
+  external_effect_confirmation: {
+    args: { irreversible: boolean; alreadyConfirmed: boolean };
+    result: ConfirmationDecision;
+  };
   mode_interruption_policy: {
     args: { class: EffectClass };
     result: InterruptionDecision;
@@ -777,6 +812,18 @@ export interface HostClient {
     passed: string[],
     failed: string[],
   ): Promise<HostCall<ReadinessVerdict>>;
+  exportProject(projectId: string): Promise<HostCall<ExportManifest>>;
+  publishProject(projectId: string): Promise<HostCall<PublishRecord>>;
+  republishProject(
+    projectId: string,
+    problem: string,
+    relatedResources: string[],
+  ): Promise<HostCall<PublishRecord>>;
+  publishHistory(projectId: string): Promise<HostCall<PublishRecord[]>>;
+  externalEffectConfirmation(
+    irreversible: boolean,
+    alreadyConfirmed: boolean,
+  ): Promise<HostCall<ConfirmationDecision>>;
   modeInterruptionPolicy(
     effectClass: EffectClass,
   ): Promise<HostCall<InterruptionDecision>>;
@@ -981,6 +1028,13 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     revertPack: (packId) => call("revert_pack", { packId }),
     packReadiness: (packId, passed, failed) =>
       call("pack_readiness", { packId, passed, failed }),
+    exportProject: (projectId) => call("export_project", { projectId }),
+    publishProject: (projectId) => call("publish_project", { projectId }),
+    republishProject: (projectId, problem, relatedResources) =>
+      call("republish_project", { projectId, problem, relatedResources }),
+    publishHistory: (projectId) => call("publish_history", { projectId }),
+    externalEffectConfirmation: (irreversible, alreadyConfirmed) =>
+      call("external_effect_confirmation", { irreversible, alreadyConfirmed }),
     modeInterruptionPolicy: (effectClass) =>
       call("mode_interruption_policy", { class: effectClass }),
     promotePrototype: (prototypeEffectId, checkpointEffectId, note) =>

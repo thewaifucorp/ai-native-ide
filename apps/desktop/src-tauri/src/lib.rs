@@ -39,6 +39,7 @@ use ide_guidance::{
     HygieneFinding, TruthDeclaration, TruthFinding,
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
+use ide_lifecycle::{ConfirmationDecision, ExportManifest, PublishRecord};
 use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, ReadinessVerdict};
 use ide_semantic::{EvaluationBudget, SemanticReport};
@@ -922,6 +923,62 @@ async fn promote_prototype(
         .await
 }
 
+/// Exports the project to a portable local manifest — no ShinAI infrastructure,
+/// no lock-in, no absolute machine paths.
+#[tauri::command]
+async fn export_project(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+) -> Result<ExportManifest, String> {
+    bridge
+        .export_project(&project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn publish_project(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+) -> Result<PublishRecord, String> {
+    bridge
+        .publish_project(&project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Republishes after observing a problem, relating the fix to the affected
+/// resources and bumping the version while preserving the previous history.
+#[tauri::command]
+async fn republish_project(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+    problem: String,
+    related_resources: Vec<String>,
+) -> Result<PublishRecord, String> {
+    bridge
+        .republish_project(&project_id, &problem, related_resources)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn publish_history(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+) -> Result<Vec<PublishRecord>, String> {
+    Ok(bridge.publish_history(&project_id).await)
+}
+
+/// The first irreversible external effect requires an explicit confirmation.
+#[tauri::command]
+fn external_effect_confirmation(
+    irreversible: bool,
+    already_confirmed: bool,
+) -> ConfirmationDecision {
+    ide_lifecycle::confirmation_for(irreversible, already_confirmed)
+}
+
 #[tauri::command]
 async fn list_packs(bridge: State<'_, Arc<DesktopBridge>>) -> Result<Vec<Pack>, String> {
     Ok(bridge.list_packs().await)
@@ -1265,6 +1322,11 @@ pub fn run() {
             apply_pack,
             revert_pack,
             pack_readiness,
+            export_project,
+            publish_project,
+            republish_project,
+            publish_history,
+            external_effect_confirmation,
             aag_relations,
             agent_capability_card,
             start_agent_session,
