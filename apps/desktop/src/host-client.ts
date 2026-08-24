@@ -281,6 +281,19 @@ export type ConfigField =
   | "idle_paid_inference"
   | "local_aag";
 
+export type EffectClass = "prototype" | "durable";
+export type InterruptionDecision =
+  | "proceed"
+  | "proceed_recording_hypothesis"
+  | "require_checkpoint"
+  | "resolve_contract_first";
+export interface PromotionRecord {
+  prototypeEffectId: string;
+  checkpointEffectId: string;
+  reconciled: boolean;
+  note: string;
+}
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -470,6 +483,18 @@ interface HostCommandMap {
   set_config: { args: { patch: ConfigPatch }; result: IdeConfig };
   reset_config_field: { args: { field: ConfigField }; result: IdeConfig };
   explain_config_field: { args: { field: ConfigField }; result: string };
+  mode_interruption_policy: {
+    args: { class: EffectClass };
+    result: InterruptionDecision;
+  };
+  promote_prototype: {
+    args: {
+      prototypeEffectId: string;
+      checkpointEffectId: string;
+      note: string;
+    };
+    result: PromotionRecord;
+  };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -624,6 +649,14 @@ export interface HostClient {
   setConfig(patch: ConfigPatch): Promise<HostCall<IdeConfig>>;
   resetConfigField(field: ConfigField): Promise<HostCall<IdeConfig>>;
   explainConfigField(field: ConfigField): Promise<HostCall<string>>;
+  modeInterruptionPolicy(
+    effectClass: EffectClass,
+  ): Promise<HostCall<InterruptionDecision>>;
+  promotePrototype(
+    prototypeEffectId: string,
+    checkpointEffectId: string,
+    note: string,
+  ): Promise<HostCall<PromotionRecord>>;
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
@@ -804,6 +837,14 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     setConfig: (patch) => call("set_config", { patch }),
     resetConfigField: (field) => call("reset_config_field", { field }),
     explainConfigField: (field) => call("explain_config_field", { field }),
+    modeInterruptionPolicy: (effectClass) =>
+      call("mode_interruption_policy", { class: effectClass }),
+    promotePrototype: (prototypeEffectId, checkpointEffectId, note) =>
+      call("promote_prototype", {
+        prototypeEffectId,
+        checkpointEffectId,
+        note,
+      }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>

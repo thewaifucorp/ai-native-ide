@@ -24,6 +24,8 @@ import {
   type CaptureDestination,
   type HarnessReport,
   type IdeConfig,
+  type InterruptionDecision,
+  type ConfigBuildMode,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -159,6 +161,8 @@ function App() {
   const [appliedGuidance, setAppliedGuidance] = useState<AppliedGuidance[]>([]);
   const [harness, setHarness] = useState<HostCall<HarnessReport> | null>(null);
   const [config, setConfig] = useState<IdeConfig | null>(null);
+  const [modeInterruption, setModeInterruption] =
+    useState<InterruptionDecision | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -223,6 +227,19 @@ function App() {
     const result = await hostClient.setConfig(patch);
     if (result.state === "available") setConfig(result.value);
   }
+  function toConfigMode(value: BuildMode): ConfigBuildMode {
+    return value === "full-vibes" ? "full_vibes" : value;
+  }
+  async function selectMode(next: BuildMode) {
+    setMode(next);
+    const result = await hostClient.setConfig({ mode: toConfigMode(next) });
+    if (result.state === "available") setConfig(result.value);
+  }
+  useEffect(() => {
+    void hostClient.modeInterruptionPolicy("durable").then((result) => {
+      if (result.state === "available") setModeInterruption(result.value);
+    });
+  }, [mode, config]);
   useEffect(() => {
     void hostClient.listSemanticProjects().then((result) => {
       if (result.state !== "available") return;
@@ -813,7 +830,7 @@ function App() {
                     : "mode-button"
                 }
                 key={item}
-                onClick={() => setMode(item)}
+                onClick={() => void selectMode(item)}
                 type="button"
               >
                 {item === "full-vibes"
@@ -831,6 +848,18 @@ function App() {
                 ? "Resolva contratos antes do efeito durável."
                 : "Avance, registre hipóteses e ajuste depois."}
           </p>
+          {modeInterruption && (
+            <small>
+              Efeito durável:{" "}
+              {modeInterruption === "require_checkpoint"
+                ? "exige checkpoint antes de aplicar."
+                : modeInterruption === "resolve_contract_first"
+                  ? "resolve o contrato antes de aplicar."
+                  : modeInterruption === "proceed_recording_hypothesis"
+                    ? "prossegue registrando hipótese/dívida."
+                    : "prossegue sem interromper."}
+            </small>
+          )}
         </section>
       </aside>
       <main className="work-surface">

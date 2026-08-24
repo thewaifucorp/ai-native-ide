@@ -31,6 +31,7 @@ use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft,
     GuidanceRegistry, GuidanceScope, HygieneFinding, TruthDeclaration, TruthFinding, TruthRegistry,
 };
+use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
 use ide_reconciliation::CausalLinks;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -229,6 +230,25 @@ impl DesktopBridge {
 
     pub async fn reset_config_field(&self, field: ConfigField) -> anyhow::Result<IdeConfig> {
         Ok(self.config.lock().await.reset_field(field)?.clone())
+    }
+
+    // --- Build modes ----------------------------------------------------
+
+    /// The interruption the active mode requires before an effect of this class.
+    pub async fn mode_interruption(&self, class: EffectClass) -> InterruptionDecision {
+        let mode = self.config.lock().await.config().mode.value;
+        ide_modes::interruption_policy(mode, class)
+    }
+
+    pub async fn promote_prototype(
+        &self,
+        prototype_effect_id: &str,
+        checkpoint_effect_id: &str,
+        note: &str,
+    ) -> Result<PromotionRecord, String> {
+        let mode = self.config.lock().await.config().mode.value;
+        ide_modes::promote_prototype(mode, prototype_effect_id, checkpoint_effect_id, note)
+            .map_err(|error| error.to_string())
     }
 
     // --- Guidance -------------------------------------------------------

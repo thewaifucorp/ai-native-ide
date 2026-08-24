@@ -30,6 +30,7 @@ dependencies = [
  "ide-domain",
  "ide-guidance",
  "ide-harness",
+ "ide-modes",
  "ide-reconciliation",
  "notify",
  "portable-pty",
@@ -1949,6 +1950,14 @@ dependencies = [
 name = "ide-harness"
 version = "0.1.0"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ide-modes"
+version = "0.1.0"
+dependencies = [
+ "ide-config",
  "serde",
 ]
 

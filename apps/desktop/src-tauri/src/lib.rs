@@ -38,6 +38,7 @@ use ide_guidance::{
     HygieneFinding, TruthDeclaration, TruthFinding,
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
+use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -893,6 +894,31 @@ fn explain_config_field(field: ConfigField) -> String {
     ide_config::explain(field).to_owned()
 }
 
+/// The interruption the active build mode requires before an effect of this
+/// class. Full Vibes records hypotheses, Hybrid checkpoints durable state, and
+/// Spec resolves the contract first; a prototype never interrupts.
+#[tauri::command]
+async fn mode_interruption_policy(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    class: EffectClass,
+) -> Result<InterruptionDecision, String> {
+    Ok(bridge.mode_interruption(class).await)
+}
+
+/// Promotes a Hybrid prototype to durable state, starting unreconciled so the
+/// user resolves the divergence explicitly. Only valid in Hybrid.
+#[tauri::command]
+async fn promote_prototype(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    prototype_effect_id: String,
+    checkpoint_effect_id: String,
+    note: String,
+) -> Result<PromotionRecord, String> {
+    bridge
+        .promote_prototype(&prototype_effect_id, &checkpoint_effect_id, &note)
+        .await
+}
+
 const HARNESS_TEXT_EXTENSIONS: [&str; 13] = [
     "rs", "ts", "tsx", "js", "jsx", "json", "md", "toml", "yaml", "yml", "env", "txt", "css",
 ];
@@ -1115,6 +1141,8 @@ pub fn run() {
             set_config,
             reset_config_field,
             explain_config_field,
+            mode_interruption_policy,
+            promote_prototype,
             aag_relations,
             agent_capability_card,
             start_agent_session,
