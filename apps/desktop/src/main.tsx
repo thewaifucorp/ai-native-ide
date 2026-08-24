@@ -141,6 +141,7 @@ function App() {
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [rawDocument, setRawDocument] = useState("");
+  const [newFilePath, setNewFilePath] = useState("");
   const [fileEffectId, setFileEffectId] = useState<string | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
@@ -464,6 +465,13 @@ function App() {
     const effectId = `edit-${project?.id ?? "workspace"}-${Date.now()}`;
     setFileEffectId(effectId);
     await proposeSelectedFile(effectId);
+  }
+  function beginNewWorkspaceFile() {
+    const path = newFilePath.trim();
+    if (!path) return;
+    setSelectedFile(path);
+    setRawDocument("");
+    setNewFilePath("");
   }
   async function approveWorkspaceFile() {
     if (!project || !resource || !fileEffectId) return;
@@ -1014,6 +1022,20 @@ function App() {
                         {file.relativePath}
                       </button>
                     ))}
+                  </div>
+                  <label className="intent-input-label" htmlFor="new-file-path">
+                    Novo arquivo relativo
+                  </label>
+                  <div className="new-file-row">
+                    <input
+                      id="new-file-path"
+                      onChange={(event) => setNewFilePath(event.target.value)}
+                      placeholder="src/app.ts"
+                      value={newFilePath}
+                    />
+                    <button className="outline-action" onClick={beginNewWorkspaceFile} type="button">
+                      Criar
+                    </button>
                   </div>
                   {effectState === "awaiting" && fileEffectId ? (
                     <button className="primary-action" onClick={() => void approveWorkspaceFile()} type="button">
