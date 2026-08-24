@@ -20,7 +20,7 @@ use std::{
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 #[cfg(not(windows))]
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize, SlavePty};
 use serde::Serialize;
 
 use crate::PreviewHealth;
@@ -363,6 +363,9 @@ pub struct ManagedPty {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Box<dyn std::io::Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
+    // Unix keeps this endpoint alive for interactive input. ConPTY has a
+    // separate implementation below and must release its slave after spawn.
+    _slave: Box<dyn SlavePty + Send>,
     sink: EventSink,
     lifecycle: ProcessLifecycle,
 }
@@ -388,10 +391,6 @@ impl ManagedPty {
         command.args(spec.args);
         command.cwd(spec.working_directory);
         let child = pair.slave.spawn_command(command).map_err(io_error)?;
-        // ConPTY requires the parent to release the slave endpoint immediately
-        // after spawn. Keeping it alive can leave short-lived Windows commands
-        // running without ever draining their output pipe.
-        drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(io_error)?;
         let writer = pair.master.take_writer().map_err(io_error)?;
         stream_lines(
@@ -408,6 +407,7 @@ impl ManagedPty {
             child,
             writer,
             master: pair.master,
+            _slave: pair.slave,
             sink,
             lifecycle: ProcessLifecycle::Running,
         })
@@ -415,7 +415,8 @@ impl ManagedPty {
 
     pub fn write(&mut self, input: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
-        self.writer.write_all(input)
+        self.writer.write_all(input)?;
+        self.writer.flush()
     }
 
     pub fn resize(&self, rows: u16, columns: u16) -> std::io::Result<()> {
@@ -515,7 +516,8 @@ impl ManagedPty {
 
     pub fn write(&mut self, input: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
-        self.writer.write_all(input)
+        self.writer.write_all(input)?;
+        self.writer.flush()
     }
 
     pub fn resize(&mut self, rows: u16, columns: u16) -> std::io::Result<()> {
@@ -671,6 +673,71 @@ mod tests {
         pty.write(b"ignored input\n").expect("write pty");
         pty.stop().expect("stop pty");
         assert_eq!(pty.lifecycle(), ProcessLifecycle::Stopped);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pty_accepts_input_streams_the_reply_and_reaps_on_cancel() {
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let sink_events = Arc::clone(&events);
+        let runtime = HostRuntime::new(Arc::new(move |event| {
+            sink_events.lock().expect("events lock").push_back(event);
+        }));
+        let scope = temporary_scope();
+        let mut pty = runtime
+            .spawn_pty(
+                shell_spec(
+                    &scope,
+                    "printf ready; read line; printf 'reply:%s\\n' \"$line\"; sleep 5",
+                ),
+                24,
+                80,
+            )
+            .expect("spawn pty");
+        thread::sleep(Duration::from_millis(100));
+        pty.write(b"hello-terminal\n").expect("send terminal input");
+
+        for _ in 0..50 {
+            if events.lock().expect("events lock").iter().any(|event| {
+                matches!(
+                    event,
+                    HostEvent::ProcessOutput {
+                        extension: HostExtension::Pty,
+                        line,
+                        ..
+                    } if line.contains("reply:hello-terminal")
+                )
+            }) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let event_log = format!("{:?}", events.lock().expect("events lock"));
+        assert!(
+            events.lock().expect("events lock").iter().any(|event| {
+                matches!(
+                    event,
+                    HostEvent::ProcessOutput {
+                        extension: HostExtension::Pty,
+                        line,
+                        ..
+                    } if line.contains("reply:hello-terminal")
+                )
+            }),
+            "PTY input did not reach the shell; events: {event_log}"
+        );
+
+        pty.stop().expect("cancel pty");
+        assert_eq!(pty.lifecycle(), ProcessLifecycle::Stopped);
+        assert!(events.lock().expect("events lock").iter().any(|event| {
+            matches!(
+                event,
+                HostEvent::ProcessExited {
+                    extension: HostExtension::Pty,
+                    ..
+                }
+            )
+        }));
     }
 
     #[cfg(unix)]
