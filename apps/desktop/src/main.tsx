@@ -41,6 +41,23 @@ type AgentTranscriptEntry = {
   text: string;
 };
 
+function projectIdentity(intent: string): string {
+  const slug = intent
+    .toLocaleLowerCase("pt-BR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+  let hash = 5381;
+  for (const character of intent) hash = (hash * 33) ^ character.charCodeAt(0);
+  return `project-${slug || "workspace"}-${(hash >>> 0).toString(36)}`;
+}
+
+function projectTitle(intent: string): string {
+  return intent.trim().split(/[.!?\n]/, 1)[0]?.slice(0, 64) || "Projeto sem título";
+}
+
 function SignalCard({
   signal,
   onUse,
@@ -171,16 +188,6 @@ function App() {
     return () => unsubscribe?.();
   }, []);
   useEffect(() => {
-    // The initial project is an opaque stable ID. On a desktop restart the
-    // native host restores its persisted resources and watchers without asking
-    // the user to re-import the directory.
-    void hostClient.openSemanticProject("new-product").then((result) => {
-      if (result.state !== "available" || !result.value) return;
-      setProject(result.value.project);
-      setResource(result.value.resources[0] ?? null);
-    });
-  }, []);
-  useEffect(() => {
     if (!resource) return;
     void hostClient.agentCapabilityCard("claude").then(setAgentCapability);
   }, [resource]);
@@ -226,9 +233,10 @@ function App() {
     setSection("Build");
   }
   async function createProject() {
+    const projectId = projectIdentity(intent);
     const result = await hostClient.createSemanticProject({
-      projectId: "new-product",
-      title: "Novo produto",
+      projectId,
+      title: projectTitle(intent),
       intent,
     });
     setProjectCall(result);
@@ -259,7 +267,7 @@ function App() {
     const result = await hostClient.stopAndCaptureBenchmarkPreviewFailure(
       project.id,
       resource.id,
-      "benchmark-plan-v1",
+      `${project.id}-intent`,
     );
     if (result.state === "available") {
       setPreview(null);
@@ -305,13 +313,13 @@ function App() {
       setGameMode(transition.state);
     }
   }
-  async function proposeBenchmarkPlan() {
+  async function proposeProjectIntent() {
     if (!project || !resource) return;
     const result = await hostClient.proposeWorkspaceWrite(project.id, {
       resourceId: resource.id,
-      effectId: "benchmark-plan-v1",
-      relativePath: "benchmark.intent.md",
-      content: `# Benchmark intent\n\n${intent}\n\nMode: ${mode}\n`,
+      effectId: `${project.id}-intent`,
+      relativePath: "project.intent.md",
+      content: `# Intenção do projeto\n\n${intent}\n\nModo: ${mode}\n`,
     });
     if (result.state !== "available") {
       setEffectState("failed");
@@ -319,7 +327,7 @@ function App() {
     }
     setEffectState(result.value.written ? "written" : "awaiting");
   }
-  async function approveBenchmarkPlan() {
+  async function approveProjectIntent() {
     if (!project || !resource) return;
     const approved = await hostClient.approveNextWorkspaceWrite(
       project.id,
@@ -329,14 +337,14 @@ function App() {
       setEffectState("failed");
       return;
     }
-    await proposeBenchmarkPlan();
+    await proposeProjectIntent();
   }
-  async function rollbackBenchmarkPlan() {
+  async function rollbackProjectIntent() {
     if (!project || !resource) return;
     const result = await hostClient.rollbackWorkspaceWrite(
       project.id,
       resource.id,
-      "benchmark-plan-v1",
+      `${project.id}-intent`,
     );
     if (result.state === "available") {
       setEffectState("idle");
@@ -428,7 +436,7 @@ function App() {
         <div className="rail-divider" />
         <button
           className="project-chip project-chip--active"
-          aria-label="Projeto ativo: Novo produto"
+          aria-label={`Projeto ativo: ${project?.title ?? "nenhum projeto"}`}
           type="button"
         >
           NP
@@ -453,7 +461,7 @@ function App() {
       <aside className="navigator" aria-label="Navegador do projeto">
         <header className="project-heading">
           <span className="eyebrow">PROJETO</span>
-          <h1>{project?.title ?? "Novo produto"}</h1>
+          <h1>{project?.title ?? "Sem projeto"}</h1>
           <button
             className="scope-button"
             disabled={!project}
@@ -678,38 +686,38 @@ function App() {
                     ? activeSignal.prompt
                     : resource
                       ? effectState === "awaiting"
-                        ? "O plano do benchmark está pausado para sua aprovação explícita."
+                        ? "A intenção será gravada no workspace após sua aprovação explícita."
                         : effectState === "written"
-                          ? "O plano foi escrito no recurso anexado e está registrado como efeito da IDE."
-                          : "Prepare o plano do benchmark antes de iniciar o preview."
-                      : "Anexe um diretório para criar o primeiro artefato do benchmark."}
+                          ? "A intenção está gravada no recurso anexado e registrada como efeito da IDE."
+                          : "Salve a intenção no workspace antes de pedir uma implementação ao agente."
+                      : "Anexe um diretório para criar o primeiro artefato do projeto."}
                 </p>
               </div>
               <div>
                 {effectState === "awaiting" ? (
                   <button
                     className="primary-action"
-                    onClick={() => void approveBenchmarkPlan()}
+                    onClick={() => void approveProjectIntent()}
                     type="button"
                   >
-                    Aprovar plano <span>→</span>
+                    Aprovar escrita <span>→</span>
                   </button>
                 ) : effectState === "written" ? (
                   <button
                     className="outline-action"
-                    onClick={() => void rollbackBenchmarkPlan()}
+                    onClick={() => void rollbackProjectIntent()}
                     type="button"
                   >
-                    Reverter plano
+                    Reverter intenção
                   </button>
                 ) : (
                   <button
                     className="outline-action"
                     disabled={!resource}
-                    onClick={() => void proposeBenchmarkPlan()}
+                    onClick={() => void proposeProjectIntent()}
                     type="button"
                   >
-                    Preparar benchmark
+                    Salvar intenção
                   </button>
                 )}
               </div>
@@ -761,8 +769,8 @@ function App() {
                         : previewCall?.state === "unavailable"
                           ? "O preview só inicia pelo app desktop; nenhum servidor foi iniciado nesta página web."
                           : effectState !== "written"
-                            ? "Prepare e aprove o plano do benchmark para criar seu primeiro artefato controlado."
-                            : "O benchmark real aparece aqui quando o host iniciar o preview local."}
+                            ? "Salve a intenção aprovada antes de iniciar um preview do template de benchmark."
+                            : "O preview do template de benchmark permanece disponível como referência técnica; o agente trabalha no seu recurso anexado."}
                   </p>
                   <button
                     className="outline-action"
@@ -771,7 +779,7 @@ function App() {
                     type="button"
                   >
                     {project
-                      ? "Iniciar benchmark local"
+                      ? "Iniciar preview de referência"
                       : "Crie o projeto primeiro"}
                   </button>
                 </div>
