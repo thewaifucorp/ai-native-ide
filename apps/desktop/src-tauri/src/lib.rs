@@ -31,6 +31,7 @@ use bridge::{
     StartedAgentSession, TrustedWorkspaceSelection, WorkspaceFile, WorkspaceFileContents,
     WorkspaceWriteRequest,
 };
+use ide_config::{ConfigField, ConfigPatch, DetectedEnvironment, IdeConfig};
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
@@ -835,6 +836,63 @@ async fn truth_conflicts(
     Ok(bridge.truth_conflicts().await)
 }
 
+#[tauri::command]
+async fn get_config(bridge: State<'_, Arc<DesktopBridge>>) -> Result<IdeConfig, String> {
+    Ok(bridge.config().await)
+}
+
+/// Detects local capabilities (git, agent, AAG) and applies reversible defaults
+/// without overriding any user choice.
+#[tauri::command]
+async fn detect_and_apply_config_defaults(
+    bridge: State<'_, Arc<DesktopBridge>>,
+) -> Result<IdeConfig, String> {
+    fn probes(program: &str) -> bool {
+        std::process::Command::new(program)
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+    let detected = DetectedEnvironment {
+        git: registered_git_executable().is_ok(),
+        agent: probes("acpx"),
+        aag: probes("aag"),
+    };
+    bridge
+        .apply_config_defaults(detected)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_config(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    patch: ConfigPatch,
+) -> Result<IdeConfig, String> {
+    bridge
+        .set_config(patch)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn reset_config_field(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    field: ConfigField,
+) -> Result<IdeConfig, String> {
+    bridge
+        .reset_config_field(field)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Plain-language consequence of a setting, for just-in-time configuration.
+#[tauri::command]
+fn explain_config_field(field: ConfigField) -> String {
+    ide_config::explain(field).to_owned()
+}
+
 const HARNESS_TEXT_EXTENSIONS: [&str; 13] = [
     "rs", "ts", "tsx", "js", "jsx", "json", "md", "toml", "yaml", "yml", "env", "txt", "css",
 ];
@@ -1052,6 +1110,11 @@ pub fn run() {
             truth_consumers,
             truth_conflicts,
             run_harness_layer0,
+            get_config,
+            detect_and_apply_config_defaults,
+            set_config,
+            reset_config_field,
+            explain_config_field,
             aag_relations,
             agent_capability_card,
             start_agent_session,

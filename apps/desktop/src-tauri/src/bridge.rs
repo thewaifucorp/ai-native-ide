@@ -22,6 +22,7 @@ use ide_agent::{
     AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
     AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
 };
+use ide_config::{ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig};
 use ide_domain::{
     ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
     SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
@@ -175,6 +176,7 @@ pub struct DesktopBridge {
     agents: Mutex<BTreeMap<String, Arc<AcpxAgentFacade>>>,
     guidance: Mutex<GuidanceRegistry>,
     truth: Mutex<TruthRegistry>,
+    config: Mutex<ConfigStore>,
 }
 
 impl DesktopBridge {
@@ -199,7 +201,34 @@ impl DesktopBridge {
             agents: Mutex::new(BTreeMap::new()),
             guidance: Mutex::new(GuidanceRegistry::open(data_directory.join("guidance"))?),
             truth: Mutex::new(TruthRegistry::open(data_directory.join("truth"))?),
+            config: Mutex::new(ConfigStore::open(data_directory.join("config"))?),
         })
+    }
+
+    // --- Configuration --------------------------------------------------
+
+    pub async fn config(&self) -> IdeConfig {
+        self.config.lock().await.config().clone()
+    }
+
+    pub async fn apply_config_defaults(
+        &self,
+        detected: DetectedEnvironment,
+    ) -> anyhow::Result<IdeConfig> {
+        Ok(self
+            .config
+            .lock()
+            .await
+            .apply_detected_defaults(detected)?
+            .clone())
+    }
+
+    pub async fn set_config(&self, patch: ConfigPatch) -> anyhow::Result<IdeConfig> {
+        Ok(self.config.lock().await.apply_patch(patch)?.clone())
+    }
+
+    pub async fn reset_config_field(&self, field: ConfigField) -> anyhow::Result<IdeConfig> {
+        Ok(self.config.lock().await.reset_field(field)?.clone())
     }
 
     // --- Guidance -------------------------------------------------------

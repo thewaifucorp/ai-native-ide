@@ -21,6 +21,7 @@ ide-agent = { path = "../../../crates/ide-agent" }
 ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
 ide-guidance = { path = "../../../crates/ide-guidance" }
 ide-harness = { path = "../../../crates/ide-harness" }
+ide-config = { path = "../../../crates/ide-config" }
 notify = "8.2.0"
 portable-pty = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }

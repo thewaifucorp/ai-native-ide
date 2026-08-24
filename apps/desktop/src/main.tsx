@@ -23,6 +23,7 @@ import {
   type AppliedGuidance,
   type CaptureDestination,
   type HarnessReport,
+  type IdeConfig,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -157,6 +158,7 @@ function App() {
   const [aagCall, setAagCall] = useState<HostCall<AagRelations> | null>(null);
   const [appliedGuidance, setAppliedGuidance] = useState<AppliedGuidance[]>([]);
   const [harness, setHarness] = useState<HostCall<HarnessReport> | null>(null);
+  const [config, setConfig] = useState<IdeConfig | null>(null);
   const [guidanceName, setGuidanceName] = useState("");
   const [guidanceText, setGuidanceText] = useState("");
   const [gameMode, setGameMode] = useState<GameModeState>(() =>
@@ -205,6 +207,21 @@ function App() {
       setSelectedFile(null);
       setRawDocument("");
     }
+  }
+  useEffect(() => {
+    void hostClient.detectAndApplyConfigDefaults().then((result) => {
+      if (result.state === "available") setConfig(result.value);
+      else
+        void hostClient.getConfig().then((current) => {
+          if (current.state === "available") setConfig(current.value);
+        });
+    });
+  }, []);
+  async function toggleConfig(
+    patch: Parameters<typeof hostClient.setConfig>[0],
+  ) {
+    const result = await hostClient.setConfig(patch);
+    if (result.state === "available") setConfig(result.value);
   }
   useEffect(() => {
     void hostClient.listSemanticProjects().then((result) => {
@@ -1344,6 +1361,60 @@ function App() {
             <div className="guidance-empty">
               <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
             </div>
+          )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">CONFIGURAÇÃO</span>
+          <strong>
+            {config
+              ? `${config.mode.value} · ${config.permissions.value}`
+              : "Defaults reversíveis"}
+          </strong>
+          <p>
+            {config
+              ? `AAG local: ${config.localAag.value ? "detectado" : "ausente"} (${config.localAag.source}). Interface simples e arquivo completo compartilham o mesmo estado.`
+              : "Hybrid, Essential, balanced, harness 0/1, checkpoints e inferência idle desligada."}
+          </p>
+          {config && (
+            <>
+              <label>
+                <input
+                  checked={config.automaticCheckpoints.value}
+                  onChange={() =>
+                    void toggleConfig({
+                      automaticCheckpoints: !config.automaticCheckpoints.value,
+                    })
+                  }
+                  type="checkbox"
+                />{" "}
+                Checkpoints automáticos
+              </label>
+              <label>
+                <input
+                  checked={config.idlePaidInference.value}
+                  onChange={() =>
+                    void toggleConfig({
+                      idlePaidInference: !config.idlePaidInference.value,
+                    })
+                  }
+                  type="checkbox"
+                />{" "}
+                Inferência paga em idle
+              </label>
+              <button
+                className="text-button"
+                onClick={() =>
+                  void hostClient
+                    .detectAndApplyConfigDefaults()
+                    .then((result) => {
+                      if (result.state === "available") setConfig(result.value);
+                    })
+                }
+                type="button"
+              >
+                Detectar recursos <span>→</span>
+              </button>
+            </>
           )}
         </section>
         <section className="dock-section">

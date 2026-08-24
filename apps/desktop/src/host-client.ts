@@ -247,6 +247,40 @@ export interface HarnessReport {
   notRun: number;
 }
 
+export type ConfigBuildMode = "full_vibes" | "hybrid" | "spec";
+export type ConfigDepth = "essential" | "detailed" | "raw";
+export type ConfigPermissions = "cautious" | "balanced" | "yolo";
+export type ValueSource = "default" | "detected" | "user";
+export interface Setting<T> {
+  value: T;
+  source: ValueSource;
+}
+export interface IdeConfig {
+  mode: Setting<ConfigBuildMode>;
+  depth: Setting<ConfigDepth>;
+  permissions: Setting<ConfigPermissions>;
+  harnessLayers: Setting<number[]>;
+  automaticCheckpoints: Setting<boolean>;
+  idlePaidInference: Setting<boolean>;
+  localAag: Setting<boolean>;
+}
+export interface ConfigPatch {
+  mode?: ConfigBuildMode;
+  depth?: ConfigDepth;
+  permissions?: ConfigPermissions;
+  harnessLayers?: number[];
+  automaticCheckpoints?: boolean;
+  idlePaidInference?: boolean;
+}
+export type ConfigField =
+  | "mode"
+  | "depth"
+  | "permissions"
+  | "harness_layers"
+  | "automatic_checkpoints"
+  | "idle_paid_inference"
+  | "local_aag";
+
 export interface WorkspaceWriteRequest {
   resourceId: string;
   effectId: string;
@@ -431,6 +465,11 @@ interface HostCommandMap {
     args: { projectId: string; resourceId: string };
     result: HarnessReport;
   };
+  get_config: { args: undefined; result: IdeConfig };
+  detect_and_apply_config_defaults: { args: undefined; result: IdeConfig };
+  set_config: { args: { patch: ConfigPatch }; result: IdeConfig };
+  reset_config_field: { args: { field: ConfigField }; result: IdeConfig };
+  explain_config_field: { args: { field: ConfigField }; result: string };
   propose_workspace_write: {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
@@ -580,6 +619,11 @@ export interface HostClient {
     projectId: string,
     resourceId: string,
   ): Promise<HostCall<HarnessReport>>;
+  getConfig(): Promise<HostCall<IdeConfig>>;
+  detectAndApplyConfigDefaults(): Promise<HostCall<IdeConfig>>;
+  setConfig(patch: ConfigPatch): Promise<HostCall<IdeConfig>>;
+  resetConfigField(field: ConfigField): Promise<HostCall<IdeConfig>>;
+  explainConfigField(field: ConfigField): Promise<HostCall<string>>;
   proposeWorkspaceWrite(
     projectId: string,
     request: WorkspaceWriteRequest,
@@ -754,6 +798,12 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     truthConflicts: () => call("truth_conflicts", undefined),
     runHarnessLayer0: (projectId, resourceId) =>
       call("run_harness_layer0", { projectId, resourceId }),
+    getConfig: () => call("get_config", undefined),
+    detectAndApplyConfigDefaults: () =>
+      call("detect_and_apply_config_defaults", undefined),
+    setConfig: (patch) => call("set_config", { patch }),
+    resetConfigField: (field) => call("reset_config_field", { field }),
+    explainConfigField: (field) => call("explain_config_field", { field }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
     approveNextWorkspaceWrite: (projectId, resourceId) =>

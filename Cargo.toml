@@ -6,6 +6,7 @@ members = [
   "crates/ide-reconciliation",
   "crates/ide-guidance",
   "crates/ide-harness",
+  "crates/ide-config",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]

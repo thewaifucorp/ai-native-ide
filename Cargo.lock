@@ -26,6 +26,7 @@ dependencies = [
  "benchmark-service",
  "conpty",
  "ide-agent",
+ "ide-config",
  "ide-domain",
  "ide-guidance",
  "ide-harness",
@@ -1907,6 +1908,15 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "ide-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
