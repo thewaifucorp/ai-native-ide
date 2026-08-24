@@ -128,6 +128,7 @@ function App() {
   const [agentCapability, setAgentCapability] =
     useState<HostCall<AgentCapabilityCard> | null>(null);
   const [agentTarget, setAgentTarget] = useState<AgentTarget>("claude");
+  const [allowAgentWorkspaceWrites, setAllowAgentWorkspaceWrites] = useState(false);
   const [agentPrompt, setAgentPrompt] = useState(
     "Revise a intenção e aponte o próximo risco verificável.",
   );
@@ -388,10 +389,11 @@ function App() {
   }
   async function startAgentSession() {
     if (!project || !resource) return;
-    const result = await hostClient.startReadOnlyAgentSession(
+    const result = await hostClient.startAgentSession(
       agentTarget,
       project.id,
       resource.id,
+      allowAgentWorkspaceWrites,
     );
     setAgentCall(result);
     if (result.state === "available") {
@@ -399,7 +401,9 @@ function App() {
       setAgentTranscript([
         {
           role: "system",
-          text: "Sessão conectada. O agente recebe o workspace anexado e sua intenção; escrita continua fora desta sessão read-only.",
+          text: allowAgentWorkspaceWrites
+            ? "Sessão conectada com escrita no workspace explicitamente habilitada. As permissões do adapter externo são exibidas no Context Dock."
+            : "Sessão conectada em leitura. O agente recebe o workspace anexado e sua intenção; escrita continua fora desta sessão.",
         },
       ]);
     }
@@ -411,12 +415,12 @@ function App() {
   }
   async function submitAgentTask() {
     if (!agentSession) return;
-    const prompt = `Intenção atual do projeto:\n${intent}\n\nPedido do usuário:\n${agentPrompt}`;
+    const prompt = `Intenção atual do projeto:\n${intent}\n\nPedido do usuário:\n${agentPrompt}\n\n${agentSession.readOnly ? "Não altere arquivos; explique, investigue e proponha os próximos passos." : "Você pode alterar arquivos somente dentro do workspace anexado para executar este pedido."}`;
     appendAgentTranscript("user", agentPrompt);
     const result = await hostClient.submitAgentTask(
       agentSession.sessionId,
       prompt,
-      false,
+      !agentSession.readOnly,
     );
     setAgentTask(result);
     if (result.state === "failed") {
@@ -945,24 +949,34 @@ function App() {
                   : "Conecte um adapter só depois de escolher o recurso. A IDE mantém efeitos de escrita fora do agente."}
           </p>
           {!agentSession && (
-            <div className="mode-group" aria-label="Adapter de agente">
-              {(["claude", "codex", "gemini", "opencode"] as AgentTarget[]).map(
-                (target) => (
-                  <button
-                    key={target}
-                    className={
-                      agentTarget === target
-                        ? "mode-button mode-button--active"
-                        : "mode-button"
-                    }
-                    onClick={() => setAgentTarget(target)}
-                    type="button"
-                  >
-                    {target}
-                  </button>
-                ),
-              )}
-            </div>
+            <>
+              <div className="mode-group" aria-label="Adapter de agente">
+                {(["claude", "codex", "gemini", "opencode"] as AgentTarget[]).map(
+                  (target) => (
+                    <button
+                      key={target}
+                      className={
+                        agentTarget === target
+                          ? "mode-button mode-button--active"
+                          : "mode-button"
+                      }
+                      onClick={() => setAgentTarget(target)}
+                      type="button"
+                    >
+                      {target}
+                    </button>
+                  ),
+                )}
+              </div>
+              <label>
+                <input
+                  checked={allowAgentWorkspaceWrites}
+                  onChange={(event) => setAllowAgentWorkspaceWrites(event.target.checked)}
+                  type="checkbox"
+                />{" "}
+                Permitir escrita neste workspace
+              </label>
+            </>
           )}
           <button
             className="text-button"

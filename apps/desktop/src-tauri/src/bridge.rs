@@ -417,15 +417,16 @@ impl DesktopBridge {
         }
     }
 
-    /// Starts an actual ACPX session through the host-owned adapter. It is
-    /// deliberately read-only: writes must return through the separate Bastion
-    /// effect broker rather than giving an external CLI a bypass path.
-    pub async fn start_read_only_agent_session(
+    /// Starts an ACPX session through the host-owned adapter. Read-only is the
+    /// default; a person may explicitly enable workspace writes for adapters
+    /// whose permission model is external to the IDE broker.
+    pub async fn start_agent_session(
         &self,
         target: AcpxTarget,
         project_id: &str,
         resource_id: &str,
         host_home: PathBuf,
+        allow_workspace_writes: bool,
     ) -> anyhow::Result<StartedAgentSession> {
         validate_identifier("project id", project_id)?;
         validate_identifier("resource id", resource_id)?;
@@ -440,12 +441,20 @@ impl DesktopBridge {
                 owner: self.owner.clone(),
                 workspace_root: workspace_root.clone(),
                 home_dir: host_home,
-                read_only: true,
+                read_only: !allow_workspace_writes,
                 denied_paths: vec![workspace_root.join(".git")],
-                sandbox: AgentSandbox::Isolated,
+                sandbox: if allow_workspace_writes {
+                    AgentSandbox::WorkspaceNet
+                } else {
+                    AgentSandbox::Isolated
+                },
                 auth_profile_ref: "host-managed-acpx-default".to_owned(),
                 runtime_id: "ai-native-ide".to_owned(),
-                allowed_actions: Vec::new(),
+                allowed_actions: if allow_workspace_writes {
+                    vec!["*".to_owned()]
+                } else {
+                    Vec::new()
+                },
                 task_timeout_ms: 300_000,
                 idle_timeout_ms: 900_000,
             })
@@ -456,8 +465,12 @@ impl DesktopBridge {
             .insert(session.0.clone(), Arc::clone(&facade));
         Ok(StartedAgentSession {
             session_id: session.0,
-            read_only: true,
-            policy_note: "The external agent is read-only. Workspace changes require a separate IDE effect approval.",
+            read_only: !allow_workspace_writes,
+            policy_note: if allow_workspace_writes {
+                "Workspace writes were explicitly enabled for this external agent. Its approval model is harness-owned and every resulting file change is observed by the IDE."
+            } else {
+                "The external agent is read-only. Workspace changes require a separate IDE effect approval."
+            },
         })
     }
 

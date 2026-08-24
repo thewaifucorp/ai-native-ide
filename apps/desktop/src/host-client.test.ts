@@ -282,6 +282,28 @@ describe("host client", () => {
     });
   });
 
+  it("passes explicit workspace-write consent to the selected agent session only", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
+      sessionId: "agent-1",
+      readOnly: false,
+      policyNote: "external approval model",
+    });
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(
+      client.startAgentSession("claude", "project-1", "resource-1", true),
+    ).resolves.toMatchObject({ state: "available", value: { readOnly: false } });
+    expect(invoke).toHaveBeenCalledWith("start_agent_session", {
+      target: "claude",
+      projectId: "project-1",
+      resourceId: "resource-1",
+      allowWorkspaceWrites: true,
+    });
+  });
+
   it("reads streamed agent events only through an opaque IDE-owned session", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
       MessageDelta: {

@@ -231,8 +231,13 @@ interface HostCommandMap {
     args: { target: AgentTarget };
     result: AgentCapabilityCard;
   };
-  start_read_only_agent_session: {
-    args: { target: AgentTarget; projectId: string; resourceId: string };
+  start_agent_session: {
+    args: {
+      target: AgentTarget;
+      projectId: string;
+      resourceId: string;
+      allowWorkspaceWrites: boolean;
+    };
     result: StartedAgentSession;
   };
   submit_agent_task: {
@@ -327,10 +332,11 @@ export interface HostClient {
   agentCapabilityCard(
     target: AgentTarget,
   ): Promise<HostCall<AgentCapabilityCard>>;
-  startReadOnlyAgentSession(
+  startAgentSession(
     target: AgentTarget,
     projectId: string,
     resourceId: string,
+    allowWorkspaceWrites: boolean,
   ): Promise<HostCall<StartedAgentSession>>;
   submitAgentTask(
     sessionId: string,
@@ -457,8 +463,13 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     rollbackWorkspaceWrite: (projectId, resourceId, effectId) =>
       call("rollback_workspace_write", { projectId, resourceId, effectId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),
-    startReadOnlyAgentSession: (target, projectId, resourceId) =>
-      call("start_read_only_agent_session", { target, projectId, resourceId }),
+    startAgentSession: (target, projectId, resourceId, allowWorkspaceWrites) =>
+      call("start_agent_session", {
+        target,
+        projectId,
+        resourceId,
+        allowWorkspaceWrites,
+      }),
     submitAgentTask: (sessionId, prompt, codeChange) =>
       call("submit_agent_task", { request: { sessionId, prompt, codeChange } }),
     nextAgentEvent: (sessionId) => call("next_agent_event", { sessionId }),

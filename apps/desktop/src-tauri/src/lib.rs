@@ -593,16 +593,23 @@ async fn agent_capability_card(
 }
 
 #[tauri::command]
-async fn start_read_only_agent_session(
+async fn start_agent_session(
     app: AppHandle,
     bridge: State<'_, Arc<DesktopBridge>>,
     target: AcpxTarget,
     project_id: String,
     resource_id: String,
+    allow_workspace_writes: bool,
 ) -> Result<StartedAgentSession, String> {
     let home = app.path().home_dir().map_err(|error| error.to_string())?;
     bridge
-        .start_read_only_agent_session(target, &project_id, &resource_id, home)
+        .start_agent_session(
+            target,
+            &project_id,
+            &resource_id,
+            home,
+            allow_workspace_writes,
+        )
         .await
         .map_err(|error| error.to_string())
 }
@@ -681,7 +688,7 @@ pub fn run() {
             stop_and_capture_benchmark_preview_failure,
             reconcile_benchmark_preview_failure,
             agent_capability_card,
-            start_read_only_agent_session,
+            start_agent_session,
             submit_agent_task,
             next_agent_event,
             cancel_agent_session,
