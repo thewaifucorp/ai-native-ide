@@ -5,7 +5,7 @@
 //! it after policy evaluation; Tauri commands only expose status and surfaces.
 
 use std::{
-    io::{BufRead, BufReader},
+    io::Read,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -26,6 +26,12 @@ use serde::Serialize;
 use crate::PreviewHealth;
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
+
+/// Keep a runaway interactive program from making the host retain unbounded
+/// terminal output. The renderer has a smaller display buffer; this protects
+/// the native reader before events ever reach it.
+const PTY_OUTPUT_BYTE_LIMIT: usize = 10 * 1024 * 1024;
+const OUTPUT_EVENT_BYTE_LIMIT: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -277,10 +283,22 @@ impl ManagedProcess {
         let pid = child.id();
 
         if let Some(output) = child.stdout.take() {
-            stream_lines(extension, OutputStream::Stdout, output, Arc::clone(&sink));
+            stream_lines(
+                extension,
+                OutputStream::Stdout,
+                output,
+                Arc::clone(&sink),
+                None,
+            );
         }
         if let Some(output) = child.stderr.take() {
-            stream_lines(extension, OutputStream::Stderr, output, Arc::clone(&sink));
+            stream_lines(
+                extension,
+                OutputStream::Stderr,
+                output,
+                Arc::clone(&sink),
+                None,
+            );
         }
         sink(HostEvent::ProcessStarted { extension, pid });
 
@@ -332,26 +350,64 @@ impl ManagedProcess {
 fn stream_lines(
     extension: HostExtension,
     stream: OutputStream,
-    output: impl std::io::Read + Send + 'static,
+    mut output: impl Read + Send + 'static,
     sink: EventSink,
+    byte_limit: Option<usize>,
 ) {
     thread::spawn(move || {
-        for line in BufReader::new(output).lines() {
-            match line {
-                Ok(line) => sink(HostEvent::ProcessOutput {
-                    extension,
-                    stream,
-                    line,
-                }),
+        let mut buffer = [0_u8; 8 * 1024];
+        let mut pending = Vec::with_capacity(OUTPUT_EVENT_BYTE_LIMIT);
+        let mut total_bytes = 0_usize;
+
+        let emit = |pending: &mut Vec<u8>| {
+            if pending.last() == Some(&b'\r') {
+                pending.pop();
+            }
+            sink(HostEvent::ProcessOutput {
+                extension,
+                stream,
+                line: String::from_utf8_lossy(pending).into_owned(),
+            });
+            pending.clear();
+        };
+
+        loop {
+            let read = match output.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
                 Err(error) => {
                     sink(HostEvent::ProcessStreamError {
                         extension,
                         stream,
                         detail: error.to_string(),
                     });
-                    break;
+                    return;
+                }
+            };
+            total_bytes = total_bytes.saturating_add(read);
+            if let Some(limit) = byte_limit.filter(|limit| total_bytes > *limit) {
+                sink(HostEvent::ProcessStreamError {
+                    extension,
+                    stream,
+                    detail: format!("output exceeded the {limit}-byte host limit"),
+                });
+                return;
+            }
+
+            for byte in &buffer[..read] {
+                if *byte == b'\n' {
+                    emit(&mut pending);
+                } else {
+                    pending.push(*byte);
+                    if pending.len() == OUTPUT_EVENT_BYTE_LIMIT {
+                        emit(&mut pending);
+                    }
                 }
             }
+        }
+
+        if !pending.is_empty() {
+            emit(&mut pending);
         }
     });
 }
@@ -398,6 +454,7 @@ impl ManagedPty {
             OutputStream::Pty,
             reader,
             Arc::clone(&sink),
+            Some(PTY_OUTPUT_BYTE_LIMIT),
         );
         sink(HostEvent::ProcessStarted {
             extension: HostExtension::Pty,
@@ -500,6 +557,7 @@ impl ManagedPty {
             OutputStream::Pty,
             reader,
             Arc::clone(&sink),
+            Some(PTY_OUTPUT_BYTE_LIMIT),
         );
         sink(HostEvent::ProcessStarted {
             extension: HostExtension::Pty,
@@ -602,6 +660,7 @@ mod tests {
     use std::{
         collections::VecDeque,
         fs,
+        io::Cursor,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex,
@@ -659,6 +718,35 @@ mod tests {
                 event,
                 HostEvent::ProcessOutput { line, .. } if line == "host-stream"
             )));
+    }
+
+    #[test]
+    fn output_reader_enforces_a_host_byte_limit_before_emitting_unbounded_data() {
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let sink_events = Arc::clone(&events);
+        stream_lines(
+            HostExtension::Pty,
+            OutputStream::Pty,
+            Cursor::new(b"five!".to_vec()),
+            Arc::new(move |event| {
+                sink_events.lock().expect("events lock").push_back(event);
+            }),
+            Some(4),
+        );
+
+        for _ in 0..20 {
+            if events.lock().expect("events lock").iter().any(|event| {
+                matches!(
+                    event,
+                    HostEvent::ProcessStreamError { detail, .. }
+                        if detail.contains("4-byte host limit")
+                )
+            }) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("bounded PTY reader did not reject oversized output");
     }
 
     #[cfg(unix)]
