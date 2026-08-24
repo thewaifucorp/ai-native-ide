@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NewBid {
     pub listing_id: String,
     pub bidder_id: String,

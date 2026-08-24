@@ -87,23 +87,40 @@ foi gerado como `.deb`/`.rpm`; o `.deb` foi instalado atomicamente em
 
 ### T03 — Provar o host Tauri
 
-- [ ] Criar slice Tauri com fronteira privilegiada, Monaco, PTY e lifecycle de preview.
-- [ ] Validar subprocessos de agentes, streaming/eventos, filesystem watching, atalhos e múltiplas superfícies.
+- [x] Criar slice Tauri com fronteira privilegiada, Monaco, PTY e lifecycle de preview.
+- [x] Validar subprocessos de agentes, streaming/eventos, filesystem watching, atalhos e múltiplas superfícies.
 - [ ] Medir segurança, performance, consumo, empacotamento Linux e ergonomia de manutenção no artifact CI.
-- [ ] Definir gates objetivos que caracterizariam um blocker estrutural do Tauri.
-- [ ] Materializar manifestos, entrypoints e extension points do host Tauri.
-- [ ] Manter Electron apenas como fallback documentado; não implementar segundo host sem blocker comprovado.
+- [x] Definir gates objetivos que caracterizariam um blocker estrutural do Tauri.
+- [x] Materializar manifestos, entrypoints e extension points do host Tauri.
+- [x] Manter Electron apenas como fallback documentado; não implementar segundo host sem blocker comprovado.
 
 **Pronto quando:** o artifact Tauri instalado executa o slice completo e nenhum gate estrutural falha; qualquer exceção possui evidência e decisão registrada.
 
+**Evidência (2026-08-23):** `cargo test -p ai-native-ide-desktop --lib`
+passou 11 testes, incluindo golden journey com PTY, efeito aprovado, preview HTTP
+e reconciliação; `npm run check` passou (19 testes). O pacote Tauri Linux
+`.deb` foi gerado localmente, instalado atomicamente em `.local-install` e executado sob
+`xvfb` por 8 s. Falta somente a medição no artifact produzido pelo GitHub CI.
+O host mantém IPC tipado/allowlisted, Monaco, superfícies
+Preview/Terminal/Raw Evidence, watcher nativo e Electron somente como fallback
+documentado.
+
 ### T04 — Projeto semântico mínimo
 
-- [ ] Persistir projeto, recursos, revisões, atividades e escopo de sessão no core Rust.
-- [ ] Abrir/criar projeto por intenção e associar um repo/diretório real.
-- [ ] Implementar bridge tipada UI ↔ host ↔ Rust para recursos e arquivos.
-- [ ] Detectar alterações externas e emitir atividade causal.
+- [x] Persistir projeto, recursos, revisões, atividades e escopo de sessão no core Rust.
+- [x] Abrir/criar projeto por intenção e associar um repo/diretório real.
+- [x] Implementar bridge tipada UI ↔ host ↔ Rust para recursos e arquivos.
+- [x] Detectar alterações externas e emitir atividade causal.
 
 **Pronto quando:** fechar/reabrir mantém o projeto e mudanças dentro/fora da IDE convergem sem reimportação.
+
+**Evidência (2026-08-23):** `open_semantic_project` reidrata recursos
+persistidos e reinicia watchers sem repassar caminhos ao renderer. O watcher
+nativo registra snapshots externos como revisões `ExternalUnknown` e o evento
+observável entra no Activity Strip; revisões de effects mantêm a causalidade do
+efeito aprovado. Testes Rust cobrem persistência/reabertura, escopo de sessão,
+paths confinados e mudança externa; o client TypeScript cobre a reabertura pela
+bridge tipada.
 
 ### T05 — PTY e agente reais
 

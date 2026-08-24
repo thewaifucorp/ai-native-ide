@@ -193,6 +193,27 @@ impl DesktopBridge {
             .open_project(&ProjectId(project_id.to_owned()))
     }
 
+    /// Restores the persisted project/resource association into this host
+    /// process. Reopening a project must not require the renderer to select the
+    /// same directory again: its canonical location was approved and persisted
+    /// by a previous native-picker operation.
+    pub async fn restore_project(&self, project_id: &str) -> anyhow::Result<Option<ProjectRecord>> {
+        let Some(project) = self.open_project(project_id)? else {
+            return Ok(None);
+        };
+        for resource in self.projects.resources_for_project(&project.id)? {
+            self.register_workspace(project.id.clone(), resource)
+                .await?;
+        }
+        Ok(Some(project))
+    }
+
+    pub fn project_resources(&self, project_id: &str) -> anyhow::Result<Vec<Resource>> {
+        validate_identifier("project id", project_id)?;
+        self.projects
+            .resources_for_project(&ProjectId(project_id.to_owned()))
+    }
+
     /// Attaches a host-authorized resource to a semantic project and initializes
     /// the corresponding governed write broker. Re-attaching the same ID is safe
     /// only for the same project and canonical root.
@@ -214,31 +235,41 @@ impl DesktopBridge {
             selection.root(),
         )?;
 
+        self.register_workspace(project_id, resource.clone())
+            .await?;
+        Ok(resource)
+    }
+
+    async fn register_workspace(
+        &self,
+        project_id: ProjectId,
+        resource: Resource,
+    ) -> anyhow::Result<()> {
         let mut workspaces = self.workspaces.lock().await;
-        if let Some(existing) = workspaces.get(&resource_id.0) {
+        if let Some(existing) = workspaces.get(&resource.id.0) {
             if existing.project_id != project_id || existing.root != resource.canonical_path {
                 bail!("resource id is already attached to a different project or root")
             }
-            return Ok(resource);
+            return Ok(());
         }
         let broker = WorkspaceEffectBroker::open(
             &self.approval_database,
             // Bastion approvals are selected by owner. Scope this stable local owner
             // to the resource so approval in one workspace cannot dequeue a pending
             // effect belonging to another workspace.
-            format!("{}:resource:{}", self.owner, resource_id.0),
+            format!("{}:resource:{}", self.owner, resource.id.0),
             &resource.canonical_path,
         )
         .await?;
         workspaces.insert(
-            resource_id.0.clone(),
+            resource.id.0.clone(),
             AttachedWorkspace {
                 project_id,
                 root: resource.canonical_path.clone(),
                 broker,
             },
         );
-        Ok(resource)
+        Ok(())
     }
 
     pub async fn propose_write(
@@ -252,7 +283,7 @@ impl DesktopBridge {
         validate_relative_path(&request.relative_path)?;
         let workspaces = self.workspaces.lock().await;
         let workspace = workspace_for(&workspaces, project_id, &request.resource_id)?;
-        let result = workspace
+        let mut result = workspace
             .broker
             .propose_write(&WorkspaceWrite {
                 effect_id: request.effect_id.clone(),
@@ -260,6 +291,12 @@ impl DesktopBridge {
                 content: request.content.clone(),
             })
             .await?;
+        // Bastion returns its internal snake_case capability receipt. Translate
+        // the renderer boundary once so the TypeScript DTO remains idiomatic
+        // and no WebView consumer needs to know a Core implementation detail.
+        if result["awaiting_approval"] == serde_json::Value::Bool(true) {
+            result["awaitingApproval"] = serde_json::Value::Bool(true);
+        }
         drop(workspaces);
         if result["written"] == serde_json::Value::Bool(true) {
             if let Some(revision) = self.projects.record_ide_revision(
@@ -474,6 +511,31 @@ impl DesktopBridge {
         Ok(workspace_for(&workspaces, project_id, resource_id)?
             .root
             .clone())
+    }
+
+    /// Records a filesystem mutation as an external causal revision. Called by
+    /// the host watch callback; errors are returned to that trusted callback and
+    /// never become renderer-controlled paths or effect IDs.
+    pub fn observe_external_changes(
+        &self,
+        project_id: &str,
+        resource_id: &str,
+    ) -> anyhow::Result<usize> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", resource_id)?;
+        let resources = self
+            .projects
+            .resources_for_project(&ProjectId(project_id.to_owned()))?;
+        if !resources
+            .iter()
+            .any(|resource| resource.id.0 == resource_id)
+        {
+            bail!("resource is outside the selected semantic project")
+        }
+        Ok(self
+            .projects
+            .detect_external_changes(&ResourceId(resource_id.to_owned()))?
+            .len())
     }
 
     async fn agent_for(&self, session_id: &str) -> anyhow::Result<Arc<AcpxAgentFacade>> {

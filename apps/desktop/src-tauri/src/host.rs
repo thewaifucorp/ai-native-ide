@@ -154,6 +154,17 @@ impl HostRuntime {
         ActiveWatch::start(scope, Arc::clone(&self.sink))
     }
 
+    /// Starts a scoped native watch and lets the semantic-project service record
+    /// the observation before the renderer is notified. The callback receives a
+    /// filesystem path only; it cannot grant the renderer any capability.
+    pub fn watch_with_observer(
+        &self,
+        scope: WatchScope,
+        observer: impl Fn(&Path) + Send + Sync + 'static,
+    ) -> notify::Result<ActiveWatch> {
+        ActiveWatch::start_with_observer(scope, Arc::clone(&self.sink), Arc::new(observer))
+    }
+
     pub fn start_preview(&self, spec: TrustedProcessSpec) -> std::io::Result<PreviewSupervisor> {
         PreviewSupervisor::start(spec, Arc::clone(&self.sink))
     }
@@ -381,11 +392,20 @@ pub struct ActiveWatch {
 
 impl ActiveWatch {
     fn start(scope: WatchScope, sink: EventSink) -> notify::Result<Self> {
+        Self::start_with_observer(scope, sink, Arc::new(|_| {}))
+    }
+
+    fn start_with_observer(
+        scope: WatchScope,
+        sink: EventSink,
+        observer: Arc<dyn Fn(&Path) + Send + Sync>,
+    ) -> notify::Result<Self> {
         let mut watcher = notify::recommended_watcher(
             move |result: notify::Result<notify::Event>| match result {
                 Ok(event) => {
                     let detail = format!("{:?}", event.kind);
                     for path in event.paths {
+                        observer(&path);
                         sink(HostEvent::FilesystemChanged {
                             path,
                             detail: detail.clone(),
@@ -411,7 +431,10 @@ mod tests {
     use std::{
         collections::VecDeque,
         fs,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -509,7 +532,18 @@ mod tests {
         }));
         let scope = temporary_scope();
         let watched_file = scope.root().join("changed-by-outside-ide.txt");
-        let _watch = runtime.watch(scope).expect("start filesystem watch");
+        let observed = Arc::new(AtomicBool::new(false));
+        let observer_seen = Arc::clone(&observed);
+        let _watch = runtime
+            .watch_with_observer(scope, move |path| {
+                if path
+                    .file_name()
+                    .is_some_and(|name| name == "changed-by-outside-ide.txt")
+                {
+                    observer_seen.store(true, Ordering::SeqCst);
+                }
+            })
+            .expect("start filesystem watch");
         fs::write(&watched_file, "observed").expect("write watched file");
 
         for _ in 0..50 {
@@ -518,7 +552,8 @@ mod tests {
                     event,
                     HostEvent::FilesystemChanged { path, .. } if path == &watched_file
                 )
-            }) {
+            }) && observed.load(Ordering::SeqCst)
+            {
                 return;
             }
             thread::sleep(Duration::from_millis(20));

@@ -84,6 +84,22 @@ describe("host client", () => {
     });
   });
 
+  it("reopens persisted project resources through the typed host boundary", async () => {
+    const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue(null);
+    const client = createHostClient({
+      isNativeHost: () => true,
+      loadTransport: async () => ({ invoke }),
+    });
+
+    await expect(client.openSemanticProject("auction")).resolves.toEqual({
+      state: "available",
+      value: null,
+    });
+    expect(invoke).toHaveBeenCalledWith("open_semantic_project", {
+      projectId: "auction",
+    });
+  });
+
   it("starts the benchmark through the fixed local-preview command", async () => {
     const invoke = vi.fn<HostTransport["invoke"]>().mockResolvedValue({
       projectId: "auction",

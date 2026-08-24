@@ -50,11 +50,62 @@ struct TerminalRunStatus {
     detail: &'static str,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedSemanticProject {
+    project: ProjectRecord,
+    resources: Vec<Resource>,
+}
+
 /// Retains host-created PTYs so an explicit cancel always reaches the child.
 /// The renderer sees only an opaque ID and cannot provide an executable/path.
 struct TerminalRegistry {
     next_id: AtomicU64,
     sessions: Mutex<BTreeMap<String, ManagedPty>>,
+}
+
+/// Owns native file watchers for the lifetime of a restored/attached resource.
+/// The key is a host-owned resource ID; renderer code never owns a watcher or a
+/// filesystem location.
+struct WorkspaceWatchRegistry {
+    watches: Mutex<BTreeMap<String, ActiveWatch>>,
+}
+
+impl WorkspaceWatchRegistry {
+    fn new() -> Self {
+        Self {
+            watches: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn watch_resource(
+        &self,
+        runtime: &HostRuntime,
+        bridge: Arc<DesktopBridge>,
+        project_id: String,
+        resource: &Resource,
+    ) -> Result<(), String> {
+        let mut watches = self
+            .watches
+            .lock()
+            .expect("workspace watch registry lock poisoned");
+        if watches.contains_key(&resource.id.0) {
+            return Ok(());
+        }
+        let scope = WatchScope::from_project_resource(&resource.canonical_path)
+            .map_err(|error| error.to_string())?;
+        let resource_id = resource.id.0.clone();
+        let observed_resource_id = resource_id.clone();
+        let watcher = runtime
+            .watch_with_observer(scope, move |_| {
+                // notify may coalesce or duplicate events; the semantic store
+                // hashes snapshots and emits an activity only for a real delta.
+                let _ = bridge.observe_external_changes(&project_id, &observed_resource_id);
+            })
+            .map_err(|error| error.to_string())?;
+        watches.insert(resource_id, watcher);
+        Ok(())
+    }
 }
 
 impl TerminalRegistry {
@@ -184,13 +235,31 @@ fn create_semantic_project(
 }
 
 #[tauri::command]
-fn open_semantic_project(
+async fn open_semantic_project(
     bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    watchers: State<'_, WorkspaceWatchRegistry>,
     project_id: String,
-) -> Result<Option<ProjectRecord>, String> {
-    bridge
-        .open_project(&project_id)
-        .map_err(|error| error.to_string())
+) -> Result<Option<OpenedSemanticProject>, String> {
+    let project = bridge
+        .restore_project(&project_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(project) = project {
+        let resources = bridge
+            .project_resources(&project_id)
+            .map_err(|error| error.to_string())?;
+        for resource in &resources {
+            watchers.watch_resource(
+                &runtime,
+                Arc::clone(&*bridge),
+                project_id.clone(),
+                resource,
+            )?;
+        }
+        return Ok(Some(OpenedSemanticProject { project, resources }));
+    }
+    Ok(None)
 }
 
 /// The directory selector runs in the native host. The renderer can name the
@@ -199,6 +268,8 @@ fn open_semantic_project(
 async fn attach_workspace_from_picker(
     app: AppHandle,
     bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    watchers: State<'_, WorkspaceWatchRegistry>,
     project_id: String,
     resource_id: String,
 ) -> Result<Option<Resource>, String> {
@@ -214,11 +285,12 @@ async fn attach_workspace_from_picker(
     } else {
         ResourceKind::Directory
     };
-    bridge
+    let resource = bridge
         .attach_workspace(&project_id, &resource_id, kind, selection)
         .await
-        .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    watchers.watch_resource(&runtime, Arc::clone(&*bridge), project_id, &resource)?;
+    Ok(Some(resource))
 }
 
 #[tauri::command]
@@ -409,6 +481,7 @@ pub fn run() {
                 "local.owner",
             )?));
             app.manage(TerminalRegistry::new());
+            app.manage(WorkspaceWatchRegistry::new());
             surface::install_menu(app)?;
             let handle = app.handle().clone();
             app.manage(HostRuntime::new(Arc::new(move |event| {

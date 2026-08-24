@@ -53,6 +53,11 @@ export interface WorkspaceResource {
   createdAtMs: number;
 }
 
+export interface OpenedSemanticProject {
+  project: SemanticProjectRecord;
+  resources: WorkspaceResource[];
+}
+
 export interface BenchmarkPreviewStatus {
   projectId: string;
   url: string;
@@ -180,6 +185,10 @@ interface HostCommandMap {
     args: { input: SemanticProjectInput };
     result: SemanticProjectRecord;
   };
+  open_semantic_project: {
+    args: { projectId: string };
+    result: OpenedSemanticProject | null;
+  };
   attach_workspace_from_picker: {
     args: { projectId: string; resourceId: string };
     result: WorkspaceResource | null;
@@ -257,6 +266,9 @@ export interface HostClient {
   createSemanticProject(
     input: SemanticProjectInput,
   ): Promise<HostCall<SemanticProjectRecord>>;
+  openSemanticProject(
+    projectId: string,
+  ): Promise<HostCall<OpenedSemanticProject | null>>;
   attachWorkspaceFromPicker(
     projectId: string,
     resourceId: string,
@@ -378,6 +390,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     emitProbe: () => call("emit_host_probe", undefined),
     createSemanticProject: (input) =>
       call("create_semantic_project", { input }),
+    openSemanticProject: (projectId) =>
+      call("open_semantic_project", { projectId }),
     attachWorkspaceFromPicker: (projectId, resourceId) =>
       call("attach_workspace_from_picker", { projectId, resourceId }),
     startBenchmarkPreview: (projectId) =>

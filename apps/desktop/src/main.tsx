@@ -1,4 +1,5 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
+import Editor from "@monaco-editor/react";
 import { createRoot } from "react-dom/client";
 import {
   analyzeIntent,
@@ -109,6 +110,9 @@ function App() {
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
   const [hostActivity, setHostActivity] = useState<string[]>([]);
+  const [rawDocument, setRawDocument] = useState(
+    `# intent.md\n\n${starterIntent}\n\nmode: hybrid\nactive-scope: local resource\npreview: not-run\n`,
+  );
   const [reconciliationNote, setReconciliationNote] = useState<string | null>(
     null,
   );
@@ -135,6 +139,16 @@ function App() {
         unsubscribe = stop;
       });
     return () => unsubscribe?.();
+  }, []);
+  useEffect(() => {
+    // The initial project is an opaque stable ID. On a desktop restart the
+    // native host restores its persisted resources and watchers without asking
+    // the user to re-import the directory.
+    void hostClient.openSemanticProject("new-product").then((result) => {
+      if (result.state !== "available" || !result.value) return;
+      setProject(result.value.project);
+      setResource(result.value.resources[0] ?? null);
+    });
   }, []);
   useEffect(() => {
     if (!resource) return;
@@ -698,13 +712,32 @@ function App() {
                 Artefatos acessíveis, sem trocar de contexto.
               </h2>
               <div className="raw-grid">
-                <pre>{`intent.md\n\n${intent || "# Intenção ainda não declarada"}\n\nmode: ${mode}\nactive-scope: local resource\npreview: not-run`}</pre>
+                <div
+                  className="monaco-editor"
+                  aria-label="Editor Monaco de intent.md"
+                  style={{ background: "#181a17", height: 300, padding: 0 }}
+                >
+                  <Editor
+                    defaultLanguage="markdown"
+                    theme="vs-dark"
+                    value={rawDocument}
+                    onChange={(value) => setRawDocument(value ?? "")}
+                    options={{
+                      automaticLayout: true,
+                      fontFamily: "DM Mono",
+                      fontSize: 12,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                    }}
+                  />
+                </div>
                 <div>
                   <span className="eyebrow">PONTE DO HOST</span>
                   <p>
-                    Arquivos, terminal e logs entram aqui pela bridge tipada
-                    Tauri → Rust. Nesta fatia, nenhum efeito é simulado como
-                    real.
+                    Arquivos, terminal, preview e logs entram pela bridge
+                    tipada Tauri → Rust. O editor permanece no mesmo estado
+                    do projeto; gravar no workspace continua um efeito aprovado.
                   </p>
                   <button className="outline-action" type="button">
                     Ver contrato do host
