@@ -149,6 +149,10 @@ function App() {
   );
   const [agentTask, setAgentTask] = useState<HostCall<number> | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptEntry[]>([]);
+  const [agentUsage, setAgentUsage] = useState({
+    inputTokens: 0,
+    outputTokens: 0,
+  });
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
@@ -351,6 +355,12 @@ function App() {
           appendAgentTranscript("agent", event.MessageDelta.text);
         } else {
           appendAgentTranscript("system", describeAgentEvent(event));
+        }
+        if ("Usage" in event) {
+          setAgentUsage((current) => ({
+            inputTokens: current.inputTokens + event.Usage.input_tokens,
+            outputTokens: current.outputTokens + event.Usage.output_tokens,
+          }));
         }
         if (("Diff" in event || "Artifact" in event) && project && resource) {
           void loadWorkspaceFiles(project, resource);
@@ -828,6 +838,7 @@ function App() {
     setAgentCall(result);
     if (result.state === "available") {
       setAgentSession(result.value);
+      setAgentUsage({ inputTokens: 0, outputTokens: 0 });
       setAgentTranscript([
         {
           role: "system",
@@ -1561,6 +1572,10 @@ function App() {
                 {agentTask?.state === "available"
                   ? `Tarefa ${agentTask.value} enviada. O transcript aparece na superfície de trabalho.`
                   : "A superfície de trabalho mantém a conversa e a saída do agente."}
+              </p>
+              <p>
+                Custo desta sessão: {agentUsage.inputTokens} tokens de entrada ·{" "}
+                {agentUsage.outputTokens} de saída (reportado pelo adapter).
               </p>
             </div>
           )}
