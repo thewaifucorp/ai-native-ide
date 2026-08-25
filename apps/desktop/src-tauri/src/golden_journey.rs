@@ -1,10 +1,14 @@
 use super::host::OutputStream;
 use super::{
     benchmark_preview::{BenchmarkPreviewHost, PreviewReconciliationAction},
-    bridge::{DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection, WorkspaceWriteRequest},
+    bridge::{
+        AcpxTarget, DesktopBridge, ProjectIntentInput, TrustedWorkspaceSelection,
+        WorkspaceWriteRequest,
+    },
     registered_git_executable, workspace_inspection_spec, HostEvent, HostExtension, HostRuntime,
     WatchScope,
 };
+use ide_agent::AgentAvailability;
 use ide_domain::ResourceKind;
 use std::{
     collections::VecDeque,
@@ -99,6 +103,25 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
         .expect("execute approved effect");
     assert_eq!(written["written"], true);
     assert!(root.join("benchmark.intent.md").is_file());
+
+    // Agent leg: the journey reaches a real external-agent adapter. Without the
+    // `acpx` binary installed (as in CI) it must degrade to an explicit
+    // Unavailable that explains why — never a fabricated session.
+    let card = bridge.agent_capability_card(AcpxTarget::Claude).await;
+    match card.health.availability {
+        AgentAvailability::Ready | AgentAvailability::Degraded => {
+            assert!(
+                card.descriptor.is_some(),
+                "a usable agent exposes a descriptor"
+            );
+        }
+        AgentAvailability::Unavailable => {
+            assert!(
+                card.health.detail.is_some(),
+                "an unavailable agent must explain its degradation"
+            );
+        }
+    }
 
     let terminal_events = Arc::new(Mutex::new(VecDeque::new()));
     let terminal_sink = Arc::clone(&terminal_events);
