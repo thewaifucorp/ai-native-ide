@@ -31,6 +31,9 @@ import {
 
 interface StoredRecord {
     proposal: WriteProposal;
+    /** Kept so approve/rollback re-confine at write time (defeats TOCTOU). */
+    rootUri: string;
+    relPath: string;
     absPath: string;
     /** Snapshot of the bytes at propose time — the rollback target. */
     original: string;
@@ -52,19 +55,36 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
     protected readonly records = new Map<string, WriteProposal & { _rec: StoredRecord }>();
     protected seq = 1;
 
-    /** Resolve `<root>/<relPath>` and reject anything that escapes the root. */
-    protected confine(rootUri: string, relPath: string): { absPath: string; root: string } {
-        const root = path.resolve(FileUri.fsPath(new URI(rootUri)));
+    /**
+     * Resolve `<root>/<relPath>` and reject anything that escapes the root —
+     * lexically AND via symlinks. Realpaths the root and the target's nearest
+     * existing ancestor so a symlink inside the workspace can't point outside,
+     * and refuses to write through a symlink at the leaf.
+     */
+    protected confine(rootUri: string, relPath: string): string {
+        const root = fs.realpathSync(path.resolve(FileUri.fsPath(new URI(rootUri))));
         const absPath = path.resolve(root, relPath);
         const rel = path.relative(root, absPath);
         if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
             throw new Error(`path '${relPath}' escapes the workspace root`);
         }
-        return { absPath, root };
+        // The real path of the target (or its nearest existing ancestor) must
+        // still sit inside the real root — blocks symlink-traversal escapes.
+        const probe = fs.existsSync(absPath) ? absPath : path.dirname(absPath);
+        const real = fs.realpathSync(probe);
+        const realRel = path.relative(root, real);
+        if (realRel !== '' && (realRel.startsWith('..') || path.isAbsolute(realRel))) {
+            throw new Error(`path '${relPath}' escapes the workspace root via symlink`);
+        }
+        // Never write through a symlink at the leaf itself.
+        if (fs.existsSync(absPath) && fs.lstatSync(absPath).isSymbolicLink()) {
+            throw new Error(`refusing to write through a symlink: ${relPath}`);
+        }
+        return absPath;
     }
 
     async proposeWrite(rootUri: string, relPath: string, newContent: string): Promise<WriteProposal> {
-        const { absPath } = this.confine(rootUri, relPath);
+        const absPath = this.confine(rootUri, relPath);
         if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
             throw new Error(`no such workspace file: ${relPath}`);
         }
@@ -98,20 +118,24 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
             state: 'awaiting',
             preview
         };
-        this.records.set(id, { ...proposal, _rec: { proposal, absPath, original, proposed: newContent } });
+        this.records.set(id, { ...proposal, _rec: { proposal, rootUri, relPath, absPath, original, proposed: newContent } });
         return proposal;
     }
 
     async approve(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
-        fs.writeFileSync(rec.absPath, rec.proposed, 'utf8');
+        // Re-confine at write time: the leaf may have been swapped for a symlink
+        // (or its parent relinked) since propose — TOCTOU defence.
+        const absPath = this.confine(rec.rootUri, rec.relPath);
+        fs.writeFileSync(absPath, rec.proposed, 'utf8');
         rec.proposal.state = 'approved';
         return rec.proposal;
     }
 
     async rollback(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
-        fs.writeFileSync(rec.absPath, rec.original, 'utf8');
+        const absPath = this.confine(rec.rootUri, rec.relPath);
+        fs.writeFileSync(absPath, rec.original, 'utf8');
         rec.proposal.state = 'rolledback';
         return rec.proposal;
     }
