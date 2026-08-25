@@ -1,20 +1,28 @@
-// Backend service for the M3 GOVERNED WRITE loop.
+// Backend service for the GOVERNED WRITE loop.
 //
-// It performs a governed write over the REAL workspace filesystem:
-//   proposeWrite  → confine path to the workspace root, SNAPSHOT the current
-//                   bytes, compute the diff via the EXISTING Rust `ide-diff`
-//                   sidecar (reused through the engine-extension EngineService),
-//                   and return an awaiting-approval record. It does NOT write.
-//   approve       → write the proposed bytes to the real file.
-//   rollback      → restore the snapshot bytes.
+// It performs a governed write over the REAL workspace filesystem, and — as of
+// M4 — the governance is REAL: every write crosses `ide-domain`'s
+// `WorkspaceEffectBroker` (Rust: capability registry + SqliteApprovalGate +
+// snapshot store) via the engine sidecar. This Node service is now only a thin
+// adapter that maps the frontend's propose/approve/rollback UX onto the broker's
+// propose → approve → propose-executes → rollback lifecycle, and computes the
+// diff preview shown on the dock card.
+//
+//   proposeWrite  → read the current bytes (confined, for the diff preview only),
+//                   compute the diff via the REAL Rust `ide-diff` sidecar, then
+//                   QUEUE the effect in the real broker (`brokerPropose`). The
+//                   broker writes nothing on this first call.
+//   approve       → grant the broker's SqliteApprovalGate (`brokerApprove`) and
+//                   re-send the identical effect (`brokerPropose`), which the
+//                   broker now EXECUTES — writing the file and snapshotting it.
+//   rollback      → `brokerRollback`, restoring the broker's own snapshot.
 //
 // ── HONEST BOUNDARY ────────────────────────────────────────────────────────
-// The governance in THIS service — the awaiting-approval gate and the
-// snapshot/restore — is a Node STAND-IN. It proves the end-to-end UX loop on
-// real files. The real governance surface, `ide-domain`'s `WorkspaceEffectBroker`
-// (Rust: capability tokens + policy gates + audited effect application), is wired
-// in M4. The DIFF here is already real (the Rust `ide-diff` engine via the
-// sidecar); only the broker/gates are stubbed in Node.
+// The awaiting-approval gate, the write, and the snapshot/restore all live in
+// Rust now (ide-domain). The Node side neither writes workspace files nor keeps
+// snapshots; it only reads the pre-image to render the diff. Path confinement is
+// enforced authoritatively by the Rust broker (`resolve_workspace_path`); the
+// `confine()` here guards only the local pre-image read.
 // ────────────────────────────────────────────────────────────────────────────
 
 import { injectable, inject } from '@theia/core/shared/inversify';
@@ -29,15 +37,16 @@ import {
     DiffLinePreview
 } from '../common/governed-protocol';
 
+/** Fixed owner identity for effects proposed through the instrument shell. */
+const OWNER = 'owner:instrument-ide';
+
 interface StoredRecord {
     proposal: WriteProposal;
-    /** Kept so approve/rollback re-confine at write time (defeats TOCTOU). */
-    rootUri: string;
+    /** Absolute fs path of the workspace root — the broker's scope key. */
+    rootFsPath: string;
+    /** Path relative to the root, as the broker expects it. */
     relPath: string;
-    absPath: string;
-    /** Snapshot of the bytes at propose time — the rollback target. */
-    original: string;
-    /** The bytes `approve` will write. */
+    /** The bytes `approve` re-sends so the broker executes the write. */
     proposed: string;
 }
 
@@ -47,44 +56,41 @@ const PREVIEW_CAP = 14;
 @injectable()
 export class GovernedWriteServiceImpl implements GovernedWriteService {
 
-    // The EXISTING Rust `ide-diff` sidecar, spawned + proxied by engine-extension.
-    // Both backend modules share one Inversify container, so this resolves to the
-    // same singleton that serves the "Engine: Diff Demo" command.
+    // The Rust sidecar host: `ide-diff` (diff/merge) AND the real
+    // `ide-domain` WorkspaceEffectBroker (governed writes). engine-extension's
+    // backend module binds it into the same Inversify container.
     @inject(EngineService) protected readonly engine!: EngineService;
 
-    protected readonly records = new Map<string, WriteProposal & { _rec: StoredRecord }>();
+    protected readonly records = new Map<string, StoredRecord>();
     protected seq = 1;
 
     /**
-     * Resolve `<root>/<relPath>` and reject anything that escapes the root —
-     * lexically AND via symlinks. Realpaths the root and the target's nearest
-     * existing ancestor so a symlink inside the workspace can't point outside,
-     * and refuses to write through a symlink at the leaf.
+     * Resolve `<root>/<relPath>` for the local pre-image READ only, rejecting
+     * anything that escapes the root — lexically and via symlinks. The broker
+     * re-confines authoritatively before any write.
      */
-    protected confine(rootUri: string, relPath: string): string {
-        const root = fs.realpathSync(path.resolve(FileUri.fsPath(new URI(rootUri))));
+    protected confine(rootFsPath: string, relPath: string): string {
+        const root = fs.realpathSync(path.resolve(rootFsPath));
         const absPath = path.resolve(root, relPath);
         const rel = path.relative(root, absPath);
         if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
             throw new Error(`path '${relPath}' escapes the workspace root`);
         }
-        // The real path of the target (or its nearest existing ancestor) must
-        // still sit inside the real root — blocks symlink-traversal escapes.
         const probe = fs.existsSync(absPath) ? absPath : path.dirname(absPath);
         const real = fs.realpathSync(probe);
         const realRel = path.relative(root, real);
         if (realRel !== '' && (realRel.startsWith('..') || path.isAbsolute(realRel))) {
             throw new Error(`path '${relPath}' escapes the workspace root via symlink`);
         }
-        // Never write through a symlink at the leaf itself.
         if (fs.existsSync(absPath) && fs.lstatSync(absPath).isSymbolicLink()) {
-            throw new Error(`refusing to write through a symlink: ${relPath}`);
+            throw new Error(`refusing to read through a symlink: ${relPath}`);
         }
         return absPath;
     }
 
     async proposeWrite(rootUri: string, relPath: string, newContent: string): Promise<WriteProposal> {
-        const absPath = this.confine(rootUri, relPath);
+        const rootFsPath = FileUri.fsPath(new URI(rootUri));
+        const absPath = this.confine(rootFsPath, relPath);
         if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
             throw new Error(`no such workspace file: ${relPath}`);
         }
@@ -109,6 +115,16 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         }
 
         const id = `w${this.seq++}`;
+
+        // QUEUE the effect in the REAL Rust broker. It writes nothing yet — it
+        // records the proposal and returns awaiting_approval.
+        const queued = await this.engine.brokerPropose(rootFsPath, OWNER, id, relPath, newContent);
+        if (queued.awaiting_approval !== true) {
+            throw new Error(
+                `broker did not queue effect ${id} for approval (got ${JSON.stringify(queued)})`
+            );
+        }
+
         const proposal: WriteProposal = {
             id,
             relPath,
@@ -118,24 +134,34 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
             state: 'awaiting',
             preview
         };
-        this.records.set(id, { ...proposal, _rec: { proposal, rootUri, relPath, absPath, original, proposed: newContent } });
+        this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
         return proposal;
     }
 
     async approve(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
-        // Re-confine at write time: the leaf may have been swapped for a symlink
-        // (or its parent relinked) since propose — TOCTOU defence.
-        const absPath = this.confine(rec.rootUri, rec.relPath);
-        fs.writeFileSync(absPath, rec.proposed, 'utf8');
+        // Grant the broker's SqliteApprovalGate, then re-send the identical
+        // effect: the broker now executes the write and snapshots the pre-image.
+        await this.engine.brokerApprove(rec.rootFsPath, OWNER);
+        const written = await this.engine.brokerPropose(
+            rec.rootFsPath,
+            OWNER,
+            id,
+            rec.relPath,
+            rec.proposed
+        );
+        if (written.written !== true) {
+            throw new Error(
+                `broker did not execute approved effect ${id} (got ${JSON.stringify(written)})`
+            );
+        }
         rec.proposal.state = 'approved';
         return rec.proposal;
     }
 
     async rollback(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
-        const absPath = this.confine(rec.rootUri, rec.relPath);
-        fs.writeFileSync(absPath, rec.original, 'utf8');
+        await this.engine.brokerRollback(rec.rootFsPath, OWNER, id);
         rec.proposal.state = 'rolledback';
         return rec.proposal;
     }
@@ -145,6 +171,6 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         if (!stored) {
             throw new Error(`unknown write proposal: ${id}`);
         }
-        return stored._rec;
+        return stored;
     }
 }

@@ -25,8 +25,20 @@ export interface Hunk {
 }
 
 /**
- * Backend service proxied to the frontend over JSON-RPC. Every call is served
- * by the real Rust `ide-diff` engine running in the sidecar child process.
+ * One broker activity entry. Mirrors `ide_domain::BrokerActivity` (serde tagged
+ * `kind` in snake_case): the audit trail the real broker records as an effect
+ * moves through propose → snapshot → execute → rollback.
+ */
+export interface BrokerActivity {
+    kind: 'proposed' | 'awaiting_approval' | 'snapshot_created' | 'executed' | 'rolled_back';
+    effect_id: string;
+    path?: string;
+}
+
+/**
+ * Backend service proxied to the frontend over JSON-RPC. Served by the Rust
+ * sidecar child process, which now hosts TWO real engines: `ide-diff` (diff /
+ * merge) and `ide-domain`'s `WorkspaceEffectBroker` (the governed-write broker).
  */
 export interface EngineService {
     /** Health check — confirms the Rust sidecar spawned and is responding. */
@@ -37,4 +49,28 @@ export interface EngineService {
 
     /** Real `ide_diff::merge_selected` — rebuild content applying only the given hunk ids. */
     mergeSelected(original: string, proposed: string, selected: number[]): Promise<string>;
+
+    // ── Real governed-write broker (ide-domain WorkspaceEffectBroker) ──────────
+    // One live broker per (owner, root) in the sidecar. First `brokerPropose`
+    // QUEUES the effect (nothing written); `brokerApprove` grants the
+    // SqliteApprovalGate; a second identical `brokerPropose` EXECUTES the write
+    // and records a snapshot; `brokerRollback` restores it.
+
+    /** Propose a governed write. Queues on first call, executes once approved. */
+    brokerPropose(
+        root: string,
+        owner: string,
+        effectId: string,
+        relativePath: string,
+        content: string
+    ): Promise<{ awaiting_approval?: boolean; written?: boolean; path?: string }>;
+
+    /** Approve the next pending effect for this (owner, root). */
+    brokerApprove(root: string, owner: string): Promise<{ approved_id: number }>;
+
+    /** Restore the snapshot taken when the effect executed. */
+    brokerRollback(root: string, owner: string, effectId: string): Promise<{ rolledback: boolean }>;
+
+    /** The broker's honest audit trail for this (owner, root). */
+    brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }>;
 }

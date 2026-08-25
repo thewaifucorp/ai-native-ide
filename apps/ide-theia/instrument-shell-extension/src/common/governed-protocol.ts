@@ -1,14 +1,15 @@
-// Shared contract for the M3 GOVERNED WRITE loop (the product thesis, made real
-// on real files). The frontend proposes a write over a real workspace file; the
-// backend snapshots the current bytes and computes the diff via the EXISTING
-// Rust `ide-diff` sidecar, but does NOT write until `approve`. `rollback`
-// restores the snapshot.
+// Shared contract for the GOVERNED WRITE loop (the product thesis, made real on
+// real files). The frontend proposes a write over a real workspace file; the
+// backend computes the diff via the Rust `ide-diff` sidecar and queues the effect
+// in the real broker, but nothing is written until `approve`. `rollback` restores
+// the broker's snapshot.
 //
-// HONEST BOUNDARY (see governed-write-service.ts): the governance here — the
-// awaiting-approval gate + snapshot/restore — runs in the Node backend service
-// as a STAND-IN. The real `ide-domain` `WorkspaceEffectBroker` (Rust, with
-// capability + policy gates) is wired in M4. M3 proves the UX loop end-to-end on
-// real files.
+// GOVERNANCE IS REAL (M4, see governed-write-service.ts): the awaiting-approval
+// gate, the write, and the snapshot/restore all live in Rust — `ide-domain`'s
+// `WorkspaceEffectBroker` (capability registry + SqliteApprovalGate + snapshot
+// store), reached through the engine sidecar. The Node service is a thin adapter:
+// it reads the pre-image for the diff preview and maps this protocol onto the
+// broker's propose → approve → propose-executes → rollback lifecycle.
 
 /** JSON-RPC path the governed-write backend service is exposed on. */
 export const GOVERNED_SERVICE_PATH = '/services/governed-write';

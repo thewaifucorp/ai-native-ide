@@ -6,7 +6,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { EngineService, Hunk } from '../common/engine-protocol';
+import { BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
 
 interface PendingRequest {
     resolve(value: unknown): void;
@@ -140,5 +140,39 @@ export class EngineSidecarService implements EngineService {
             selected
         });
         return result.merged;
+    }
+
+    // ── Real governed-write broker (ide-domain WorkspaceEffectBroker) ──────────
+
+    brokerPropose(
+        root: string,
+        owner: string,
+        effectId: string,
+        relativePath: string,
+        content: string
+    ): Promise<{ awaiting_approval?: boolean; written?: boolean; path?: string }> {
+        return this.call('broker_propose', {
+            root,
+            owner,
+            effect_id: effectId,
+            relative_path: relativePath,
+            content
+        });
+    }
+
+    brokerApprove(root: string, owner: string): Promise<{ approved_id: number }> {
+        return this.call('broker_approve', { root, owner });
+    }
+
+    brokerRollback(
+        root: string,
+        owner: string,
+        effectId: string
+    ): Promise<{ rolledback: boolean }> {
+        return this.call('broker_rollback', { root, owner, effect_id: effectId });
+    }
+
+    brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }> {
+        return this.call('broker_activity', { root, owner });
     }
 }

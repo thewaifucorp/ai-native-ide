@@ -14,10 +14,25 @@ name = "engine-sidecar"
 path = "src/main.rs"
 
 [dependencies]
-# The real engine from the sibling ai-native-ide Rust workspace.
+# The real engines from the sibling ai-native-ide Rust workspace.
+#  - ide-diff:   line-level diff/merge (M1..M3)
+#  - ide-domain: the REAL WorkspaceEffectBroker (capability + SqliteApprovalGate +
+#                snapshot store) that replaces the M3 Node governance stand-in (M4)
 ide-diff = { path = "../../../crates/ide-diff" }
+ide-domain = { path = "../../../crates/ide-domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 # Detach from any parent Cargo workspace: this crate is self-contained.
+# `[workspace.package]` here so the path-dep `ide-domain` — which declares
+# `edition.workspace = true` / `license.workspace = true` — can inherit them from
+# THIS workspace root instead of the ai-native-ide one it normally lives in.
 [workspace]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
