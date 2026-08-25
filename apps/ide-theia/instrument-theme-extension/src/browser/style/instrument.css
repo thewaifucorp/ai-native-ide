@@ -1,0 +1,250 @@
+/* ============================================================
+   Sketch 001 "Instrumento" — app-wide chrome reskin.
+
+   The COLOR of the workbench comes from the color theme
+   (instrument-color-theme.ts). This file handles SHAPE and
+   TYPOGRAPHY: bespoke fonts, tight IDE-scale radii, fixed
+   control heights, and the status-bar "pulse strip" feel —
+   the parts a color theme cannot reach.
+
+   Self-contained: fonts are bundled (no Google Fonts link).
+   ============================================================ */
+
+@font-face {
+    font-family: 'Geologica';
+    src: url('./fonts/Geologica-variable.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'DM Mono';
+    src: url('./fonts/DMMono-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ---- 001 palette, mirrored as CSS vars for the chrome tweaks below ---- */
+:root {
+    --i-bg: #101113;
+    --i-panel: #151619;
+    --i-panel-2: #1b1c20;
+    --i-raise: #24262b;
+    --i-raise-2: #2e3138;
+    --i-line: rgba(255, 255, 255, 0.07);
+    --i-line-2: rgba(255, 255, 255, 0.14);
+    --i-text: #e9eaec;
+    --i-mut: #9b9da4;
+    --i-faint: #85888f;
+    --i-step: #79a3d0;
+    --i-ok: #58b287;
+    --i-need: #d9a03c;
+    --i-bad: #e3655b;
+
+    /* tight radii — IDE chrome scale, not web-page scale */
+    --i-r1: 4px;
+    --i-r2: 7px;
+
+    --theia-ui-font-size1: 12.5px;
+    --theia-content-font-size: 12.5px;
+    --theia-statusBar-font-size: 11px;
+}
+
+/* Swap the stock Helvetica/Menlo stacks for the bundled bespoke fonts.
+   `!important` is required: Theia's os.css sets --theia-ui-font-family on
+   `body.linux` / `body.mac` / `body.windows`, which outranks a plain :root. */
+:root,
+body,
+.theia-ApplicationShell {
+    --theia-ui-font-family: 'Geologica', system-ui, -apple-system, 'Segoe UI',
+        sans-serif !important;
+    --theia-code-font-family: 'DM Mono', ui-monospace, 'SF Mono', Menlo, Monaco,
+        Consolas, monospace !important;
+    --theia-monospace-font-family: 'DM Mono', ui-monospace, monospace !important;
+}
+
+/* smoother text like the sketch */
+body,
+.theia-ApplicationShell {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* ---- Region labels / section headers → 001 ".tag" treatment ---- */
+.theia-sidepanel-title,
+.theia-side-panel .theia-header,
+.p-TabBar.theia-app-sides .p-TabBar-tabLabel,
+.theia-view-container .theia-header,
+.theia-TreeContainer .theia-CompositeTreeNode > .theia-ExpansionToggle,
+.sidebar-title,
+.theia-header.header {
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--i-faint);
+}
+
+/* ---- Buttons → tight radius, fixed height, ghost secondary ---- */
+.theia-button {
+    border-radius: var(--i-r1);
+    min-height: 26px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+.theia-button.secondary {
+    border-radius: var(--i-r1);
+}
+
+/* ---- Inputs / selects → tight radius, panel-2 fill ---- */
+.theia-input,
+.theia-select,
+.theia-SelectComponent,
+.monaco-inputbox,
+.monaco-findInput .monaco-inputbox {
+    border-radius: var(--i-r1) !important;
+}
+.theia-input {
+    min-height: 26px;
+}
+
+/* ---- Activity bar (the dark rail) ---- */
+.p-TabBar.theia-app-sides {
+    background: var(--i-panel);
+}
+.p-TabBar.theia-app-sides .p-TabBar-tab {
+    padding: 8px 0;
+}
+/* active-tab accent bar in text color — thin, 001-style */
+.p-TabBar.theia-app-left .p-TabBar-tab.p-mod-current,
+.p-TabBar.theia-app-right .p-TabBar-tab.p-mod-current {
+    box-shadow: inset 2px 0 0 var(--i-text);
+}
+.p-TabBar.theia-app-sides .p-TabBar-tabIcon {
+    border-radius: var(--i-r1);
+}
+
+/* ---- Editor tabs → flat, tight, top accent on active ---- */
+#theia-main-content-panel .p-TabBar.theia-app-centers .p-TabBar-tab {
+    min-height: 34px;
+    border-right: 1px solid var(--i-line);
+    border-radius: 0;
+    font-size: 12px;
+}
+#theia-main-content-panel
+    .p-TabBar.theia-app-centers
+    .p-TabBar-tab.p-mod-current {
+    box-shadow: inset 0 2px 0 var(--i-text);
+}
+
+/* ---- Tree / list rows → tight radius, 001 hover/selection ---- */
+.theia-TreeNode {
+    border-radius: var(--i-r1);
+}
+.theia-TreeContainer .theia-mod-selected {
+    border-radius: var(--i-r1);
+}
+
+/* ---- Badges → tight radius, mono digits ---- */
+.theia-badge,
+.theia-CountBadge,
+.p-TabBar .theia-badge-decorator-sidebar,
+.notification-count {
+    border-radius: var(--i-r1);
+    font-family: var(--theia-code-font-family);
+    font-size: 10px;
+    letter-spacing: 0;
+}
+
+/* ---- Status bar → 001 "pulse strip" ---- */
+#theia-statusBar {
+    height: 24px;
+    border-top: 1px solid var(--i-line);
+    font-family: var(--theia-code-font-family);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+}
+#theia-statusBar .area {
+    padding: 0 6px;
+}
+/* breathing "live" head at the very start of the strip — the sketch signature */
+#theia-statusBar .area.left::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    margin: 0 8px 0 4px;
+    border-radius: 50%;
+    background: var(--i-step);
+    align-self: center;
+    box-shadow: 0 0 0 0 rgba(121, 163, 208, 0.5);
+    animation: i-pulse 2.2s ease-in-out infinite;
+}
+@keyframes i-pulse {
+    0%,
+    100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(121, 163, 208, 0.45);
+    }
+    50% {
+        opacity: 0.45;
+        box-shadow: 0 0 0 4px rgba(121, 163, 208, 0);
+    }
+}
+#theia-statusBar .element {
+    border-radius: var(--i-r1);
+    padding: 0 6px;
+    line-height: 22px;
+}
+#theia-statusBar .element:hover {
+    background: var(--i-raise);
+}
+
+/* ---- Title / menu bar → panel tone, tight ---- */
+#theia-top-panel {
+    background: var(--i-panel);
+    border-bottom: 1px solid var(--i-line);
+}
+.p-MenuBar-item {
+    border-radius: var(--i-r1);
+}
+
+/* ---- Breadcrumbs → faint, mono-ish ---- */
+.theia-breadcrumbs .theia-breadcrumb-item {
+    font-size: 11px;
+    color: var(--i-faint);
+}
+
+/* ---- Scrollbars → thin, raise-colored, 001 look ---- */
+.theia-scrollbar > .p-ScrollBar-thumb,
+.monaco-scrollable-element > .scrollbar > .slider {
+    border-radius: 5px !important;
+    background: var(--i-raise) !important;
+}
+.monaco-scrollable-element > .scrollbar > .slider:hover {
+    background: var(--i-raise-2) !important;
+}
+
+/* ---- Quick input / command palette → panel + tight radius ---- */
+.quick-input-widget,
+.monaco-quick-open-widget {
+    border-radius: var(--i-r2);
+    border: 1px solid var(--i-line-2);
+}
+
+/* ---- Notifications / hovers / suggest → tight cards ---- */
+.theia-notification-list-item,
+.theia-notifications-container .theia-notification-list-item-container {
+    border-radius: var(--i-r2);
+}
+.monaco-editor .suggest-widget,
+.monaco-hover {
+    border-radius: var(--i-r2) !important;
+}
+
+/* honor reduced-motion for the pulse */
+@media (prefers-reduced-motion: reduce) {
+    #theia-statusBar .area.left::before {
+        animation: none;
+    }
+}

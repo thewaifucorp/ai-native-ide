@@ -1,0 +1,29 @@
+{
+  "private": true,
+  "name": "engine-extension",
+  "version": "0.0.1",
+  "description": "Local Theia extension: bridges the frontend to the real Rust ide-diff engine via the engine-sidecar child process (Phase 2 spike).",
+  "license": "MIT",
+  "main": "lib/common/index.js",
+  "types": "lib/common/index.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "@theia/core": "1.74.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rimraf lib"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/engine-frontend-module",
+      "backend": "lib/node/engine-backend-module"
+    }
+  ]
+}

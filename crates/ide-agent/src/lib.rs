@@ -349,9 +349,9 @@ impl AcpxAgentFacade {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<AgentSessionState, AgentFacadeError> {
-        let sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.lock().await;
         let managed = sessions
-            .get(session_id)
+            .get_mut(session_id)
             .ok_or(AgentFacadeError::SessionNotFound)?;
         let handle = managed.runtime_session.handle();
         let last_status = managed

@@ -1,0 +1,23 @@
+# Standalone package — deliberately NOT a member of the ai-native-ide Rust
+# workspace. The empty `[workspace]` table below makes this directory its own
+# workspace root so `cargo build` here never gets absorbed into a parent
+# workspace, while still pulling in the REAL `ide-diff` engine by path.
+[package]
+name = "engine-sidecar"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "engine-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+# The real engine from the sibling ai-native-ide Rust workspace.
+ide-diff = { path = "../../../crates/ide-diff" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Detach from any parent Cargo workspace: this crate is self-contained.
+[workspace]

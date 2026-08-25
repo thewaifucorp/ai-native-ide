@@ -1,68 +1,94 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import {
+  StrictMode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Editor from "@monaco-editor/react";
 import { createRoot } from "react-dom/client";
-import {
-  analyzeIntent,
-  initialActivity,
-  nextStepFor,
-  type BuildMode,
-  type Depth,
-  type IntentSignal,
-} from "./instrument";
+import { analyzeIntent, nextStepFor, type IntentSignal } from "./instrument";
 import {
   createGameModeState,
   readArchetypes,
   recordOutcome,
-  setGameModeEnabled,
   verifiedProgress,
   type GameModeState,
 } from "./game-mode";
 import {
   hostClient,
-  type AagRelations,
-  type AppliedGuidance,
-  type CaptureDestination,
-  type HarnessReport,
-  type IdeConfig,
-  type InterruptionDecision,
-  type ConfigBuildMode,
-  type SemanticReport,
-  type CompiledContext,
-  type Pack,
-  type ReadinessVerdict,
-  type ExportManifest,
-  type PublishRecord,
-  type Hunk,
-  type LoopTranscript,
-  type ProjectReference,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
   type BenchmarkPreviewStatus,
-  type HostCall,
+  type ExportManifest,
+  type HarnessReport,
+  type IdeConfig,
   type PreviewFailureReport,
+  type PublishRecord,
   type SemanticProjectRecord,
   type StartedAgentSession,
-  type TerminalRunStatus,
-  type WorkspaceDiff,
   type WorkspaceFile,
   type WorkspaceResource,
 } from "./host-client";
-import { TerminalSurface } from "./terminal-surface";
 import "./styles.css";
 
-const navItems = ["Overview", "Build", "Resources", "Evidence"] as const;
+/* ============================================================
+   Tipos locais de UI (o shell "Instrumento").
+   ============================================================ */
+type WorkView = "home" | "build" | "resources" | "evidence" | "ship";
+type Depth = "essential" | "detailed" | "raw";
+type ActiveTab = { kind: "view"; view: WorkView } | { kind: "file"; path: string };
 
-type AgentTranscriptEntry = {
-  role: "user" | "agent" | "system";
+interface OpenFile {
+  path: string;
+  content: string;
+  saved: string;
+  effectId: string | null;
+  awaiting: boolean;
+}
+
+type NotchKind = "ed" | "ck" | "dc" | "ev" | "bad";
+interface ActivityEvent {
+  id: string;
+  ts: string;
+  kind: string;
+  klass: NotchKind;
   text: string;
-};
+}
+
+interface ConvMsg {
+  id: string;
+  role: "user" | "agent" | "sys";
+  text: string;
+}
+
+const NAV_ITEMS: Array<{ view: WorkView; label: string; icon: string }> = [
+  { view: "home", label: "Overview", icon: "overview" },
+  { view: "build", label: "Build", icon: "build" },
+  { view: "resources", label: "Resources", icon: "resources" },
+  { view: "evidence", label: "Evidence", icon: "evidence" },
+  { view: "ship", label: "Ship", icon: "ship" },
+];
+
+const AGENT_TARGETS: AgentTarget[] = ["claude", "codex", "gemini", "opencode"];
+
+/* ============================================================
+   Utilidades puras.
+   ============================================================ */
+function clock(): string {
+  return new Date().toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function projectIdentity(intent: string): string {
   const slug = intent
     .toLocaleLowerCase("pt-BR")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 36);
@@ -75,453 +101,466 @@ function projectTitle(intent: string): string {
   return intent.trim().split(/[.!?\n]/, 1)[0]?.slice(0, 64) || "Projeto sem título";
 }
 
-function SignalCard({
-  signal,
-  onUse,
-}: {
-  signal: IntentSignal;
-  onUse: (signal: IntentSignal) => void;
-}) {
-  return (
-    <article className={`signal signal--${signal.severity}`}>
-      <div className="signal__meta">
-        <span>{signal.kind}</span>
-        <span className="signal__dot" />
-      </div>
-      <h3>{signal.title}</h3>
-      <p>{signal.detail}</p>
-      <button
-        className="text-button"
-        onClick={() => onUse(signal)}
-        type="button"
-      >
-        Usar como orientação <span>→</span>
-      </button>
-    </article>
-  );
+function firstSentence(intent: string): string {
+  const trimmed = intent.trim();
+  if (!trimmed) return "";
+  const match = trimmed.split(/(?<=[.!?])\s/, 1)[0];
+  return match ?? trimmed;
+}
+
+function initials(title: string): string {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "··";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function editorLanguage(path: string | null): string {
+  if (!path) return "markdown";
+  if (path.endsWith(".json")) return "json";
+  if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
+  if (path.endsWith(".js") || path.endsWith(".jsx")) return "javascript";
+  if (path.endsWith(".css")) return "css";
+  if (path.endsWith(".html")) return "html";
+  if (path.endsWith(".rs")) return "rust";
+  if (path.endsWith(".py")) return "python";
+  return "markdown";
 }
 
 function describeAgentEvent(event: AgentEvent): string {
-  if ("MessageDelta" in event) return `Agente: ${event.MessageDelta.text}`;
-  if ("Thinking" in event) return `Agente: ${event.Thinking.summary}`;
-  if ("ToolCall" in event) return `Agente pediu ${event.ToolCall.name}`;
+  if ("MessageDelta" in event) return event.MessageDelta.text;
+  if ("Thinking" in event) return event.Thinking.summary;
+  if ("ToolCall" in event) return `Ferramenta: ${event.ToolCall.name}`;
   if ("ToolResult" in event)
-    return `Agente recebeu ${event.ToolResult.name}${event.ToolResult.is_error ? " com erro" : ""}`;
+    return `Resultado ${event.ToolResult.name}${event.ToolResult.is_error ? " (erro)" : ""}`;
   if ("PermissionRequested" in event)
     return `Permissão externa: ${event.PermissionRequested.action}`;
-  if ("Diff" in event) return `Diff externo: ${event.Diff.path}`;
-  if ("Artifact" in event) return `Artefato do agente: ${event.Artifact.path}`;
-  if ("Warning" in event) return `Agente: ${event.Warning.detail}`;
-  if ("Ended" in event) return "Sessão do agente terminou";
-  if ("Started" in event) return "Sessão do agente iniciada";
-  return "Uso do agente foi registrado fora da pontuação";
+  if ("Diff" in event)
+    return `Diff em ${event.Diff.path} (+${event.Diff.added} −${event.Diff.removed})`;
+  if ("Artifact" in event) return `Artefato: ${event.Artifact.path}`;
+  if ("Warning" in event) return `Aviso: ${event.Warning.detail}`;
+  if ("Ended" in event) return "Sessão do agente terminou.";
+  if ("Started" in event) return "Sessão do agente iniciada.";
+  return "Evento do agente registrado.";
 }
 
+function healthClass(health: BenchmarkPreviewStatus["health"] | null): string {
+  if (!health) return "idle";
+  if (health === "healthy") return "ok";
+  if (health === "starting" || health === "reconnecting") return "run";
+  if (health === "broken") return "bad";
+  return "idle";
+}
+
+/* ============================================================
+   Folha de ícones (idêntica ao sketch 001).
+   ============================================================ */
+function IconSheet() {
+  return (
+    <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+      <defs>
+        <symbol id="ic-overview" viewBox="0 0 16 16">
+          <rect x="2" y="2" width="5" height="5" rx="1" />
+          <rect x="9" y="2" width="5" height="5" rx="1" />
+          <rect x="2" y="9" width="5" height="5" rx="1" />
+          <rect x="9" y="9" width="5" height="5" rx="1" />
+        </symbol>
+        <symbol id="ic-build" viewBox="0 0 16 16">
+          <path d="M8 1.5 9.5 6.5 14.5 8 9.5 9.5 8 14.5 6.5 9.5 1.5 8 6.5 6.5Z" />
+        </symbol>
+        <symbol id="ic-resources" viewBox="0 0 16 16">
+          <path d="M2 5.5 8 2.5l6 3v5l-6 3-6-3Z" />
+          <path d="M2 5.5 8 8.5l6-3M8 8.5v6" />
+        </symbol>
+        <symbol id="ic-evidence" viewBox="0 0 16 16">
+          <path d="M8 1.8 13.5 4v4c0 3.2-2.3 5.4-5.5 6.2C4.8 13.4 2.5 11.2 2.5 8V4Z" />
+          <path d="M5.8 8l1.6 1.6L10.6 6.4" />
+        </symbol>
+        <symbol id="ic-ship" viewBox="0 0 16 16">
+          <path d="M4 12 12 4M6 4h6v6" />
+        </symbol>
+        <symbol id="ic-session" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" />
+          <path d="M8 4.5V8l2.5 1.5" />
+        </symbol>
+        <symbol id="ic-history" viewBox="0 0 16 16">
+          <path d="M2.5 8a5.5 5.5 0 1 1 1.6 3.9M2.5 8V4.8M2.5 8h3.2" />
+        </symbol>
+        <symbol id="ic-gear" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="2.2" />
+          <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4" />
+        </symbol>
+        <symbol id="ic-plus" viewBox="0 0 16 16">
+          <path d="M8 3.5v9M3.5 8h9" />
+        </symbol>
+        <symbol id="ic-refresh" viewBox="0 0 16 16">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 3.5v2.7h-2.7" />
+        </symbol>
+        <symbol id="ic-more" viewBox="0 0 16 16">
+          <circle cx="3.5" cy="8" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="8" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="12.5" cy="8" r=".9" fill="currentColor" stroke="none" />
+        </symbol>
+        <symbol id="ic-check" viewBox="0 0 16 16">
+          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+        </symbol>
+        <symbol id="ic-dot" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="3" fill="currentColor" stroke="none" />
+        </symbol>
+        <symbol id="ic-circle" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="4.5" />
+        </symbol>
+      </defs>
+    </svg>
+  );
+}
+
+function Icon({ id }: { id: string }) {
+  return (
+    <svg className="i">
+      <use href={`#ic-${id}`} />
+    </svg>
+  );
+}
+
+/* ============================================================
+   Aplicação.
+   ============================================================ */
 function App() {
-  const [intent, setIntent] = useState("");
-  const [mode, setMode] = useState<BuildMode>("hybrid");
-  const [depth, setDepth] = useState<Depth>("essential");
-  const [section, setSection] = useState<(typeof navItems)[number]>("Overview");
-  const [activeSignal, setActiveSignal] = useState<IntentSignal | null>(null);
-  const [project, setProject] = useState<SemanticProjectRecord | null>(null);
+  // Projeto / recurso
   const [projects, setProjects] = useState<SemanticProjectRecord[]>([]);
-  const [projectCall, setProjectCall] =
-    useState<HostCall<SemanticProjectRecord> | null>(null);
-  const [resource, setResource] = useState<WorkspaceResource | null>(null);
+  const [project, setProject] = useState<SemanticProjectRecord | null>(null);
   const [resources, setResources] = useState<WorkspaceResource[]>([]);
-  const [preview, setPreview] = useState<BenchmarkPreviewStatus | null>(null);
-  const [previewCall, setPreviewCall] =
-    useState<HostCall<BenchmarkPreviewStatus> | null>(null);
-  const [previewFailure, setPreviewFailure] =
-    useState<PreviewFailureReport | null>(null);
-  const [effectState, setEffectState] = useState<
-    "idle" | "awaiting" | "written" | "failed"
-  >("idle");
-  const [agentSession, setAgentSession] = useState<StartedAgentSession | null>(
-    null,
-  );
-  const [agentCall, setAgentCall] =
-    useState<HostCall<StartedAgentSession> | null>(null);
-  const [agentCapability, setAgentCapability] =
-    useState<HostCall<AgentCapabilityCard> | null>(null);
-  const [agentTarget, setAgentTarget] = useState<AgentTarget>("claude");
-  const [allowAgentWorkspaceWrites, setAllowAgentWorkspaceWrites] = useState(false);
-  const [agentPrompt, setAgentPrompt] = useState(
-    "Revise a intenção e aponte o próximo risco verificável.",
-  );
-  const [agentTask, setAgentTask] = useState<HostCall<number> | null>(null);
-  const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptEntry[]>([]);
-  const [agentUsage, setAgentUsage] = useState({
-    inputTokens: 0,
-    outputTokens: 0,
-  });
-  const [modelLoop, setModelLoop] = useState<LoopTranscript | null>(null);
-  const [references, setReferences] = useState<ProjectReference[]>([]);
-  const [referenceName, setReferenceName] = useState("");
-  const [referenceEndpoint, setReferenceEndpoint] = useState("");
-  const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
-  const [terminalCall, setTerminalCall] =
-    useState<HostCall<TerminalRunStatus> | null>(null);
-  const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
-  const [hostActivity, setHostActivity] = useState<string[]>([]);
+  const [resource, setResource] = useState<WorkspaceResource | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [rawDocument, setRawDocument] = useState("");
-  const [newFilePath, setNewFilePath] = useState("");
-  const [fileEffectId, setFileEffectId] = useState<string | null>(null);
-  const [lastFileEffectId, setLastFileEffectId] = useState<string | null>(null);
-  const [workspaceDiff, setWorkspaceDiff] = useState<HostCall<WorkspaceDiff> | null>(null);
-  const [reconciliationNote, setReconciliationNote] = useState<string | null>(
-    null,
-  );
-  const [aagCall, setAagCall] = useState<HostCall<AagRelations> | null>(null);
-  const [appliedGuidance, setAppliedGuidance] = useState<AppliedGuidance[]>([]);
-  const [harness, setHarness] = useState<HostCall<HarnessReport> | null>(null);
+  const [intentDraft, setIntentDraft] = useState("");
+
+  // Navegação / abas
+  const [active, setActive] = useState<ActiveTab>({ kind: "view", view: "home" });
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [depth, setDepth] = useState<Depth>("detailed");
+  const [game, setGame] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Host / ambiente
+  const [hostAvailable, setHostAvailable] = useState(false);
   const [config, setConfig] = useState<IdeConfig | null>(null);
-  const [modeInterruption, setModeInterruption] =
-    useState<InterruptionDecision | null>(null);
-  const [semantic, setSemantic] = useState<SemanticReport | null>(null);
-  const [compiledContext, setCompiledContext] =
-    useState<HostCall<CompiledContext> | null>(null);
-  const [packs, setPacks] = useState<Pack[]>([]);
-  const [appliedPacks, setAppliedPacks] = useState<string[]>([]);
-  const [packReadiness, setPackReadiness] = useState<ReadinessVerdict | null>(
-    null,
-  );
-  const [exportManifest, setExportManifest] = useState<ExportManifest | null>(
-    null,
-  );
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+
+  // Preview
+  const [preview, setPreview] = useState<BenchmarkPreviewStatus | null>(null);
+  const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const [previewFailure, setPreviewFailure] = useState<PreviewFailureReport | null>(null);
+
+  // Agente
+  const [agentTarget, setAgentTarget] = useState<AgentTarget>("claude");
+  const [agentCapability, setAgentCapability] = useState<AgentCapabilityCard | null>(null);
+  const [agentSession, setAgentSession] = useState<StartedAgentSession | null>(null);
+  const [allowWrites, setAllowWrites] = useState(false);
+  const [conv, setConv] = useState<ConvMsg[]>([]);
+  const [composer, setComposer] = useState("");
+  const [agentUsage, setAgentUsage] = useState({ input: 0, output: 0 });
+
+  // Governança leve (evidence / ship)
+  const [harness, setHarness] = useState<HarnessReport | null>(null);
+  const [harnessNote, setHarnessNote] = useState<string | null>(null);
+  const [exportManifest, setExportManifest] = useState<ExportManifest | null>(null);
   const [publications, setPublications] = useState<PublishRecord[]>([]);
-  const [republishProblem, setRepublishProblem] = useState("");
-  const [hunks, setHunks] = useState<Hunk[]>([]);
-  const [selectedHunks, setSelectedHunks] = useState<number[]>([]);
-  const [partialPending, setPartialPending] = useState<{
-    effectId: string;
-    selected: number[];
-  } | null>(null);
-  const [guidanceName, setGuidanceName] = useState("");
-  const [guidanceText, setGuidanceText] = useState("");
-  const [gameMode, setGameMode] = useState<GameModeState>(() =>
-    createGameModeState(),
-  );
-  const signals = useMemo(() => analyzeIntent(intent), [intent]);
+
+  // Game Mode ledger (recibos independentes)
+  const [gameMode, setGameMode] = useState<GameModeState>(() => createGameModeState());
+
+  const toastTimer = useRef<number | null>(null);
+  const intent = project?.intent ?? "";
+  const signals = useMemo(() => analyzeIntent(intent || intentDraft), [intent, intentDraft]);
   const nextStep = nextStepFor(intent, signals);
-  function appendAgentTranscript(role: AgentTranscriptEntry["role"], text: string) {
-    setAgentTranscript((current) => {
+
+  /* ---- helpers de estado ---- */
+  const flash = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
+
+  const pushActivity = useCallback(
+    (kind: string, klass: NotchKind, text: string) => {
+      setActivity((current) =>
+        [
+          { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ts: clock(), kind, klass, text },
+          ...current,
+        ].slice(0, 40),
+      );
+    },
+    [],
+  );
+
+  const pushConv = useCallback((role: ConvMsg["role"], text: string) => {
+    setConv((current) => {
       const last = current.at(-1);
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       if (role === "agent" && last?.role === "agent") {
-        return [...current.slice(0, -1), { role, text: `${last.text}${text}` }];
+        return [...current.slice(0, -1), { ...last, text: `${last.text}${text}` }];
       }
-      return [...current, { role, text }];
-    });
-  }
-  async function openWorkspaceFile(
-    activeProject: SemanticProjectRecord,
-    activeResource: WorkspaceResource,
-    relativePath: string,
-  ) {
-    const result = await hostClient.readWorkspaceFile(
-      activeProject.id,
-      activeResource.id,
-      relativePath,
-    );
-    if (result.state !== "available") return;
-    setSelectedFile(result.value.relativePath);
-    setRawDocument(result.value.content);
-  }
-  async function loadWorkspaceFiles(
-    activeProject: SemanticProjectRecord,
-    activeResource: WorkspaceResource,
-  ) {
-    const result = await hostClient.listWorkspaceFiles(
-      activeProject.id,
-      activeResource.id,
-    );
-    if (result.state !== "available") return;
-    setWorkspaceFiles(result.value);
-    const initial = result.value.find(
-      (file) => file.relativePath === "project.intent.md",
-    ) ?? result.value[0];
-    if (initial) await openWorkspaceFile(activeProject, activeResource, initial.relativePath);
-    else {
-      setSelectedFile(null);
-      setRawDocument("");
-    }
-  }
-  useEffect(() => {
-    void hostClient.detectAndApplyConfigDefaults().then((result) => {
-      if (result.state === "available") setConfig(result.value);
-      else
-        void hostClient.getConfig().then((current) => {
-          if (current.state === "available") setConfig(current.value);
-        });
+      return [...current, { id, role, text }];
     });
   }, []);
-  async function toggleConfig(
-    patch: Parameters<typeof hostClient.setConfig>[0],
-  ) {
-    const result = await hostClient.setConfig(patch);
-    if (result.state === "available") setConfig(result.value);
-  }
-  function toConfigMode(value: BuildMode): ConfigBuildMode {
-    return value === "full-vibes" ? "full_vibes" : value;
-  }
-  async function selectMode(next: BuildMode) {
-    setMode(next);
-    const result = await hostClient.setConfig({ mode: toConfigMode(next) });
-    if (result.state === "available") setConfig(result.value);
-  }
-  useEffect(() => {
-    void hostClient.modeInterruptionPolicy("durable").then((result) => {
-      if (result.state === "available") setModeInterruption(result.value);
+
+  /* ---- carga de arquivos ---- */
+  const loadWorkspaceFiles = useCallback(
+    async (activeProject: SemanticProjectRecord, activeResource: WorkspaceResource) => {
+      const result = await hostClient.listWorkspaceFiles(activeProject.id, activeResource.id);
+      if (result.state === "available") setWorkspaceFiles(result.value);
+    },
+    [],
+  );
+
+  const openFile = useCallback(
+    async (path: string) => {
+      if (!project || !resource) return;
+      const existing = openFiles.find((file) => file.path === path);
+      if (existing) {
+        setActive({ kind: "file", path });
+        return;
+      }
+      const result = await hostClient.readWorkspaceFile(project.id, resource.id, path);
+      const content = result.state === "available" ? result.value.content : "";
+      setOpenFiles((current) => [
+        ...current,
+        { path, content, saved: content, effectId: null, awaiting: false },
+      ]);
+      setActive({ kind: "file", path });
+      if (result.state !== "available") {
+        flash("O host não leu o arquivo; abrindo buffer vazio.");
+      }
+    },
+    [project, resource, openFiles, flash],
+  );
+
+  const closeFile = useCallback(
+    (path: string) => {
+      setOpenFiles((current) => current.filter((file) => file.path !== path));
+      setActive((current) => {
+        if (current.kind === "file" && current.path === path) {
+          return { kind: "view", view: "build" };
+        }
+        return current;
+      });
+    },
+    [],
+  );
+
+  const editActiveFile = useCallback((path: string, content: string) => {
+    setOpenFiles((current) =>
+      current.map((file) => (file.path === path ? { ...file, content } : file)),
+    );
+  }, []);
+
+  /* ---- projetos ---- */
+  const openProject = useCallback(
+    async (projectId: string) => {
+      const result = await hostClient.openSemanticProject(projectId);
+      if (result.state !== "available" || !result.value) return;
+      setProject(result.value.project);
+      setResources(result.value.resources);
+      const first = result.value.resources[0] ?? null;
+      setResource(first);
+      setOpenFiles([]);
+      setConv([]);
+      setAgentSession(null);
+      setPreview(null);
+      setPreviewFailure(null);
+      setHarness(null);
+      setActive({ kind: "view", view: "home" });
+      if (first) await loadWorkspaceFiles(result.value.project, first);
+      else setWorkspaceFiles([]);
+      pushActivity("PROJETO", "ck", `Projeto aberto: ${result.value.project.title}`);
+    },
+    [loadWorkspaceFiles, pushActivity],
+  );
+
+  const createProject = useCallback(async () => {
+    const text = intentDraft.trim();
+    if (!text) return;
+    const result = await hostClient.createSemanticProject({
+      projectId: projectIdentity(text),
+      title: projectTitle(text),
+      intent: text,
     });
-  }, [mode, config]);
-  useEffect(() => {
-    if (!intent.trim()) {
-      setSemantic(null);
+    if (result.state !== "available") {
+      flash(
+        result.state === "unavailable"
+          ? "Abra o app desktop para persistir o projeto."
+          : `O host recusou o projeto: ${result.message}`,
+      );
       return;
     }
-    const handle = window.setTimeout(() => {
-      void hostClient.evaluateIntent(intent).then((result) => {
-        if (result.state === "available") setSemantic(result.value);
-      });
-    }, 400);
-    return () => window.clearTimeout(handle);
-  }, [intent]);
-  useEffect(() => {
-    void hostClient.listSemanticProjects().then((result) => {
-      if (result.state !== "available") return;
-      setProjects(result.value);
-      if (result.value[0]) void openProject(result.value[0].id);
-    });
-  }, []);
-  useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-    void hostClient
-      .listenHostEvents((event) => {
-        if (event.kind === "workspaceEffect") {
-          const phaseLabel =
-            event.phase === "awaitingApproval"
-              ? "efeito aguardando aprovação"
-              : event.phase === "written"
-                ? "efeito aplicado"
-                : "efeito revertido";
-          const causal = event.activityId
-            ? ` · atividade ${event.activityId}`
-            : "";
-          setHostActivity((current) =>
-            [
-              `${phaseLabel}: ${event.effectId ?? ""}${event.path ? ` (${event.path})` : ""}${causal}`,
-              ...current,
-            ].slice(0, 6),
-          );
-          return;
-        }
-        const detail =
-          event.line ??
-          event.message ??
-          event.detail ??
-          event.health ??
-          event.kind;
-        setHostActivity((current) =>
-          [`${event.kind}: ${detail}`, ...current].slice(0, 4),
-        );
-        if (event.extension !== "pty") return;
-        const terminalLine = event.line;
-        if (event.kind === "processOutput" && terminalLine !== undefined) {
-          setTerminalOutput((current) =>
-            [...current, terminalLine.slice(0, 16 * 1024)].slice(-500),
-          );
-        }
-        if (event.kind === "processExited") {
-          setTerminalOutput((current) => [
-            ...current,
-            `\n[processo encerrado: ${event.exitCode ?? "sem código"}]`,
-          ]);
-        }
-      })
-      .then((stop) => {
-        unsubscribe = stop;
-      });
-    return () => unsubscribe?.();
-  }, []);
-  useEffect(() => {
-    if (!resource) return;
-    void hostClient.agentCapabilityCard(agentTarget).then(setAgentCapability);
-  }, [agentTarget, resource]);
-  useEffect(() => {
-    if (!agentSession) return;
-    let active = true;
-    const timer = window.setInterval(() => {
-      void hostClient.nextAgentEvent(agentSession.sessionId).then((result) => {
-        if (!active || result.state !== "available") return;
-        const event = result.value;
-        if (!event) return;
-        if ("MessageDelta" in event) {
-          appendAgentTranscript("agent", event.MessageDelta.text);
-        } else {
-          appendAgentTranscript("system", describeAgentEvent(event));
-        }
-        if ("Usage" in event) {
-          setAgentUsage((current) => ({
-            inputTokens: current.inputTokens + event.Usage.input_tokens,
-            outputTokens: current.outputTokens + event.Usage.output_tokens,
-          }));
-        }
-        if (("Diff" in event || "Artifact" in event) && project && resource) {
-          void loadWorkspaceFiles(project, resource);
-        }
-        setHostActivity((current) =>
-          [describeAgentEvent(event), ...current].slice(0, 4),
-        );
-      });
-    }, 500);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [agentSession, project, resource]);
-  useEffect(() => {
-    void hostClient
-      .guidanceAppliedNow({
-        projectId: project?.id ?? null,
-        resourceId: resource?.id ?? null,
-        sessionId: agentSession?.sessionId ?? null,
-        application: null,
-      })
-      .then((result) => {
-        if (result.state === "available") setAppliedGuidance(result.value);
-      });
-  }, [project, resource, agentSession]);
-  useEffect(() => {
-    if (!preview || preview.health === "stopped") return;
-    let active = true;
-    const timer = window.setInterval(() => {
-      void hostClient.pollBenchmarkPreview().then((result) => {
-        if (!active || result.state !== "available" || !result.value) return;
-        setPreview(result.value);
-      });
-    }, 1000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [preview]);
-  useEffect(() => {
-    if (!terminal || terminal.state !== "running") return;
-    let active = true;
-    const timer = window.setInterval(() => {
-      void hostClient.pollWorkspaceTerminal(terminal.terminalId).then((result) => {
-        if (!active || result.state !== "available") return;
-        if (result.value.state === "stopped") setTerminal(result.value);
-      });
-    }, 250);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [terminal]);
-  function useSignal(signal: IntentSignal) {
-    setActiveSignal(signal);
-    setSection("Build");
-  }
-  async function openProject(projectId: string) {
-    const result = await hostClient.openSemanticProject(projectId);
-    if (result.state !== "available" || !result.value) return;
-    setProject(result.value.project);
-    const restoredResource = result.value.resources[0] ?? null;
-    setResource(restoredResource);
-    setResources(result.value.resources);
-    setIntent(result.value.project.intent);
-    setAgentSession(null);
-    setAgentTranscript([]);
-    setSection("Overview");
-    if (restoredResource) await loadWorkspaceFiles(result.value.project, restoredResource);
-  }
-  function startNewProject() {
-    setProject(null);
-    setResource(null);
+    setProjects((current) => [
+      result.value,
+      ...current.filter((candidate) => candidate.id !== result.value.id),
+    ]);
+    setProject(result.value);
     setResources([]);
-    setIntent("");
-    setAgentSession(null);
-    setAgentTranscript([]);
+    setResource(null);
     setWorkspaceFiles([]);
-    setSelectedFile(null);
-    setRawDocument("");
-    setSection("Overview");
-  }
-  async function createProject() {
-    const projectId = projectIdentity(intent);
-    const result = await hostClient.createSemanticProject({
-      projectId,
-      title: projectTitle(intent),
-      intent,
-    });
-    setProjectCall(result);
-    if (result.state === "available") {
-      setProject(result.value);
-      setProjects((current) => [
-        result.value,
-        ...current.filter((candidate) => candidate.id !== result.value.id),
-      ]);
-      setSection("Build");
-    }
-  }
-  async function attachWorkspace() {
+    setIntentDraft("");
+    setActive({ kind: "view", view: "home" });
+    pushActivity("INTENÇÃO", "ck", `Intenção declarada: ${projectTitle(text)}`);
+  }, [intentDraft, flash, pushActivity]);
+
+  const startNewProject = useCallback(() => {
+    setProject(null);
+    setResources([]);
+    setResource(null);
+    setWorkspaceFiles([]);
+    setOpenFiles([]);
+    setConv([]);
+    setIntentDraft("");
+    setActive({ kind: "view", view: "home" });
+  }, []);
+
+  const attachWorkspace = useCallback(async () => {
     if (!project) return;
     const result = await hostClient.attachWorkspaceFromPicker(project.id);
-    if (result.state === "available" && result.value) {
-      const attachedResource = result.value;
-      setResource(attachedResource);
-      setResources((current) => [
-        attachedResource,
-        ...current.filter((candidate) => candidate.id !== attachedResource.id),
-      ]);
-      await loadWorkspaceFiles(project, attachedResource);
+    if (result.state !== "available") {
+      flash(
+        result.state === "unavailable"
+          ? "O seletor de diretório só existe no app desktop."
+          : `O host recusou anexar: ${result.message}`,
+      );
+      return;
     }
-  }
-  async function selectResource(nextResource: WorkspaceResource) {
-    if (!project) return;
-    setResource(nextResource);
-    setAgentSession(null);
-    setAgentTranscript([]);
-    await loadWorkspaceFiles(project, nextResource);
-  }
-  async function startPreview() {
+    if (!result.value) return;
+    const attached = result.value;
+    setResources((current) => [
+      attached,
+      ...current.filter((candidate) => candidate.id !== attached.id),
+    ]);
+    setResource(attached);
+    await loadWorkspaceFiles(project, attached);
+    pushActivity("EDIÇÃO", "ed", `Diretório anexado: ${attached.canonicalPath}`);
+  }, [project, flash, loadWorkspaceFiles, pushActivity]);
+
+  /* ---- gravação de arquivo (propose / approve) ---- */
+  const proposeFile = useCallback(
+    async (file: OpenFile, effectId: string) => {
+      if (!project || !resource) return;
+      const result = await hostClient.proposeWorkspaceWrite(project.id, {
+        resourceId: resource.id,
+        effectId,
+        relativePath: file.path,
+        content: file.content,
+      });
+      if (result.state !== "available") {
+        flash(
+          result.state === "unavailable"
+            ? "Efeitos de escrita exigem o app desktop."
+            : `O host recusou a escrita: ${result.message}`,
+        );
+        return;
+      }
+      if (result.value.written) {
+        setOpenFiles((current) =>
+          current.map((entry) =>
+            entry.path === file.path
+              ? { ...entry, saved: entry.content, effectId, awaiting: false }
+              : entry,
+          ),
+        );
+        await loadWorkspaceFiles(project, resource);
+        pushActivity("CHECKPOINT", "ck", `${file.path} gravado com snapshot reversível.`);
+        flash(`${file.path} gravado.`);
+      } else {
+        setOpenFiles((current) =>
+          current.map((entry) =>
+            entry.path === file.path ? { ...entry, effectId, awaiting: true } : entry,
+          ),
+        );
+        pushActivity("DECISÃO", "dc", `${file.path} aguarda sua aprovação para gravar.`);
+      }
+    },
+    [project, resource, flash, loadWorkspaceFiles, pushActivity],
+  );
+
+  const saveFile = useCallback(
+    async (file: OpenFile) => {
+      const effectId = `edit-${project?.id ?? "workspace"}-${Date.now()}`;
+      await proposeFile(file, effectId);
+    },
+    [project, proposeFile],
+  );
+
+  const approveFile = useCallback(
+    async (file: OpenFile) => {
+      if (!project || !resource || !file.effectId) return;
+      const approval = await hostClient.approveNextWorkspaceWrite(project.id, resource.id);
+      if (approval.state !== "available") {
+        flash("O host não confirmou a aprovação.");
+        return;
+      }
+      await proposeFile(file, file.effectId);
+    },
+    [project, resource, flash, proposeFile],
+  );
+
+  const createNewFile = useCallback(() => {
+    const path = window.prompt("Novo arquivo (caminho relativo):", "src/nota.md");
+    if (!path) return;
+    const clean = path.trim();
+    if (!clean) return;
+    setOpenFiles((current) => {
+      if (current.some((file) => file.path === clean)) return current;
+      return [...current, { path: clean, content: "", saved: "", effectId: null, awaiting: false }];
+    });
+    setActive({ kind: "file", path: clean });
+  }, []);
+
+  /* ---- preview ---- */
+  const startPreview = useCallback(async () => {
     if (!project) return;
     const result = await hostClient.startBenchmarkPreview(project.id);
-    setPreviewCall(result);
-    if (result.state === "available") {
-      setPreview(result.value);
-      setPreviewFailure(null);
+    if (result.state !== "available") {
+      setPreviewNote(
+        result.state === "unavailable"
+          ? "O preview de referência só inicia pelo app desktop; nenhum servidor foi iniciado no preview web."
+          : `O host não iniciou o preview: ${result.message}`,
+      );
+      return;
     }
-  }
-  async function capturePreviewFailure() {
+    setPreview(result.value);
+    setPreviewFailure(null);
+    setPreviewNote(null);
+    pushActivity("EDIÇÃO", "ed", `Preview iniciado em ${result.value.url}`);
+  }, [project, pushActivity]);
+
+  const capturePreviewFailure = useCallback(async () => {
     if (!project || !resource) return;
     const result = await hostClient.stopAndCaptureBenchmarkPreviewFailure(
       project.id,
       resource.id,
-      `${project.id}-intent`,
+      `${project.id}-preview`,
     );
-    if (result.state === "available") {
+    if (result.state === "available" && result.value) {
       setPreview(null);
       setPreviewFailure(result.value);
+      pushActivity("EVIDENCE", "ev", result.value.failure.message);
+    } else {
+      flash("Nenhuma falha de preview foi capturada.");
     }
-  }
-  async function reconcilePreview(
-    action:
-      "change_implementation" | "change_intent" | "accept_preview_exception",
-  ) {
-    if (!previewFailure) return;
-    const result = await hostClient.reconcileBenchmarkPreviewFailure(
-      previewFailure.divergence.id,
-      action,
-    );
-    if (result.state === "available") {
-      setReconciliationNote(
+  }, [project, resource, flash, pushActivity]);
+
+  const reconcilePreview = useCallback(
+    async (action: "change_implementation" | "change_intent" | "accept_preview_exception") => {
+      if (!previewFailure) return;
+      const result = await hostClient.reconcileBenchmarkPreviewFailure(
+        previewFailure.divergence.id,
+        action,
+      );
+      if (result.state !== "available") return;
+      flash(
         result.value.status === "accepted_scoped_exception"
           ? "Exceção limitada registrada; a evidência continua acessível."
-          : "Reconciliação registrada e pendente de nova verificação independente.",
+          : "Reconciliação registrada, pendente de nova verificação.",
       );
       const transition = recordOutcome(
         gameMode,
@@ -535,9 +574,7 @@ function App() {
               id: previewFailure.failure.evidenceId,
               source: "reconciliation-engine",
               verifiedBy: "host:reconciliation",
-              observedAt: new Date(
-                previewFailure.failure.observedAtMs,
-              ).toISOString(),
+              observedAt: new Date(previewFailure.failure.observedAtMs).toISOString(),
               summary: previewFailure.failure.message,
             },
           ],
@@ -545,1614 +582,1262 @@ function App() {
         new Date().toISOString(),
       );
       setGameMode(transition.state);
-    }
-  }
-  async function proposeProjectIntent() {
-    if (!project || !resource) return;
-    const result = await hostClient.proposeWorkspaceWrite(project.id, {
-      resourceId: resource.id,
-      effectId: `${project.id}-intent`,
-      relativePath: "project.intent.md",
-      content: `# Intenção do projeto\n\n${intent}\n\nModo: ${mode}\n`,
-    });
-    if (result.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    setEffectState(result.value.written ? "written" : "awaiting");
-    if (result.value.written) {
-      const updated = await hostClient.updateSemanticProjectIntent(project.id, intent);
-      if (updated.state === "available") {
-        setProject(updated.value);
-        setProjects((current) => [
-          updated.value,
-          ...current.filter((candidate) => candidate.id !== updated.value.id),
-        ]);
-      }
-      await loadWorkspaceFiles(project, resource);
-    }
-  }
-  async function approveProjectIntent() {
-    if (!project || !resource) return;
-    const approved = await hostClient.approveNextWorkspaceWrite(
-      project.id,
-      resource.id,
-    );
-    if (approved.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    await proposeProjectIntent();
-  }
-  async function rollbackProjectIntent() {
-    if (!project || !resource) return;
-    const result = await hostClient.rollbackWorkspaceWrite(
-      project.id,
-      resource.id,
-      `${project.id}-intent`,
-    );
-    if (result.state === "available") {
-      setEffectState("idle");
-      setPreview(null);
       setPreviewFailure(null);
-    } else {
-      setEffectState("failed");
-    }
-  }
-  async function proposeSelectedFile(effectId: string) {
-    if (!project || !resource || !selectedFile) return;
-    const result = await hostClient.proposeWorkspaceWrite(project.id, {
-      resourceId: resource.id,
-      effectId,
-      relativePath: selectedFile,
-      content: rawDocument,
-    });
-    if (result.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    setEffectState(result.value.written ? "written" : "awaiting");
-    if (result.value.written) {
-      setLastFileEffectId(effectId);
-      setFileEffectId(null);
-      await loadWorkspaceFiles(project, resource);
-    }
-  }
-  async function saveWorkspaceFile() {
-    const effectId = `edit-${project?.id ?? "workspace"}-${Date.now()}`;
-    setFileEffectId(effectId);
-    await proposeSelectedFile(effectId);
-  }
-  async function saveWorkspaceFileYolo() {
-    if (!project || !resource || !selectedFile) return;
-    const effectId = `yolo-${project.id}-${Date.now()}`;
-    const result = await hostClient.applyWorkspaceWriteYolo(project.id, {
-      resourceId: resource.id,
-      effectId,
-      relativePath: selectedFile,
-      content: rawDocument,
-    });
-    if (result.state === "available" && result.value.written) {
-      setLastFileEffectId(effectId);
-      setEffectState("written");
-      await loadWorkspaceFiles(project, resource);
-    } else if (result.state === "failed") {
-      setEffectState("failed");
-    }
-  }
-  function beginNewWorkspaceFile() {
-    const path = newFilePath.trim();
-    if (!path) return;
-    setSelectedFile(path);
-    setRawDocument("");
-    setNewFilePath("");
-  }
-  async function refreshAppliedGuidance() {
-    const result = await hostClient.guidanceAppliedNow({
-      projectId: project?.id ?? null,
-      resourceId: resource?.id ?? null,
-      sessionId: agentSession?.sessionId ?? null,
-      application: null,
-    });
-    if (result.state === "available") setAppliedGuidance(result.value);
-  }
-  async function captureGuidance(destination: CaptureDestination) {
-    const name = guidanceName.trim();
-    const text = guidanceText.trim();
-    if (!name || !text) return;
-    const scope = project
-      ? ({ kind: "project", project_id: project.id } as const)
-      : ({ kind: "person" } as const);
-    const result = await hostClient.captureGuidance(
-      {
-        name,
-        text,
-        guidanceType: "preference",
-        scope,
-        application: "general",
-        strength: "default",
-        owner: "local.owner",
-        provenance: "capturado na IDE",
-      },
-      destination,
-    );
-    if (result.state === "available") {
-      setGuidanceName("");
-      setGuidanceText("");
-      await refreshAppliedGuidance();
-    }
-  }
-  useEffect(() => {
-    if (!project) {
-      setReferences([]);
-      return;
-    }
-    void hostClient.listProjectReferences(project.id).then((result) => {
-      if (result.state === "available") setReferences(result.value);
-    });
-  }, [project]);
-  useEffect(() => {
-    void hostClient.listPacks().then((result) => {
-      if (result.state === "available") setPacks(result.value);
-    });
-    void hostClient.appliedPacks().then((result) => {
-      if (result.state === "available") setAppliedPacks(result.value);
-    });
-  }, []);
-  async function togglePack(pack: Pack) {
-    const isApplied = appliedPacks.includes(pack.id);
-    const result = isApplied
-      ? await hostClient.revertPack(pack.id)
-      : await hostClient.applyPack(pack.id);
-    if (result.state === "available") setAppliedPacks(result.value);
-  }
-  async function checkPackReadiness(pack: Pack) {
-    const result = await hostClient.packReadiness(pack.id, [], []);
-    if (result.state === "available") setPackReadiness(result.value);
-  }
-  async function exportProject() {
-    if (!project) return;
-    const result = await hostClient.exportProject(project.id);
-    if (result.state === "available") setExportManifest(result.value);
-  }
-  async function publishProject() {
-    if (!project) return;
-    const result = await hostClient.publishProject(project.id);
-    if (result.state === "available") {
-      const history = await hostClient.publishHistory(project.id);
-      if (history.state === "available") setPublications(history.value);
-    }
-  }
-  async function republishProject() {
-    if (!project || !republishProblem.trim()) return;
-    const result = await hostClient.republishProject(
-      project.id,
-      republishProblem.trim(),
-      resource ? [resource.id] : [],
-    );
-    if (result.state === "available") {
-      setRepublishProblem("");
-      const history = await hostClient.publishHistory(project.id);
-      if (history.state === "available") setPublications(history.value);
-    }
-  }
-  async function loadCompiledContext() {
-    if (!project) return;
-    setCompiledContext(
-      await hostClient.compileAgentContext(
-        project.id,
-        resource?.id,
-        agentSession?.sessionId,
-      ),
-    );
-  }
-  async function refreshReferences(projectId: string) {
-    const result = await hostClient.listProjectReferences(projectId);
-    if (result.state === "available") setReferences(result.value);
-  }
-  async function linkReference(kind: "service" | "environment") {
-    if (!project || !referenceName.trim() || !referenceEndpoint.trim()) return;
-    const id = `${kind}:${referenceName.trim().toLowerCase().replace(/\s+/g, "-")}`;
-    const result = await hostClient.linkReference(
-      id,
-      kind,
-      referenceName.trim(),
-      referenceEndpoint.trim(),
-      project.id,
-    );
-    if (result.state === "available") {
-      setReferenceName("");
-      setReferenceEndpoint("");
-      await refreshReferences(project.id);
-    }
-  }
-  async function runModelLoop() {
-    const result = await hostClient.runModelLoop(agentPrompt || intent, 3);
-    if (result.state === "available") setModelLoop(result.value);
-  }
-  async function runHarness() {
-    if (!project || !resource) return;
-    setHarness(await hostClient.runHarnessLayer0(project.id, resource.id));
-  }
-  async function queryAagRelations() {
-    const subject = selectedFile ?? project?.title;
-    if (!subject) return;
-    setAagCall(await hostClient.aagRelations(subject));
-  }
-  async function loadHunks() {
-    if (!project || !resource || !selectedFile) return;
-    const result = await hostClient.workspaceFileDiff(
-      project.id,
-      resource.id,
-      selectedFile,
-      rawDocument,
-    );
-    if (result.state === "available") {
-      setHunks(result.value);
-      setSelectedHunks(result.value.map((hunk) => hunk.id));
-    }
-  }
-  function toggleHunk(id: number) {
-    setSelectedHunks((current) =>
-      current.includes(id)
-        ? current.filter((value) => value !== id)
-        : [...current, id],
-    );
-  }
-  async function proposePartial() {
-    if (!project || !resource || !selectedFile) return;
-    const effectId = `partial-${project.id}-${Date.now()}`;
-    const result = await hostClient.proposePartialWorkspaceWrite(
-      project.id,
-      {
-        resourceId: resource.id,
-        effectId,
-        relativePath: selectedFile,
-        content: rawDocument,
-      },
-      selectedHunks,
-    );
-    if (result.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    if (result.value.written) {
-      setLastFileEffectId(effectId);
-      setPartialPending(null);
-      setHunks([]);
-      setEffectState("written");
-      await loadWorkspaceFiles(project, resource);
-    } else {
-      setPartialPending({ effectId, selected: selectedHunks });
-      setEffectState("awaiting");
-    }
-  }
-  async function approvePartial() {
-    if (!project || !resource || !selectedFile || !partialPending) return;
-    const approval = await hostClient.approveNextWorkspaceWrite(
-      project.id,
-      resource.id,
-    );
-    if (approval.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    const result = await hostClient.proposePartialWorkspaceWrite(
-      project.id,
-      {
-        resourceId: resource.id,
-        effectId: partialPending.effectId,
-        relativePath: selectedFile,
-        content: rawDocument,
-      },
-      partialPending.selected,
-    );
-    if (result.state === "available" && result.value.written) {
-      setLastFileEffectId(partialPending.effectId);
-      setPartialPending(null);
-      setHunks([]);
-      setEffectState("written");
-      await loadWorkspaceFiles(project, resource);
-    }
-  }
-  async function inspectWorkspaceDiff() {
-    if (!project || !resource) return;
-    setWorkspaceDiff(await hostClient.workspaceDiff(project.id, resource.id));
-  }
-  async function approveWorkspaceFile() {
-    if (!project || !resource || !fileEffectId) return;
-    const approval = await hostClient.approveNextWorkspaceWrite(project.id, resource.id);
-    if (approval.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    await proposeSelectedFile(fileEffectId);
-  }
-  async function rollbackSelectedFile() {
-    if (!project || !resource || !lastFileEffectId) return;
-    const result = await hostClient.rollbackWorkspaceWrite(
-      project.id,
-      resource.id,
-      lastFileEffectId,
-    );
-    if (result.state !== "available") {
-      setEffectState("failed");
-      return;
-    }
-    setLastFileEffectId(null);
-    setEffectState("idle");
-    await loadWorkspaceFiles(project, resource);
-  }
-  async function startAgentSession() {
-    if (!project || !resource) return;
+      pushActivity("DECISÃO", "dc", `Divergência reconciliada (${action}).`);
+    },
+    [previewFailure, gameMode, flash, pushActivity],
+  );
+
+  /* ---- agente ---- */
+  const ensureAgentSession = useCallback(async (): Promise<StartedAgentSession | null> => {
+    if (agentSession) return agentSession;
+    if (!project || !resource) return null;
     const result = await hostClient.startAgentSession(
       agentTarget,
       project.id,
       resource.id,
-      allowAgentWorkspaceWrites,
+      allowWrites,
     );
-    setAgentCall(result);
-    if (result.state === "available") {
-      setAgentSession(result.value);
-      setAgentUsage({ inputTokens: 0, outputTokens: 0 });
-      setAgentTranscript([
-        {
-          role: "system",
-          text: allowAgentWorkspaceWrites
-            ? "Sessão conectada com escrita no workspace explicitamente habilitada. As permissões do adapter externo são exibidas no Context Dock."
-            : "Sessão conectada em leitura. O agente recebe o workspace anexado e sua intenção; escrita continua fora desta sessão.",
-        },
-      ]);
+    if (result.state !== "available") {
+      pushConv(
+        "sys",
+        result.state === "unavailable"
+          ? "Nenhum host: conecte pelo app desktop para trabalhar com o agente."
+          : `O adapter recusou a sessão: ${result.message}`,
+      );
+      return null;
     }
-  }
-  async function cancelAgentSession() {
+    setAgentSession(result.value);
+    setAgentUsage({ input: 0, output: 0 });
+    pushActivity("EDIÇÃO", "ed", `Sessão ${agentTarget} conectada (${result.value.readOnly ? "leitura" : "escrita"}).`);
+    return result.value;
+  }, [agentSession, project, resource, agentTarget, allowWrites, pushConv, pushActivity]);
+
+  const disconnectAgent = useCallback(async () => {
     if (!agentSession) return;
     await hostClient.cancelAgentSession(agentSession.sessionId);
     setAgentSession(null);
-  }
-  async function submitAgentTask() {
-    if (!agentSession) return;
-    const prompt = `Intenção atual do projeto:\n${intent}\n\nPedido do usuário:\n${agentPrompt}\n\n${agentSession.readOnly ? "Não altere arquivos; explique, investigue e proponha os próximos passos." : "Você pode alterar arquivos somente dentro do workspace anexado para executar este pedido."}`;
-    appendAgentTranscript("user", agentPrompt);
-    const result = await hostClient.submitAgentTask(
-      agentSession.sessionId,
-      prompt,
-      !agentSession.readOnly,
-    );
-    setAgentTask(result);
-    if (result.state === "failed") {
-      appendAgentTranscript("system", `O host recusou a tarefa: ${result.message}`);
-    }
-  }
-  async function startWorkspaceTerminal() {
-    if (!project || !resource) return;
-    const result = await hostClient.startWorkspaceTerminal(
-      project.id,
-      resource.id,
-    );
-    setTerminalCall(result);
-    if (result.state === "available") {
-      setTerminalOutput([]);
-      setTerminal(result.value);
-      void hostClient.resizeWorkspaceTerminal(result.value.terminalId, 24, 120);
-    }
-  }
-  async function cancelWorkspaceInspection() {
-    if (!terminal) return;
-    await hostClient.cancelWorkspaceInspection(terminal.terminalId);
-    setTerminal({
-      ...terminal,
-      state: "stopped",
-      detail: "A sessão foi encerrada e a saída bruta permanece disponível acima.",
-    });
-  }
-  async function submitTerminalInput(input: string) {
-    if (!terminal) return;
-    const result = await hostClient.writeWorkspaceTerminal(
-      terminal.terminalId,
-      input,
-    );
-    if (result.state === "failed") {
-      setTerminalOutput((current) => [
-        ...current,
-        `[host recusou entrada: ${result.message}]`,
-      ]);
-    }
-  }
+    pushConv("sys", "Sessão do agente encerrada.");
+  }, [agentSession, pushConv]);
 
+  const submitComposer = useCallback(async () => {
+    const text = composer.trim();
+    if (!text) return;
+    if (!project) {
+      flash("Crie um projeto antes de conversar com o agente.");
+      return;
+    }
+    if (!resource) {
+      pushConv("user", text);
+      pushConv("sys", "Anexe um diretório para dar contexto ao agente. Nada foi enviado.");
+      setComposer("");
+      return;
+    }
+    pushConv("user", text);
+    setComposer("");
+    const session = await ensureAgentSession();
+    if (!session) return;
+    const prompt = `Intenção do projeto:\n${intent}\n\nPedido:\n${text}\n\n${
+      session.readOnly
+        ? "Não altere arquivos; investigue e proponha os próximos passos verificáveis."
+        : "Você pode alterar arquivos somente dentro do workspace anexado."
+    }`;
+    const result = await hostClient.submitAgentTask(session.sessionId, prompt, !session.readOnly);
+    if (result.state !== "available") {
+      pushConv("sys", `O host recusou a tarefa: ${result.state === "failed" ? result.message : "host indisponível"}.`);
+    }
+  }, [composer, project, resource, intent, ensureAgentSession, pushConv, flash]);
+
+  /* ---- evidence / ship ---- */
+  const runHarness = useCallback(async () => {
+    if (!project || !resource) return;
+    const result = await hostClient.runHarnessLayer0(project.id, resource.id);
+    if (result.state !== "available") {
+      setHarnessNote(
+        result.state === "unavailable"
+          ? "Abra o app desktop para rodar os checks determinísticos."
+          : `O host recusou os checks: ${result.message}`,
+      );
+      setHarness(null);
+      return;
+    }
+    setHarness(result.value);
+    setHarnessNote(null);
+    pushActivity("EVIDENCE", "ev", `Harness: ${result.value.passed} ok · ${result.value.failed} falhas.`);
+    if (result.value.failed === 0 && result.value.passed > 0) {
+      const transition = recordOutcome(
+        gameMode,
+        {
+          id: `harness:${project.id}:${Date.now()}`,
+          category: "finding-resolved",
+          summary: "Checks determinísticos passaram sem falhas.",
+          proposedBy: "user:local",
+          evidence: [
+            {
+              id: `harness-run-${Date.now()}`,
+              source: "test-run",
+              verifiedBy: "host:harness",
+              observedAt: new Date().toISOString(),
+              summary: `${result.value.passed} checks aprovados.`,
+            },
+          ],
+        },
+        new Date().toISOString(),
+      );
+      setGameMode(transition.state);
+    }
+  }, [project, resource, gameMode, pushActivity]);
+
+  const exportProject = useCallback(async () => {
+    if (!project) return;
+    const result = await hostClient.exportProject(project.id);
+    if (result.state === "available") {
+      setExportManifest(result.value);
+      flash(`v${result.value.version} exportada.`);
+    } else {
+      flash("Export disponível apenas no app desktop.");
+    }
+  }, [project, flash]);
+
+  const publishProject = useCallback(async () => {
+    if (!project) return;
+    const result = await hostClient.publishProject(project.id);
+    if (result.state !== "available") {
+      flash("Publish disponível apenas no app desktop.");
+      return;
+    }
+    const history = await hostClient.publishHistory(project.id);
+    if (history.state === "available") setPublications(history.value);
+    pushActivity("CHECKPOINT", "ck", `Projeto publicado (v${result.value.version}).`);
+  }, [project, flash, pushActivity]);
+
+  /* ============================================================
+     Efeitos: carga inicial, subscrição de eventos, polls.
+     ============================================================ */
+  useEffect(() => {
+    void hostClient.status().then((result) => setHostAvailable(result.state === "available"));
+    void hostClient.getConfig().then((result) => {
+      if (result.state === "available") setConfig(result.value);
+    });
+    void hostClient.listSemanticProjects().then((result) => {
+      if (result.state !== "available") return;
+      setProjects(result.value);
+      if (result.value[0]) void openProject(result.value[0].id);
+    });
+  }, [openProject]);
+
+  useEffect(() => {
+    document.body.classList.toggle("game", game);
+  }, [game]);
+
+  // Subscrição de eventos do host -> atividade + saúde do preview.
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+    void hostClient
+      .listenHostEvents((event) => {
+        if (event.kind === "workspaceEffect") {
+          const label =
+            event.phase === "awaitingApproval"
+              ? "DECISÃO"
+              : event.phase === "rolledBack"
+                ? "CHECKPOINT"
+                : "CHECKPOINT";
+          const klass: NotchKind = event.phase === "awaitingApproval" ? "dc" : "ck";
+          pushActivity(
+            label,
+            klass,
+            `${event.effectId ?? "efeito"}${event.path ? ` (${event.path})` : ""}`,
+          );
+          return;
+        }
+        if (event.extension === "preview" && event.health) {
+          pushActivity("EDIÇÃO", "ed", `Preview: ${event.health}`);
+          return;
+        }
+        const detail = event.message ?? event.detail ?? event.line ?? event.health ?? event.kind;
+        pushActivity("EDIÇÃO", "ed", `${event.kind}: ${detail}`);
+      })
+      .then((stop) => {
+        unsubscribe = stop;
+      });
+    return () => unsubscribe?.();
+  }, [pushActivity]);
+
+  // Capability card do agente sempre que alvo/recurso mudam.
+  useEffect(() => {
+    if (!resource) {
+      setAgentCapability(null);
+      return;
+    }
+    void hostClient.agentCapabilityCard(agentTarget).then((result) => {
+      setAgentCapability(result.state === "available" ? result.value : null);
+    });
+  }, [agentTarget, resource]);
+
+  // Poll de eventos do agente.
+  useEffect(() => {
+    if (!agentSession) return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      void hostClient.nextAgentEvent(agentSession.sessionId).then((result) => {
+        if (!live || result.state !== "available" || !result.value) return;
+        const event = result.value;
+        if ("MessageDelta" in event) pushConv("agent", event.MessageDelta.text);
+        else pushConv("sys", describeAgentEvent(event));
+        if ("Usage" in event) {
+          setAgentUsage((current) => ({
+            input: current.input + event.Usage.input_tokens,
+            output: current.output + event.Usage.output_tokens,
+          }));
+        }
+        if (("Diff" in event || "Artifact" in event) && project && resource) {
+          void loadWorkspaceFiles(project, resource);
+          pushActivity("EDIÇÃO", "ed", describeAgentEvent(event));
+        }
+      });
+    }, 500);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [agentSession, project, resource, pushConv, pushActivity, loadWorkspaceFiles]);
+
+  // Poll de saúde do preview.
+  useEffect(() => {
+    if (!preview || preview.health === "stopped") return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      void hostClient.pollBenchmarkPreview().then((result) => {
+        if (!live || result.state !== "available" || !result.value) return;
+        setPreview((current) => {
+          if (current && current.health !== "healthy" && result.value?.health === "healthy") {
+            const transition = recordOutcome(
+              gameMode,
+              {
+                id: `preview-healthy:${result.value.projectId}:${result.value.changedAtMs}`,
+                category: "feature-validated",
+                summary: "Preview ficou saudável após uma mudança.",
+                proposedBy: "user:local",
+                evidence: [
+                  {
+                    id: `preview-probe-${result.value.changedAtMs}`,
+                    source: "preview-probe",
+                    verifiedBy: "host:preview",
+                    observedAt: new Date(result.value.changedAtMs).toISOString(),
+                    summary: result.value.detail ?? "Loopback probe saudável.",
+                  },
+                ],
+              },
+              new Date().toISOString(),
+            );
+            setGameMode(transition.state);
+          }
+          return result.value;
+        });
+      });
+    }, 1200);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [preview, gameMode]);
+
+  /* ============================================================
+     Derivados para render.
+     ============================================================ */
+  const currentView: WorkView = active.kind === "view" ? active.view : "build";
+  const activeFile =
+    active.kind === "file" ? openFiles.find((file) => file.path === active.path) ?? null : null;
+  const decisionFile = openFiles.find((file) => file.awaiting) ?? null;
+  const dirtyCount = openFiles.filter((file) => file.content !== file.saved).length;
+  const modeLabel =
+    config?.mode.value === "full_vibes"
+      ? "Full vibes"
+      : config?.mode.value === "spec"
+        ? "Spec"
+        : "Hybrid";
+  const previewHealthy = preview?.health === "healthy";
+  const evidenceCount = (previewFailure ? 1 : 0) + (harness?.failed ?? 0);
+  const archetypes = readArchetypes(gameMode);
+  const progress = verifiedProgress(gameMode);
+  const level = 1 + Math.floor(progress / 3);
+  const levelPct = ((progress % 3) / 3) * 100;
+
+  const strip = activity[0];
+  const stripText = agentSession
+    ? `${agentTarget} · ${conv.at(-1)?.role === "agent" ? "respondendo" : "em sessão"}`
+    : strip
+      ? `${strip.kind.toLowerCase()} · ${strip.text}`
+      : project
+        ? "instrumento pronto · sem atividade"
+        : "sem projeto aberto";
+
+  /* ============================================================
+     Render.
+     ============================================================ */
   return (
-    <div className="app-shell">
-      <aside className="project-rail" aria-label="Projetos">
-        <div className="brand-mark" aria-label="AI Native IDE">
-          AI
+    <div className="window">
+      <IconSheet />
+
+      {/* TITLEBAR */}
+      <header className="titlebar">
+        <div className="traffic">
+          <i />
+          <i />
+          <i />
         </div>
-        <div className="rail-divider" />
-        {projects.map((candidate) => (
+        <div className="crumb">
+          <span className="proj">{project?.title ?? "AI-Native IDE"}</span>
+          <span className="sep">·</span>
+          <span className="sess">{project ? firstSentence(project.intent) : "instrumento local-first"}</span>
+        </div>
+        <div className="tb-right">
+          <span className="pill">
+            <span className={hostAvailable ? "dot" : "dot off"} />
+            {modeLabel} · {hostAvailable ? "local" : "web"}
+          </span>
           <button
-            key={candidate.id}
-            className={
-              candidate.id === project?.id
-                ? "project-chip project-chip--active"
-                : "project-chip"
-            }
-            aria-label={`Abrir projeto: ${candidate.title}`}
-            onClick={() => void openProject(candidate.id)}
+            className="gm-toggle"
+            aria-pressed={game}
+            onClick={() => setGame((value) => !value)}
             type="button"
           >
-            {candidate.title.slice(0, 2).toUpperCase()}
-          </button>
-        ))}
-        <button
-          className="project-chip"
-          aria-label="Adicionar projeto"
-          onClick={startNewProject}
-          type="button"
-        >
-          +
-        </button>
-        <div className="rail-bottom">
-          <button
-            className="quiet-icon"
-            aria-label="Configurações"
-            type="button"
-          >
-            ◌
+            Game mode
+            <span className="sw" />
           </button>
         </div>
-      </aside>
-      <aside className="navigator" aria-label="Navegador do projeto">
-        <header className="project-heading">
-          <span className="eyebrow">PROJETO</span>
-          <h1>{project?.title ?? "Sem projeto"}</h1>
-          <button
-            className="scope-button"
-            disabled={!project}
-            onClick={() => void attachWorkspace()}
-            type="button"
-          >
-            {resource
-              ? `${resource.kind === "repository" ? "repo" : "diretório"} ativo (${resources.length})`
-              : project
-                ? "Anexar diretório"
-                : "Crie o projeto primeiro"}{" "}
-            <span>⌄</span>
-          </button>
-        </header>
-        <nav>
-          {navItems.map((item) => (
+      </header>
+
+      {/* RAIL */}
+      <aside className="rail">
+        <div className="logo">/i</div>
+        {projects.map((candidate) => {
+          const isActive = candidate.id === project?.id;
+          return (
             <button
-              key={item}
-              className={
-                section === item ? "nav-item nav-item--active" : "nav-item"
-              }
-              onClick={() => setSection(item)}
+              key={candidate.id}
+              className={isActive ? "rail-btn on" : "rail-btn"}
+              title={candidate.title}
+              onClick={() => void openProject(candidate.id)}
               type="button"
             >
-              <span>
-                {item === "Overview"
-                  ? "◎"
-                  : item === "Build"
-                    ? "↗"
-                    : item === "Resources"
-                      ? "□"
-                      : "◇"}
-              </span>
-              {item}
+              {initials(candidate.title)}
+              {isActive && previewHealthy && <span className="hb ok" />}
+              {isActive && agentSession && <span className="hb run" />}
+            </button>
+          );
+        })}
+        <button className="rail-btn" title="Novo projeto" onClick={startNewProject} type="button">
+          <Icon id="plus" />
+        </button>
+        <div className="sp" />
+        <button className="rail-btn" title="Configurações" type="button">
+          <Icon id="gear" />
+        </button>
+        <div className="avatar">
+          MA<span className="lvl-badge">{level}</span>
+        </div>
+      </aside>
+
+      {/* NAVIGATOR */}
+      <nav className="nav">
+        <div className="proj-head">
+          <div className="name">{project?.title ?? "Sem projeto"}</div>
+          <div className="meta">
+            {project
+              ? `${workspaceFiles.length} recursos · ${previewHealthy ? "preview vivo" : "preview parado"}`
+              : "comece pela intenção"}
+          </div>
+        </div>
+
+        <div className="nav-sec">
+          <span className="tag">Produto</span>
+          {NAV_ITEMS.map((item) => {
+            const count =
+              item.view === "resources"
+                ? workspaceFiles.length
+                : item.view === "build"
+                  ? dirtyCount
+                  : item.view === "evidence"
+                    ? evidenceCount
+                    : 0;
+            const isOn = active.kind === "view" && active.view === item.view;
+            return (
+              <button
+                key={item.view}
+                className={isOn ? "nav-item on" : "nav-item"}
+                onClick={() => setActive({ kind: "view", view: item.view })}
+                type="button"
+              >
+                <Icon id={item.icon} />
+                {item.label}
+                {count > 0 && (
+                  <span className={item.view === "evidence" ? "n warn" : "n"}>{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="nav-sec">
+          <span className="tag">Recursos ativos</span>
+          {resource && (
+            <div className="res">
+              <b>{resource.canonicalPath.split("/").pop() || resource.canonicalPath}</b>
+              <small>
+                <span className="st ok" />
+                {resource.kind === "repository" ? "repositório" : "diretório"} anexado
+              </small>
+            </div>
+          )}
+          {workspaceFiles.slice(0, 6).map((file) => (
+            <button
+              key={file.relativePath}
+              className={
+                active.kind === "file" && active.path === file.relativePath ? "res on" : "res"
+              }
+              onClick={() => void openFile(file.relativePath)}
+              type="button"
+            >
+              <b>{file.relativePath}</b>
+              <small>
+                <span className="st idle" />
+                {file.sizeBytes} bytes
+              </small>
             </button>
           ))}
-        </nav>
-        <section className="navigator-note">
-          {resources.length > 1 && (
-            <div className="resource-selector" aria-label="Recursos anexados">
-              {resources.map((candidate) => (
-                <button
-                  className={candidate.id === resource?.id ? "mode-button mode-button--active" : "mode-button"}
-                  key={candidate.id}
-                  onClick={() => void selectResource(candidate)}
-                  type="button"
-                >
-                  {candidate.kind === "repository" ? "repo" : "dir"}
-                </button>
-              ))}
-            </div>
-          )}
-          <span className="eyebrow">MODO</span>
-          <div className="mode-group" aria-label="Modo de construção">
-            {(["full-vibes", "hybrid", "spec"] as BuildMode[]).map((item) => (
-              <button
-                className={
-                  mode === item
-                    ? "mode-button mode-button--active"
-                    : "mode-button"
-                }
-                key={item}
-                onClick={() => void selectMode(item)}
-                type="button"
-              >
-                {item === "full-vibes"
-                  ? "Vibes"
-                  : item === "hybrid"
-                    ? "Hybrid"
-                    : "Spec"}
-              </button>
-            ))}
-          </div>
-          <p>
-            {mode === "hybrid"
-              ? "Experimente agora. Promova com um checkpoint."
-              : mode === "spec"
-                ? "Resolva contratos antes do efeito durável."
-                : "Avance, registre hipóteses e ajuste depois."}
-          </p>
-          {modeInterruption && (
+          <div className="res">
+            <b>preview local</b>
             <small>
-              Efeito durável:{" "}
-              {modeInterruption === "require_checkpoint"
-                ? "exige checkpoint antes de aplicar."
-                : modeInterruption === "resolve_contract_first"
-                  ? "resolve o contrato antes de aplicar."
-                  : modeInterruption === "proceed_recording_hypothesis"
-                    ? "prossegue registrando hipótese/dívida."
-                    : "prossegue sem interromper."}
+              <span className={`st ${previewHealthy ? "ok" : preview ? "run" : "idle"}`} />
+              {preview ? `${preview.url} · ${preview.health}` : "não iniciado"}
             </small>
-          )}
-        </section>
-      </aside>
-      <main className="work-surface">
-        <header className="surface-bar">
-          <div>
-            <span className="eyebrow">
-              {section.toUpperCase()} / {depth.toUpperCase()}
-            </span>
-            <span className="connection">
-              <i />{" "}
-              {project
-                ? "Projeto local persistido · sem agente conectado"
-                : "Local-first · sem agente conectado"}
-            </span>
           </div>
-          <div className="depth-switch" aria-label="Profundidade da interface">
-            <button
-              className={
-                depth === "essential"
-                  ? "depth-button depth-button--active"
-                  : "depth-button"
-              }
-              onClick={() => setDepth("essential")}
-              type="button"
-            >
-              Essential
-            </button>
-            <button
-              className={
-                depth === "raw"
-                  ? "depth-button depth-button--active"
-                  : "depth-button"
-              }
-              onClick={() => setDepth("raw")}
-              type="button"
-            >
-              Raw
-            </button>
-          </div>
-        </header>
-        <div className="surface-scroll">
-          <section className="intent-hero" aria-labelledby="intent-heading">
-            <div className="section-label">
-              <span>01</span>
-              <span>INTENÇÃO</span>
-            </div>
-            <h2 id="intent-heading">O que você quer colocar no mundo?</h2>
-            <p className="lede">
-              Comece pela mudança que você quer causar. A estrutura técnica pode
-              esperar.
+          {!resource && (
+            <p className="nav-empty">
+              Nenhum diretório anexado. Use “Anexar diretório” em Resources para dar um workspace ao
+              agente.
             </p>
-            <label className="intent-input-label" htmlFor="intent">
-              Intenção do projeto
-            </label>
-            <textarea
-              id="intent"
-              value={intent}
-              onChange={(event) => setIntent(event.target.value)}
-              placeholder="Ex.: quero criar uma ferramenta para…"
-              rows={3}
-            />
-            <div className="intent-footer">
-              <span>
-                {projectCall?.state === "failed"
-                  ? `O host recusou o projeto: ${projectCall.message}`
-                  : projectCall?.state === "unavailable"
-                    ? "Abra o app desktop para persistir o projeto; nenhum projeto foi criado neste preview web."
-                    : project
-                      ? "Projeto persistido localmente; a intenção ainda não foi enviada a nenhum modelo."
-                      : intent.trim().length
-                        ? "Intenção local, ainda não enviada a nenhum modelo."
-                        : "Escreva livremente; vamos ajudar a tornar isso construível."}
-              </span>
-              <button
-                className="primary-action"
-                disabled={Boolean(project)}
-                onClick={() => void createProject()}
-                type="button"
-              >
-                {project ? "Projeto aberto" : "Começar a construir"}{" "}
-                <span>→</span>
-              </button>
-            </div>
-          </section>
-          <section
-            className="guidance-section"
-            aria-labelledby="guidance-heading"
+          )}
+        </div>
+
+        <div className="nav-sec">
+          <span className="tag">Sessões</span>
+          <button
+            className="nav-item"
+            onClick={() => setActive({ kind: "view", view: "build" })}
+            type="button"
           >
-            <div className="section-label">
-              <span>02</span>
-              <span>ORIENTAÇÃO INCREMENTAL</span>
-            </div>
-            <div className="section-title-row">
-              <div>
-                <h2 id="guidance-heading">
-                  Antes do código, poucas decisões que importam.
-                </h2>
-                <p>
-                  Não é um formulário. São pontos que reduzem retrabalho
-                  enquanto você constrói.
-                </p>
-              </div>
-              <span className="signal-count">{signals.length} sinais</span>
-            </div>
-            <div className="signal-grid">
-              {signals.map((signal) => (
-                <SignalCard key={signal.id} signal={signal} onUse={useSignal} />
-              ))}
-            </div>
-            {semantic && semantic.findings.length > 0 && (
-              <div className="signal-grid" aria-label="Avaliação semântica">
-                {semantic.findings.map((finding) => (
-                  <article
-                    className={`signal signal--${finding.severity === "high" || finding.severity === "critical" ? "risk" : finding.severity === "medium" ? "decision" : "concept"}`}
-                    key={finding.id}
-                  >
-                    <div className="signal__meta">
-                      <span>{finding.category.replace("_", " ")}</span>
-                      <span className="signal__dot" />
-                    </div>
-                    <h3>{finding.claim}</h3>
-                    <p>
-                      {finding.evidence} · confiança{" "}
-                      {Math.round(finding.confidence * 100)}% · {finding.severity}
-                    </p>
-                    <p>{finding.remediation}</p>
-                  </article>
-                ))}
-              </div>
-            )}
-            {semantic && semantic.withheldForBudget > 0 && (
-              <span className="signal-count">
-                +{semantic.withheldForBudget} retidos pelo budget
+            <Icon id="session" />
+            {agentSession ? `${agentTarget} conectado` : "Sessão de build"}
+          </button>
+          <button className="nav-item" onClick={() => setDrawerOpen(true)} type="button">
+            <Icon id="history" />
+            Histórico
+          </button>
+        </div>
+      </nav>
+
+      {/* WORK SURFACE */}
+      <main className="work">
+        <div className="tabs">
+          <button
+            className={active.kind === "view" && active.view === "home" ? "tab on" : "tab"}
+            onClick={() => setActive({ kind: "view", view: "home" })}
+            type="button"
+          >
+            Overview
+          </button>
+          <button
+            className={active.kind === "view" && active.view === "build" ? "tab on" : "tab"}
+            onClick={() => setActive({ kind: "view", view: "build" })}
+            type="button"
+          >
+            <span className="mod" />
+            Build
+          </button>
+          {openFiles.map((file) => (
+            <button
+              key={file.path}
+              className={
+                active.kind === "file" && active.path === file.path ? "tab file on" : "tab file"
+              }
+              onClick={() => setActive({ kind: "file", path: file.path })}
+              type="button"
+            >
+              {file.path.split("/").pop()}
+              {file.content !== file.saved && <span className="mod" />}
+              <span
+                className="x"
+                role="button"
+                aria-label={`Fechar ${file.path}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closeFile(file.path);
+                }}
+              >
+                ×
               </span>
-            )}
-          </section>
-          <section className="build-section" aria-labelledby="build-heading">
-            <div className="section-label">
-              <span>03</span>
-              <span>CONSTRUÇÃO</span>
+            </button>
+          ))}
+          <button className="tab new" title="Nova aba" onClick={createNewFile} type="button">
+            <Icon id="plus" />
+          </button>
+        </div>
+
+        {/* ---- FILE TAB ---- */}
+        {activeFile && (
+          <section className="view on editor-pane">
+            <div className="editor-host">
+              <Editor
+                language={editorLanguage(activeFile.path)}
+                theme="vs-dark"
+                value={activeFile.content}
+                onChange={(value) => editActiveFile(activeFile.path, value ?? "")}
+                options={{
+                  automaticLayout: true,
+                  fontFamily: "DM Mono",
+                  fontSize: 12,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  wordWrap: "on",
+                }}
+              />
             </div>
-            <h2 id="build-heading">
-              Um próximo passo, não uma parede de configuração.
-            </h2>
-            {agentSession && (
-              <section className="agent-workspace" aria-label="Trabalho com o agente">
-                <div className="section-label">
-              <span>{agentTarget.toUpperCase()}</span>
-                  <span>SESSÃO REAL</span>
-                </div>
-                <pre aria-live="polite">
-                  {agentTranscript.length
-                    ? agentTranscript
-                        .map((entry) => `[${entry.role}] ${entry.text}`)
-                        .join("\n\n")
-                    : "Aguardando resposta do agente…"}
-                </pre>
-                <label className="intent-input-label" htmlFor="agent-task">
-                  Próxima instrução
-                </label>
-                <textarea
-                  id="agent-task"
-                  value={agentPrompt}
-                  onChange={(event) => setAgentPrompt(event.target.value)}
-                  rows={3}
-                />
+            <div className="editor-bar">
+              <span className="path">{activeFile.path}</span>
+              {activeFile.content !== activeFile.saved && <span className="dirty">· não salvo</span>}
+              <span className="sp" />
+              {activeFile.awaiting ? (
+                <button className="btn pri" onClick={() => void approveFile(activeFile)} type="button">
+                  Aprovar gravação<span className="kbd">⏎</span>
+                </button>
+              ) : (
                 <button
-                  className="primary-action"
-                  disabled={!agentPrompt.trim()}
-                  onClick={() => void submitAgentTask()}
+                  className="btn pri"
+                  disabled={!resource || activeFile.content === activeFile.saved}
+                  onClick={() => void saveFile(activeFile)}
                   type="button"
                 >
-                  Enviar ao agente <span>→</span>
+                  Salvar
                 </button>
-              </section>
-            )}
-            <div className="next-step">
-              <div>
-                <span className="eyebrow">PRÓXIMA DECISÃO</span>
-                <strong>{activeSignal?.title ?? nextStep}</strong>
-                <p>
-                  {activeSignal
-                    ? activeSignal.prompt
-                    : resource
-                      ? effectState === "awaiting"
-                        ? "A intenção será gravada no workspace após sua aprovação explícita."
-                        : effectState === "written"
-                          ? "A intenção está gravada no recurso anexado e registrada como efeito da IDE."
-                          : "Salve a intenção no workspace antes de pedir uma implementação ao agente."
-                      : "Anexe um diretório para criar o primeiro artefato do projeto."}
-                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ---- HOME ---- */}
+        {!activeFile && currentView === "home" && (
+          <section className="view on" id="view-home">
+            {!project ? (
+              <div className="intent-entry">
+                <div className="box">
+                  <span className="tag">Intenção</span>
+                  <h1>O que você quer colocar no mundo?</h1>
+                  <p>
+                    Comece pela mudança que você quer causar. A estrutura técnica pode esperar — o
+                    instrumento organiza o resto.
+                  </p>
+                  <textarea
+                    className="field"
+                    value={intentDraft}
+                    onChange={(event) => setIntentDraft(event.target.value)}
+                    placeholder="Ex.: quero que aplicações disputem a primeira posição sem ver o lance vencedor…"
+                  />
+                  <div className="row">
+                    <button
+                      className="btn pri lg"
+                      disabled={!intentDraft.trim()}
+                      onClick={() => void createProject()}
+                      type="button"
+                    >
+                      Começar a construir<span className="kbd">⏎</span>
+                    </button>
+                    <span>
+                      {hostAvailable
+                        ? "Um projeto semântico será persistido localmente."
+                        : "Sem host: abra o app desktop para persistir."}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div>
-                {effectState === "awaiting" ? (
-                  <button
-                    className="primary-action"
-                    onClick={() => void approveProjectIntent()}
-                    type="button"
-                  >
-                    Aprovar escrita <span>→</span>
-                  </button>
-                ) : effectState === "written" ? (
-                  <button
-                    className="outline-action"
-                    onClick={() => void rollbackProjectIntent()}
-                    type="button"
-                  >
-                    Reverter intenção
-                  </button>
-                ) : (
-                  <button
-                    className="outline-action"
-                    disabled={!resource}
-                    onClick={() => void proposeProjectIntent()}
-                    type="button"
-                  >
-                    Salvar intenção
-                  </button>
+            ) : (
+              <>
+                <div className="home-main">
+                  <div className="h-sec continue">
+                    <h1 className="goal">{firstSentence(project.intent) || project.title}</h1>
+                    <div className="next">
+                      <button
+                        className="btn pri lg"
+                        onClick={() => setActive({ kind: "view", view: "build" })}
+                        type="button"
+                      >
+                        Retomar a sessão<span className="kbd">⏎</span>
+                      </button>
+                      <span>próximo: {nextStep}</span>
+                    </div>
+                  </div>
+
+                  <div className="h-sec">
+                    <span className="tag">Agora</span>
+                    {activity.length === 0 ? (
+                      <div className="calm">
+                        Nada em andamento. Descreva uma mudança em Build e o agente começa a trabalhar.
+                      </div>
+                    ) : (
+                      <div className="now-list">
+                        {activity.slice(0, 3).map((event) => (
+                          <div className="now-row" key={event.id}>
+                            <span className={event.klass === "ck" ? "live ok" : "live"} />
+                            <span className="who">{event.kind}</span>
+                            <span className="what">{event.text}</span>
+                            <span className="meta">{event.ts}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {(decisionFile || previewFailure) && (
+                    <div className="h-sec">
+                      <span className="tag">Precisa de você</span>
+                      <div className="need">
+                        {decisionFile && (
+                          <div className="need-item">
+                            <div className="txt">
+                              <b>Gravar {decisionFile.path}?</b>
+                              <small>
+                                O payload exato só é escrito após sua aprovação. Um checkpoint
+                                reversível é criado antes.
+                              </small>
+                            </div>
+                            <div className="acts">
+                              <button
+                                className="btn"
+                                onClick={() => setActive({ kind: "file", path: decisionFile.path })}
+                                type="button"
+                              >
+                                Ver o que muda
+                              </button>
+                              <button
+                                className="btn pri"
+                                onClick={() => void approveFile(decisionFile)}
+                                type="button"
+                              >
+                                Permitir
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {previewFailure && (
+                          <div className="need-item">
+                            <div className="txt">
+                              <b>{previewFailure.divergence.subject}</b>
+                              <small>{previewFailure.failure.message}</small>
+                            </div>
+                            <div className="acts">
+                              <button
+                                className="btn"
+                                onClick={() => setActive({ kind: "view", view: "evidence" })}
+                                type="button"
+                              >
+                                Entender
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="home-side">
+                  <div className="h-sec">
+                    <span className="tag">Produto</span>
+                    <div className="prod-map">
+                      {signals.map((signal: IntentSignal) => (
+                        <div className="prod-row" key={signal.id}>
+                          <span
+                            className={`st ${signal.severity === "important" ? "" : signal.severity === "attention" ? "run" : "ok"}`}
+                            style={signal.severity === "important" ? { background: "var(--need)" } : undefined}
+                          />
+                          <span className="nm">{signal.title}</span>
+                          <span className="ds">{signal.kind}</span>
+                          <span
+                            className={`lb ${signal.severity === "important" ? "warn" : signal.severity === "attention" ? "run" : "ok"}`}
+                          >
+                            {signal.severity === "important"
+                              ? "decidir"
+                              : signal.severity === "attention"
+                                ? "em aberto"
+                                : "ok"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="recent">
+                    <span className="tag">Recentes</span>
+                    {activity.length === 0 ? (
+                      <div className="calm">Sem histórico ainda.</div>
+                    ) : (
+                      activity.slice(0, 6).map((event) => (
+                        <div className="r" key={event.id}>
+                          <time>{event.ts}</time>
+                          <span>
+                            <em>{event.kind}</em> — {event.text}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* ---- BUILD ---- */}
+        {!activeFile && currentView === "build" && (
+          <section className="view on" id="view-build">
+            <div className="conv" data-depth={depth}>
+              <div className="conv-top">
+                <span className="tag">Conversa</span>
+                <div className="depth-seg" role="group" aria-label="Profundidade">
+                  {(["essential", "detailed", "raw"] as Depth[]).map((value, index) => (
+                    <button
+                      key={value}
+                      className={depth === value ? "on" : ""}
+                      onClick={() => setDepth(value)}
+                      type="button"
+                    >
+                      {["A", "B", "C"][index]} ·{" "}
+                      {value === "essential" ? "Essencial" : value === "detailed" ? "Detalhado" : "Raw"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="conv-scroll">
+                <h2 className="goal">{firstSentence(intent) || "Descreva o que quer construir."}</h2>
+                {conv.length === 0 && (
+                  <div className="msg agent">
+                    <div className="head">
+                      <span className="live" />
+                      {agentTarget.toUpperCase()} · {resource ? "PRONTO" : "SEM RECURSO"}
+                    </div>
+                    <div className="body">
+                      {resource
+                        ? "Peça uma mudança ou pergunte o porquê. A sessão do agente conecta ao enviar."
+                        : "Anexe um diretório (aba Resources) para dar contexto ao agente."}
+                      {depth !== "essential" && (
+                        <div className="steps">
+                          <div className="step done">
+                            <Icon id="check" />
+                            intenção declarada
+                          </div>
+                          <div className={resource ? "step done" : "step run"}>
+                            <Icon id={resource ? "check" : "dot"} />
+                            recurso anexado
+                          </div>
+                          <div className="step">
+                            <Icon id="circle" />
+                            primeiro efeito verificável
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {conv.map((message) =>
+                  message.role === "user" ? (
+                    <div className="msg user" key={message.id}>
+                      <div className="bubble">{message.text}</div>
+                    </div>
+                  ) : message.role === "agent" ? (
+                    <div className="msg agent" key={message.id}>
+                      <div className="head">
+                        <span className="live" />
+                        {agentTarget.toUpperCase()}
+                      </div>
+                      <div className="body">{message.text}</div>
+                    </div>
+                  ) : (
+                    <div className="msg sys" key={message.id}>
+                      {message.text}
+                    </div>
+                  ),
                 )}
               </div>
+              <form
+                className="composer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitComposer();
+                }}
+              >
+                <input
+                  value={composer}
+                  onChange={(event) => setComposer(event.target.value)}
+                  placeholder="Peça uma mudança ou pergunte o porquê…"
+                />
+                <div className="foot">
+                  <span className="hint">
+                    <em>⏎</em> envia ao agente
+                  </span>
+                  <span>
+                    {modeLabel} · {resource ? "efeitos locais liberados" : "sem recurso anexado"}
+                  </span>
+                </div>
+              </form>
             </div>
-            <div className="preview-placeholder">
-              <div className="preview-top">
-                <span>PREVIEW</span>
-                <span
-                  className={
-                    preview?.health === "healthy"
-                      ? "status-healthy"
-                      : "status-unknown"
-                  }
-                  title={preview?.detail ?? undefined}
-                >
-                  {preview
-                    ? `● ${preview.health.toUpperCase()}`
-                    : previewFailure
-                      ? "● BROKEN"
-                      : "○ NOT-RUN"}
+
+            <div className="preview">
+              <div className="pv-bar">
+                <button className="i-btn" onClick={() => void startPreview()} type="button" title="Recarregar">
+                  <Icon id="refresh" />
+                </button>
+                <span className="pv-url">{preview?.url ?? "preview não iniciado"}</span>
+                <span className={`pv-health ${healthClass(preview?.health ?? null)}`}>
+                  {preview ? `● ${preview.health.toUpperCase()}` : previewFailure ? "● BROKEN" : "○ NOT-RUN"}
                 </span>
               </div>
-              {preview ? (
-                <>
-                  <iframe
-                    className="benchmark-preview"
-                    src={preview.url}
-                    title="Preview do leilão de posições"
-                  />
-                  <button
-                    className="text-button"
-                    onClick={() => void capturePreviewFailure()}
-                    type="button"
-                  >
-                    Verificar falha real <span>→</span>
-                  </button>
-                </>
-              ) : (
-                <div className="preview-body">
-                  <div className="preview-skeleton preview-skeleton--title" />
-                  <div className="preview-skeleton" />
-                  <div className="preview-skeleton preview-skeleton--short" />
-                  <p>
-                    {previewFailure
-                      ? `${previewFailure.failure.message} Artefato: ${previewFailure.failure.causalLinks.filePaths.join(", ")}. Divergência registrada: ${previewFailure.divergence.id}.`
-                      : previewCall?.state === "failed"
-                        ? `O host não iniciou o preview: ${previewCall.message}`
-                        : previewCall?.state === "unavailable"
-                          ? "O preview só inicia pelo app desktop; nenhum servidor foi iniciado nesta página web."
-                          : effectState !== "written"
-                            ? "Salve a intenção aprovada antes de iniciar um preview do template de benchmark."
-                            : "O preview do template de benchmark permanece disponível como referência técnica; o agente trabalha no seu recurso anexado."}
-                  </p>
-                  <button
-                    className="outline-action"
-                    disabled={!project || effectState !== "written"}
-                    onClick={() => void startPreview()}
-                    type="button"
-                  >
-                    {project
-                      ? "Iniciar preview de referência"
-                      : "Crie o projeto primeiro"}
+              <div className="pv-body">
+                {preview ? (
+                  <iframe className="pv-frame" src={preview.url} title="Preview do produto" />
+                ) : (
+                  <div className="pv-empty">
+                    <h4>{previewFailure ? "Preview quebrou" : "Sem preview vivo"}</h4>
+                    <p>
+                      {previewFailure
+                        ? previewFailure.failure.message
+                        : previewNote ??
+                          "Inicie o preview de referência para ver o produto real dentro da IDE."}
+                    </p>
+                    <button
+                      className="btn pri"
+                      disabled={!project}
+                      onClick={() => void startPreview()}
+                      type="button"
+                    >
+                      Iniciar preview
+                    </button>
+                  </div>
+                )}
+              </div>
+              {preview && (
+                <div className="pv-foot">
+                  <span>
+                    <b>{preview.health === "healthy" ? "Saudável." : "Instável."}</b>{" "}
+                    {preview.detail ?? "Probe de loopback ativo."}
+                  </span>
+                  <button className="btn" onClick={() => void capturePreviewFailure()} type="button">
+                    Verificar falha real
                   </button>
                 </div>
               )}
             </div>
           </section>
-          {previewFailure && (
-            <section
-              className="raw-surface"
-              aria-label="Reconciliação do preview"
-            >
-              <div className="section-label">
-                <span>04</span>
-                <span>RECONCILIAÇÃO</span>
-              </div>
-              <h2>O que deve mudar?</h2>
-              <p>
-                {reconciliationNote ??
-                  "A falha permanece vinculada ao efeito, atividade e artefato. Escolha a próxima decisão."}
+        )}
+
+        {/* ---- RESOURCES ---- */}
+        {!activeFile && currentView === "resources" && (
+          <section className="view on panel-view">
+            <div className="panel-in">
+              <h1>Recursos</h1>
+              <p className="lede">
+                Diretórios anexados e arquivos do workspace. Clique num arquivo para abri-lo numa aba
+                com o editor.
               </p>
-              <button
-                className="text-button"
-                onClick={() => void reconcilePreview("change_implementation")}
-                type="button"
-              >
-                Mudar implementação
-              </button>
-              <button
-                className="text-button"
-                onClick={() => void reconcilePreview("change_intent")}
-                type="button"
-              >
-                Mudar intenção
-              </button>
-              <button
-                className="text-button"
-                onClick={() =>
-                  void reconcilePreview("accept_preview_exception")
-                }
-                type="button"
-              >
-                Aceitar exceção limitada
-              </button>
-            </section>
-          )}
-          {depth === "raw" && (
-            <section className="raw-surface" aria-labelledby="raw-heading">
-              <div className="section-label">
-                <span>RAW</span>
-                <span>MESMO PROJETO, OUTRA PROFUNDIDADE</span>
-              </div>
-              <h2 id="raw-heading">
-                Artefatos acessíveis, sem trocar de contexto.
-              </h2>
-              <div className="raw-grid">
-                <div
-                  className="monaco-editor"
-                  aria-label="Editor Monaco do arquivo selecionado"
-                  style={{ background: "#181a17", height: 300, padding: 0 }}
-                >
-                  <Editor
-                    language={
-                      selectedFile?.endsWith(".json")
-                        ? "json"
-                        : selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx")
-                          ? "typescript"
-                          : selectedFile?.endsWith(".css")
-                            ? "css"
-                            : "markdown"
-                    }
-                    theme="vs-dark"
-                    value={rawDocument}
-                    onChange={(value) => setRawDocument(value ?? "")}
-                    options={{
-                      automaticLayout: true,
-                      fontFamily: "DM Mono",
-                      fontSize: 12,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      wordWrap: "on",
-                    }}
-                  />
-                </div>
-                <div>
-                  <span className="eyebrow">PONTE DO HOST</span>
-                  <p>
-                    {selectedFile
-                      ? `Editando ${selectedFile}. Salvar passa pelo effect broker do host.`
-                      : "Selecione um arquivo do recurso anexado para editar."}
-                  </p>
-                  <div className="file-list" aria-label="Arquivos do workspace">
-                    {workspaceFiles.map((file) => (
-                      <button
-                        className={file.relativePath === selectedFile ? "text-button file-button--active" : "text-button"}
-                        key={file.relativePath}
-                        onClick={() => project && resource && void openWorkspaceFile(project, resource, file.relativePath)}
-                        type="button"
-                      >
-                        {file.relativePath}
-                      </button>
-                    ))}
+              <div className="panel-block">
+                <span className="tag">Diretórios anexados</span>
+                {resources.length === 0 ? (
+                  <div className="row-line">
+                    <span className="k">nenhum recurso anexado</span>
                   </div>
-                  <label className="intent-input-label" htmlFor="new-file-path">
-                    Novo arquivo relativo
-                  </label>
-                  <div className="new-file-row">
-                    <input
-                      id="new-file-path"
-                      onChange={(event) => setNewFilePath(event.target.value)}
-                      placeholder="src/app.ts"
-                      value={newFilePath}
-                    />
-                    <button className="outline-action" onClick={beginNewWorkspaceFile} type="button">
-                      Criar
-                    </button>
-                  </div>
-                  {effectState === "awaiting" && fileEffectId ? (
-                    <button className="primary-action" onClick={() => void approveWorkspaceFile()} type="button">
-                      Aprovar edição →
-                    </button>
-                  ) : (
-                    <button className="outline-action" disabled={!selectedFile} onClick={() => void saveWorkspaceFile()} type="button">
-                      Salvar edição
-                    </button>
-                  )}
-                  {lastFileEffectId && (
-                    <button className="text-button" onClick={() => void rollbackSelectedFile()} type="button">
-                      Reverter último checkpoint
-                    </button>
-                  )}
-                  <button className="text-button" disabled={!resource} onClick={() => void inspectWorkspaceDiff()} type="button">
-                    Ver diff do checkpoint
-                  </button>
-                  <button className="text-button" disabled={!selectedFile} onClick={() => void loadHunks()} type="button">
-                    Diff por hunk
-                  </button>
-                  {config?.permissions.value === "yolo" && (
-                    <button className="text-button" disabled={!selectedFile} onClick={() => void saveWorkspaceFileYolo()} type="button">
-                      Salvar (YOLO, com histórico)
-                    </button>
-                  )}
-                  {hunks.length > 0 && (
-                    <div className="file-list" aria-label="Hunks do arquivo">
-                      {hunks.map((hunk) => (
-                        <label key={hunk.id} className="text-button">
-                          <input
-                            checked={selectedHunks.includes(hunk.id)}
-                            onChange={() => toggleHunk(hunk.id)}
-                            type="checkbox"
-                          />{" "}
-                          hunk {hunk.id} · linha {hunk.oldStart + 1} ·{" "}
-                          {hunk.lines.filter((line) => line.tag === "added").length}+ /{" "}
-                          {hunk.lines.filter((line) => line.tag === "removed").length}-
-                        </label>
-                      ))}
-                      {partialPending ? (
-                        <button className="primary-action" onClick={() => void approvePartial()} type="button">
-                          Aprovar hunks →
-                        </button>
+                ) : (
+                  resources.map((entry) => (
+                    <div className="row-line" key={entry.id}>
+                      <b>{entry.kind === "repository" ? "repo" : "dir"}</b>
+                      <span className="k">{entry.canonicalPath}</span>
+                      <span className="sp" />
+                      {entry.id === resource?.id ? (
+                        <span className="k">ativo</span>
                       ) : (
-                        <button className="outline-action" onClick={() => void proposePartial()} type="button">
-                          Propor hunks selecionados
+                        <button className="btn" onClick={() => setResource(entry)} type="button">
+                          Selecionar
                         </button>
                       )}
                     </div>
-                  )}
-                  {workspaceDiff?.state === "available" && (
-                    <pre>{workspaceDiff.value.content || "Nenhuma alteração não confirmada."}</pre>
-                  )}
+                  ))
+                )}
+                <div className="inline" style={{ marginTop: 12 }}>
+                  <button className="btn pri" disabled={!project} onClick={() => void attachWorkspace()} type="button">
+                    Anexar diretório
+                  </button>
                 </div>
               </div>
-            </section>
-          )}
-        </div>
-      </main>
-      <aside className="context-dock" aria-label="Contexto atual">
-        <header>
-          <span className="eyebrow">CONTEXTO ATUAL</span>
-          <button
-            className="quiet-icon"
-            aria-label="Fixar contexto"
-            type="button"
-          >
-            ⌁
-          </button>
-        </header>
-        <section className="dock-section">
-          <span className="dock-label">AGENTE</span>
-          <strong>
-            {agentSession
-              ? `${agentTarget} conectado · ${agentSession.readOnly ? "somente leitura" : "escrita externa habilitada"}`
-              : "Não conectado"}
-          </strong>
-          <p>
-            {agentCapability?.state === "available"
-              ? agentCapability.value.health.availability === "Unavailable"
-                ? (agentCapability.value.health.detail ??
-                  "O adapter ACPX não está pronto neste computador.")
-                : agentCapability.value.descriptor?.degradations.join(" ") ||
-                  "O adapter declarou todas as limitações disponíveis."
-              : agentCall?.state === "failed"
-                ? `O adapter recusou a sessão: ${agentCall.message}`
-                : agentSession
-                  ? agentSession.policyNote
-                  : "Conecte um adapter só depois de escolher o recurso. A IDE mantém efeitos de escrita fora do agente."}
-          </p>
-          {!agentSession && (
-            <>
-              <div className="mode-group" aria-label="Adapter de agente">
-                {(["claude", "codex", "gemini", "opencode"] as AgentTarget[]).map(
-                  (target) => (
-                    <button
-                      key={target}
-                      className={
-                        agentTarget === target
-                          ? "mode-button mode-button--active"
-                          : "mode-button"
-                      }
-                      onClick={() => setAgentTarget(target)}
-                      type="button"
-                    >
-                      {target}
-                    </button>
-                  ),
+              <div className="panel-block">
+                <span className="tag">Arquivos ({workspaceFiles.length})</span>
+                {workspaceFiles.length === 0 ? (
+                  <div className="row-line">
+                    <span className="k">anexe um diretório para listar arquivos</span>
+                  </div>
+                ) : (
+                  workspaceFiles.map((file) => (
+                    <div className="row-line" key={file.relativePath}>
+                      <button className="btn" onClick={() => void openFile(file.relativePath)} type="button">
+                        {file.relativePath}
+                      </button>
+                      <span className="sp" />
+                      <span className="k">{file.sizeBytes} bytes</span>
+                    </div>
+                  ))
                 )}
               </div>
-              <label>
-                <input
-                  checked={allowAgentWorkspaceWrites}
-                  onChange={(event) => setAllowAgentWorkspaceWrites(event.target.checked)}
-                  type="checkbox"
-                />{" "}
-                Permitir escrita neste workspace
-              </label>
-            </>
+            </div>
+          </section>
+        )}
+
+        {/* ---- EVIDENCE ---- */}
+        {!activeFile && currentView === "evidence" && (
+          <section className="view on panel-view">
+            <div className="panel-in">
+              <h1>Evidência</h1>
+              <p className="lede">
+                Checks determinísticos e divergências de preview. Nada conta como aprovação sem
+                evidência independente.
+              </p>
+              <div className="panel-block">
+                <span className="tag">Harness · camada 0</span>
+                {harness ? (
+                  <>
+                    <div className="row-line">
+                      <b>
+                        {harness.passed} ok · {harness.failed} falhas · {harness.unknown} unknown
+                      </b>
+                    </div>
+                    {harness.findings.map((finding) => (
+                      <div
+                        className={`finding-card ${finding.state === "passed" ? "ok" : ""}`}
+                        key={finding.id}
+                      >
+                        <b>{finding.title}</b>
+                        <small>
+                          {finding.state.toUpperCase()} · {finding.evidence}
+                          {finding.remediation ? ` — ${finding.remediation}` : ""}
+                        </small>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div className="row-line">
+                    <span className="k">{harnessNote ?? "checks ainda não rodaram"}</span>
+                  </div>
+                )}
+                <div className="inline" style={{ marginTop: 12 }}>
+                  <button
+                    className="btn pri"
+                    disabled={!project || !resource}
+                    onClick={() => void runHarness()}
+                    type="button"
+                  >
+                    Rodar checks determinísticos
+                  </button>
+                </div>
+              </div>
+              {previewFailure && (
+                <div className="panel-block">
+                  <span className="tag">Divergência de preview</span>
+                  <div className="finding-card">
+                    <b>{previewFailure.divergence.subject}</b>
+                    <small>{previewFailure.failure.message}</small>
+                  </div>
+                  <div className="inline" style={{ marginTop: 10 }}>
+                    <button className="btn" onClick={() => void reconcilePreview("change_implementation")} type="button">
+                      Mudar implementação
+                    </button>
+                    <button className="btn" onClick={() => void reconcilePreview("change_intent")} type="button">
+                      Mudar intenção
+                    </button>
+                    <button className="btn" onClick={() => void reconcilePreview("accept_preview_exception")} type="button">
+                      Aceitar exceção
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ---- SHIP ---- */}
+        {!activeFile && currentView === "ship" && (
+          <section className="view on panel-view">
+            <div className="panel-in">
+              <h1>Ship</h1>
+              <p className="lede">
+                Exporte ou publique sem lock-in. Republicar preserva o histórico e a proveniência.
+              </p>
+              <div className="panel-block">
+                <span className="tag">Ciclo de vida</span>
+                <div className="inline">
+                  <button className="btn pri" disabled={!project} onClick={() => void exportProject()} type="button">
+                    Exportar
+                  </button>
+                  <button className="btn" disabled={!project} onClick={() => void publishProject()} type="button">
+                    Publicar
+                  </button>
+                </div>
+                {exportManifest && (
+                  <div className="finding-card ok" style={{ marginTop: 12 }}>
+                    <b>
+                      {exportManifest.title} · v{exportManifest.version}
+                    </b>
+                    <small>{exportManifest.portabilityNote}</small>
+                  </div>
+                )}
+              </div>
+              {publications.length > 0 && (
+                <div className="panel-block">
+                  <span className="tag">Histórico de publicações</span>
+                  {publications.map((record) => (
+                    <div className="row-line" key={record.version}>
+                      <b>v{record.version}</b>
+                      <span className="k">{record.problem ?? record.note}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </main>
+
+      {/* CONTEXT DOCK */}
+      <aside className="dock">
+        <span className="tag">Contexto ativo</span>
+        <div className="agent-card">
+          <div className="agent-top">
+            <div className="agent-orb">{agentTarget[0]?.toUpperCase()}</div>
+            <div>
+              <span className="nm">{agentTarget}</span>
+              <small>
+                {agentSession
+                  ? agentSession.readOnly
+                    ? "sessão · somente leitura"
+                    : "sessão · escrita externa"
+                  : agentCapability
+                    ? `CLI · ${agentCapability.health.availability}`
+                    : "adapter não sondado"}
+              </small>
+            </div>
+          </div>
+          {!agentSession && (
+            <div className="agent-targets">
+              {AGENT_TARGETS.map((target) => (
+                <button
+                  key={target}
+                  className={agentTarget === target ? "on" : ""}
+                  onClick={() => setAgentTarget(target)}
+                  type="button"
+                >
+                  {target}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="krow">
+            <span>Escopo</span>
+            <b>{resource ? "recurso anexado" : "sem recurso"}</b>
+          </div>
+          <div className="krow">
+            <span>Disponibilidade</span>
+            <b
+              className={
+                agentCapability?.health.availability === "Ready"
+                  ? "ok"
+                  : agentCapability?.health.availability === "Unavailable"
+                    ? "bad"
+                    : ""
+              }
+            >
+              {agentCapability?.health.availability ?? "desconhecida"}
+            </b>
+          </div>
+          <div className="krow">
+            <span>Tokens (sessão)</span>
+            <b className="em">
+              {agentUsage.input} in · {agentUsage.output} out
+            </b>
+          </div>
+          <div className="meter">
+            <i style={{ width: agentSession ? "68%" : "0%" }} />
+          </div>
+          {!agentSession && (
+            <label className="agent-check">
+              <input
+                type="checkbox"
+                checked={allowWrites}
+                onChange={(event) => setAllowWrites(event.target.checked)}
+              />
+              Permitir escrita neste workspace
+            </label>
           )}
           <button
-            className="text-button"
+            className="btn"
             disabled={
               !project ||
               !resource ||
-              (!agentSession &&
-                agentCapability?.state === "available" &&
-                agentCapability.value.health.availability === "Unavailable")
+              (!agentSession && agentCapability?.health.availability === "Unavailable")
             }
-            onClick={() =>
-              void (agentSession ? cancelAgentSession() : startAgentSession())
-            }
+            onClick={() => void (agentSession ? disconnectAgent() : ensureAgentSession())}
             type="button"
           >
-            {agentSession ? "Encerrar sessão" : `Conectar ${agentTarget}`}{" "}
-            <span>→</span>
+            {agentSession ? "Encerrar sessão" : `Conectar ${agentTarget}`}
           </button>
-          {agentSession && (
-            <div className="guidance-empty">
-              <p>
-                {agentTask?.state === "available"
-                  ? `Tarefa ${agentTask.value} enviada. O transcript aparece na superfície de trabalho.`
-                  : "A superfície de trabalho mantém a conversa e a saída do agente."}
-              </p>
-              <p>
-                Custo desta sessão: {agentUsage.inputTokens} tokens de entrada ·{" "}
-                {agentUsage.outputTokens} de saída (reportado pelo adapter).
-              </p>
-            </div>
+          {agentCapability?.health.availability === "Unavailable" && !agentSession && (
+            <p style={{ marginTop: 8, fontSize: 11, color: "var(--faint)", lineHeight: 1.5 }}>
+              {agentCapability.health.detail ?? "O adapter ACPX não está pronto neste computador."}
+            </p>
           )}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">LOOP DA IDE</span>
-          <p>
-            {modelLoop
-              ? `${modelLoop.turns.length} turnos · parou: ${modelLoop.stopped}`
-              : "Loop controlado pela IDE (budget de turnos), provider local offline. API/gateway plugam no mesmo contrato."}
-          </p>
-          <button
-            className="text-button"
-            onClick={() => void runModelLoop()}
-            type="button"
-          >
-            Rodar loop local <span>→</span>
-          </button>
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">TERMINAL</span>
-          <strong>
-            {terminal?.state === "running" ? "PTY em execução" : "Terminal do workspace"}
-          </strong>
-          <p>
-            {terminalCall?.state === "failed"
-              ? `O host recusou o terminal: ${terminalCall.message}`
-              : terminal
-                ? terminal.detail
-                : "O host abre o shell no recurso anexado; a UI não escolhe executável nem caminho."}
-          </p>
-          <button
-            className="text-button"
-            disabled={!project || !resource}
-            onClick={() =>
-              void (terminal
-                ? terminal.state === "running"
-                  ? cancelWorkspaceInspection()
-                  : startWorkspaceTerminal()
-                : startWorkspaceTerminal())
-            }
-            type="button"
-          >
-            {terminal?.state === "running" ? "Encerrar terminal" : "Abrir terminal"}{" "}
-            <span>→</span>
-          </button>
-          {terminal && (
-            <TerminalSurface
-              lines={terminalOutput}
-              onCancel={() => void cancelWorkspaceInspection()}
-              onSubmit={(input) => void submitTerminalInput(input)}
-              running={terminal.state === "running"}
-            />
-          )}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">ESCOPO</span>
-          <strong>{resource ? "Recurso selecionado" : "Projeto inteiro"}</strong>
-          <p>
-            {resource
-              ? `${resource.kind === "repository" ? "Repositório" : "Diretório"} ativo: ${resource.canonicalPath}`
-              : "Anexe um diretório para habilitar terminal, agente e efeitos."}
-          </p>
-          {resources.length > 1 && (
-            <div className="guidance-empty">
-              <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
-            </div>
-          )}
-          {references.map((reference) => (
-            <div className="guidance-empty" key={reference.id}>
-              <strong>
-                {reference.kind === "service" ? "serviço" : "ambiente"}: {reference.name}
-              </strong>
-              <small>{reference.endpoint}</small>
-            </div>
-          ))}
-          {project && (
-            <>
-              <input
-                onChange={(event) => setReferenceName(event.target.value)}
-                placeholder="Nome (serviço/ambiente)"
-                value={referenceName}
-              />
-              <input
-                onChange={(event) => setReferenceEndpoint(event.target.value)}
-                placeholder="Endpoint/URL"
-                value={referenceEndpoint}
-              />
-              <div className="mode-group">
-                <button
-                  className="mode-button"
-                  disabled={!referenceName.trim() || !referenceEndpoint.trim()}
-                  onClick={() => void linkReference("service")}
-                  type="button"
-                >
-                  + Serviço
-                </button>
-                <button
-                  className="mode-button"
-                  disabled={!referenceName.trim() || !referenceEndpoint.trim()}
-                  onClick={() => void linkReference("environment")}
-                  type="button"
-                >
-                  + Ambiente
-                </button>
-              </div>
-            </>
-          )}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">CONFIGURAÇÃO</span>
-          <strong>
-            {config
-              ? `${config.mode.value} · ${config.permissions.value}`
-              : "Defaults reversíveis"}
-          </strong>
-          <p>
-            {config
-              ? `AAG local: ${config.localAag.value ? "detectado" : "ausente"} (${config.localAag.source}). Interface simples e arquivo completo compartilham o mesmo estado.`
-              : "Hybrid, Essential, balanced, harness 0/1, checkpoints e inferência idle desligada."}
-          </p>
-          {config && (
-            <>
-              <label>
-                <input
-                  checked={config.automaticCheckpoints.value}
-                  onChange={() =>
-                    void toggleConfig({
-                      automaticCheckpoints: !config.automaticCheckpoints.value,
-                    })
-                  }
-                  type="checkbox"
-                />{" "}
-                Checkpoints automáticos
-              </label>
-              <label>
-                <input
-                  checked={config.idlePaidInference.value}
-                  onChange={() =>
-                    void toggleConfig({
-                      idlePaidInference: !config.idlePaidInference.value,
-                    })
-                  }
-                  type="checkbox"
-                />{" "}
-                Inferência paga em idle
-              </label>
+        </div>
+
+        {decisionFile ? (
+          <div className="decision">
+            <div className="st-row">AGUARDANDO VOCÊ</div>
+            <h4>Gravar {decisionFile.path}?</h4>
+            <p>
+              O host escreve o payload exato só depois da sua aprovação. Um checkpoint reversível é
+              criado antes — dá para desfazer.
+            </p>
+            <div className="acts">
               <button
-                className="text-button"
-                onClick={() =>
-                  void hostClient
-                    .detectAndApplyConfigDefaults()
-                    .then((result) => {
-                      if (result.state === "available") setConfig(result.value);
-                    })
-                }
+                className="btn"
+                onClick={() => setActive({ kind: "file", path: decisionFile.path })}
                 type="button"
               >
-                Detectar recursos <span>→</span>
+                Ver o que muda
               </button>
-            </>
-          )}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">CICLO DE VIDA</span>
-          <strong>
-            {publications.length
-              ? `v${publications[publications.length - 1].version} publicada`
-              : exportManifest
-                ? `v${exportManifest.version} exportada`
-                : "Export e publish locais"}
-          </strong>
-          <p>
-            {exportManifest
-              ? exportManifest.portabilityNote
-              : "Exporte/publique sem lock-in nem infra ShinAI. Republicar preserva o histórico."}
-          </p>
-          <div className="mode-group">
-            <button
-              className="mode-button"
-              disabled={!project}
-              onClick={() => void exportProject()}
-              type="button"
-            >
-              Exportar
-            </button>
-            <button
-              className="mode-button"
-              disabled={!project}
-              onClick={() => void publishProject()}
-              type="button"
-            >
-              Publicar
-            </button>
+              <button className="btn pri" onClick={() => void approveFile(decisionFile)} type="button">
+                Permitir<span className="kbd">⏎</span>
+              </button>
+            </div>
           </div>
-          {publications.length > 0 && (
-            <>
-              <input
-                onChange={(event) => setRepublishProblem(event.target.value)}
-                placeholder="Problema observado…"
-                value={republishProblem}
-              />
-              <button
-                className="text-button"
-                disabled={!republishProblem.trim()}
-                onClick={() => void republishProject()}
-                type="button"
-              >
-                Republicar com correção <span>→</span>
+        ) : previewFailure ? (
+          <div className="decision">
+            <div className="st-row">DIVERGÊNCIA</div>
+            <h4>{previewFailure.divergence.subject}</h4>
+            <p>{previewFailure.failure.message}</p>
+            <div className="acts">
+              <button className="btn pri" onClick={() => setActive({ kind: "view", view: "evidence" })} type="button">
+                Reconciliar
               </button>
-              <div className="file-list" aria-label="Histórico de publicações">
-                {publications.map((record) => (
-                  <div className="guidance-empty" key={record.version}>
-                    <strong>v{record.version}</strong>
-                    <small>{record.problem ?? record.note}</small>
-                  </div>
-                ))}
+            </div>
+          </div>
+        ) : (
+          <div className="decision resolved">
+            <div className="st-row">SEM PENDÊNCIAS</div>
+            <h4>Nada aguardando você</h4>
+            <p>Cada efeito de escrita aparece aqui antes de tocar o disco.</p>
+          </div>
+        )}
+
+        <div className="prog">
+          <div className="prog-top">
+            <div className="prog-lvl">{level}</div>
+            <div className="who">
+              <b>{archetypes[0]?.archetype ?? "Explorer"}</b>
+              <small>nível {level} · leitura descritiva</small>
+            </div>
+          </div>
+          <div className="prog-bar">
+            <i style={{ width: `${levelPct}%` }} />
+          </div>
+          <div className="prog-next">{3 - (progress % 3)} outcomes verificados para o nível {level + 1}</div>
+          <div className="prog-earn">
+            <span className="tag">Rendeu ({progress})</span>
+            {archetypes.length === 0 ? (
+              <div className="e">
+                <em>0</em>ainda sem outcome verificado
               </div>
-            </>
-          )}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">PACKS DE DOMÍNIO</span>
-          <p>
-            {packReadiness
-              ? `${packReadiness.packId}: ${packReadiness.ready ? "pronto" : "bloqueado"} — ${packReadiness.note}`
-              : "Declarativos, explicáveis e reversíveis; readiness só em checkpoint."}
-          </p>
-          {packs.map((pack) => (
-            <div className="guidance-empty" key={pack.id}>
-              <strong>
-                {pack.name}
-                {appliedPacks.includes(pack.id) ? " · aplicado" : ""}
-              </strong>
-              <small>
-                {pack.checks.length} checks · {pack.reversible ? "reversível" : "não reversível"}
-              </small>
-              <div className="mode-group">
-                <button
-                  className="mode-button"
-                  onClick={() => void togglePack(pack)}
-                  type="button"
-                >
-                  {appliedPacks.includes(pack.id) ? "Reverter" : "Aplicar"}
-                </button>
-                <button
-                  className="mode-button"
-                  onClick={() => void checkPackReadiness(pack)}
-                  type="button"
-                >
-                  Readiness
-                </button>
-              </div>
-            </div>
-          ))}
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">CONTEXTO ENVIADO</span>
-          <strong>
-            {compiledContext?.state === "available"
-              ? `${compiledContext.value.usedChars}/${compiledContext.value.budgetChars} chars · ${compiledContext.value.segments.length} segmentos`
-              : "Compilado com proveniência"}
-          </strong>
-          <p>
-            {compiledContext?.state === "available"
-              ? `${compiledContext.value.droppedForBudget.length} descartados pelo budget. Policies e requisitos ficam verbatim.`
-              : "Só o escopo aplicável entra; origem e motivo de cada trecho ficam visíveis."}
-          </p>
-          {compiledContext?.state === "available" && (
-            <div className="file-list" aria-label="Segmentos do contexto">
-              {compiledContext.value.segments.map((segment) => (
-                <div className="guidance-empty" key={segment.origin}>
-                  <strong>
-                    {segment.origin}
-                    {segment.verbatim ? " · verbatim" : ""}
-                  </strong>
-                  <small>{segment.reason}</small>
+            ) : (
+              archetypes.map((reading) => (
+                <div className="e" key={reading.archetype}>
+                  <em>+{reading.outcomeIds.length}</em>
+                  {reading.description}
                 </div>
-              ))}
-            </div>
-          )}
-          <button
-            className="text-button"
-            disabled={!project}
-            onClick={() => void loadCompiledContext()}
-            type="button"
-          >
-            Ver contexto enviado <span>→</span>
-          </button>
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">HARNESS · CAMADA 0</span>
-          <strong>
-            {harness?.state === "available"
-              ? `${harness.value.passed} ok · ${harness.value.failed} falhas · ${harness.value.unknown} unknown · ${harness.value.notRun} não rodou`
-              : "Checks determinísticos"}
-          </strong>
-          <p>
-            {harness?.state === "available"
-              ? "Fatos verificados sem inferência paga. unknown e não-rodou nunca contam como aprovação."
-              : harness?.state === "failed"
-                ? harness.message
-                : harness?.state === "unavailable"
-                  ? "Abra o app desktop para rodar os checks no recurso."
-                  : "Build/segredos/dependências/git/efeitos, com estado e evidência explícitos."}
-          </p>
-          {harness?.state === "available" && (
-            <div className="file-list" aria-label="Findings do harness">
-              {harness.value.findings.map((finding) => (
-                <div
-                  className={`activity-item activity-item--${finding.state === "passed" ? "done" : finding.state === "failed" ? "active" : "unknown"}`}
-                  key={finding.id}
-                >
-                  <span className="activity-index">
-                    {finding.state === "passed"
-                      ? "●"
-                      : finding.state === "failed"
-                        ? "▲"
-                        : "○"}
-                  </span>
-                  <div>
-                    <strong>{finding.title}</strong>
-                    <small>
-                      {finding.state.toUpperCase()} · {finding.evidence}
-                      {finding.remediation ? ` — ${finding.remediation}` : ""}
-                    </small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <button
-            className="text-button"
-            disabled={!project || !resource}
-            onClick={() => void runHarness()}
-            type="button"
-          >
-            Rodar checks determinísticos <span>→</span>
-          </button>
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">NAVEGAÇÃO (AAG)</span>
-          <strong>
-            {aagCall?.state === "available"
-              ? "known" in aagCall.value
-                ? `${aagCall.value.known.related_symbols.length} relações`
-                : "Indisponível · unknown"
-              : "Provider opcional"}
-          </strong>
-          <p>
-            {aagCall?.state === "available"
-              ? "known" in aagCall.value
-                ? aagCall.value.known.related_symbols.slice(0, 6).join(" · ")
-                : aagCall.value.unknown.reason
-              : aagCall?.state === "failed"
-                ? aagCall.message
-                : aagCall?.state === "unavailable"
-                  ? "Abra o app desktop para consultar o AAG."
-                  : "AAG observa relações do que existe; sua ausência fica explícita como unknown, sem quebrar a IDE."}
-          </p>
-          <button
-            className="text-button"
-            disabled={!project}
-            onClick={() => void queryAagRelations()}
-            type="button"
-          >
-            Consultar relações <span>→</span>
-          </button>
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">APLICADO AGORA</span>
-          {appliedGuidance.length ? (
-            <div className="file-list" aria-label="Guidance aplicada agora">
-              {appliedGuidance.map((applied) => (
-                <div className="guidance-empty" key={applied.guidance.id}>
-                  <strong>{applied.guidance.name}</strong>
-                  <p>{applied.guidance.text}</p>
-                  <small>{applied.reason}</small>
-                </div>
-              ))}
+              ))
+            )}
+          </div>
+          <div className="prog-never">
+            nunca rende: <b>tokens, horas, linhas, prompts</b>
+          </div>
+        </div>
+      </aside>
+
+      {/* TIMELINE DRAWER */}
+      <div className={drawerOpen ? "drawer open" : "drawer"}>
+        <div className="drawer-in">
+          {activity.length === 0 ? (
+            <div className="tl-empty">
+              Sem eventos ainda. Ações reais (edições, checkpoints, decisões, evidências) aparecem
+              aqui em ordem.
             </div>
           ) : (
-            <div className="guidance-empty">
-              <span>◌</span>
-              <p>
-                Nenhuma guidance aplicável a esta atividade. Só o escopo
-                relevante entra no contexto do agente.
-              </p>
-            </div>
+            activity.map((event) => (
+              <div className="tl" key={event.id}>
+                <time>{event.ts}</time>
+                <span className={`k ${event.klass}`}>{event.kind}</span>
+                <span>{event.text}</span>
+              </div>
+            ))
           )}
-          <label className="intent-input-label" htmlFor="guidance-name">
-            Nova orientação
-          </label>
-          <input
-            id="guidance-name"
-            onChange={(event) => setGuidanceName(event.target.value)}
-            placeholder="Nome (ex.: tom de voz)"
-            value={guidanceName}
-          />
-          <textarea
-            aria-label="Texto da orientação"
-            onChange={(event) => setGuidanceText(event.target.value)}
-            placeholder="O que seguir daqui pra frente…"
-            rows={2}
-            value={guidanceText}
-          />
-          <div className="mode-group" aria-label="Destino da orientação">
-            <button
-              className="mode-button"
-              disabled={!guidanceName.trim() || !guidanceText.trim()}
-              onClick={() => void captureGuidance({ kind: "use_now" })}
-              type="button"
-            >
-              Só agora
-            </button>
-            <button
-              className="mode-button"
-              disabled={!guidanceName.trim() || !guidanceText.trim()}
-              onClick={() => void captureGuidance({ kind: "create_stable" })}
-              type="button"
-            >
-              Estável
-            </button>
-            <button
-              className="mode-button"
-              disabled={!guidanceName.trim() || !guidanceText.trim()}
-              onClick={() => void captureGuidance({ kind: "record_decision" })}
-              type="button"
-            >
-              Decisão
-            </button>
-          </div>
-        </section>
-        <section className="dock-section dock-section--bottom">
-          <span className="dock-label">EFFECTS</span>
-          <strong>
-            {effectState === "awaiting"
-              ? "1 aguardando aprovação"
-              : effectState === "written"
-                ? "1 efeito aplicado"
-                : effectState === "failed"
-                  ? "Efeito recusado pelo host"
-                  : "0 propostos"}
-          </strong>
-          <p>
-            {effectState === "awaiting"
-              ? "O payload exato só será escrito após a aprovação."
-              : effectState === "written"
-                ? "Snapshot e revisão causal foram registrados pelo host."
-                : "Nenhum efeito é autorizado por esta interface."}
-          </p>
-        </section>
-        <section className="dock-section">
-          <span className="dock-label">GAME MODE</span>
-          <strong>
-            {gameMode.enabled
-              ? `${verifiedProgress(gameMode)} outcomes verificados`
-              : "Oculto; receipts continuam ativos"}
-          </strong>
-          <p>
-            {readArchetypes(gameMode).length
-              ? readArchetypes(gameMode)
-                  .map((reading) => reading.archetype)
-                  .join(" · ")
-              : "Progresso só aparece após uma evidência independente."}
-          </p>
-          <button
-            className="text-button"
-            onClick={() =>
-              setGameMode((current) =>
-                setGameModeEnabled(current, !current.enabled),
-              )
-            }
-            type="button"
-          >
-            {gameMode.enabled ? "Ocultar Game Mode" : "Mostrar Game Mode"}{" "}
-            <span>→</span>
-          </button>
-        </section>
-      </aside>
-      <footer className="activity-strip" aria-label="Atividade do projeto">
-        <span className="activity-title">
-          ATIVIDADE
-          {gameMode.enabled
-            ? ` · ${verifiedProgress(gameMode)} VERIFICADOS`
-            : ""}
+        </div>
+      </div>
+
+      {/* PULSE STRIP */}
+      <footer
+        className="strip"
+        title="Clique para abrir a timeline"
+        onClick={() => setDrawerOpen((value) => !value)}
+      >
+        <span className="now">
+          <span className="live" />
+          <span className="txt">{stripText}</span>
         </span>
-        {initialActivity.map((item, index) => (
-          <div
-            className={`activity-item activity-item--${item.state}`}
-            key={item.id}
-          >
-            <span className="activity-index">0{index + 1}</span>
-            <div>
-              <strong>{item.label}</strong>
-              <small>
-                {item.id === "intent" && intent.trim()
-                  ? "Descrição em edição"
-                  : item.detail}
-              </small>
-            </div>
+        <div className="strand">
+          <div className="wire" />
+          {activity.slice(0, 5).map((event, index) => (
+            <span
+              key={event.id}
+              className={`notch ${event.klass}`}
+              style={{ left: `${12 + index * 13}%` }}
+              title={`${event.ts} ${event.kind}`}
+            />
+          ))}
+          <span className="head" />
+          <div className="buddy">
+            <span className="stage">{agentSession ? "CONSTRUINDO" : "PRONTO"}</span>
+            <div className="bod" />
           </div>
-        ))}
-        {hostActivity.map((entry, index) => (
-          <div className="activity-item activity-item--active" key={entry}>
-            <span className="activity-index">H{index + 1}</span>
-            <div>
-              <strong>Host</strong>
-              <small>{entry}</small>
-            </div>
-          </div>
-        ))}
-        <button className="activity-all" type="button">
-          Ver história <span>→</span>
-        </button>
+        </div>
+        <div className="stats">
+          <span>{workspaceFiles.length} arquivos</span>
+          <span className={previewHealthy ? "ok" : ""}>preview {previewHealthy ? "✓" : "—"}</span>
+          <span className={decisionFile ? "warn" : ""}>
+            {decisionFile ? "1 decisão" : "0 decisões"}
+          </span>
+          <span className="lvl-strip">nv {level}</span>
+          <span className="open-hint">timeline ▴</span>
+        </div>
       </footer>
+
+      {toast && (
+        <div className="toast show">
+          <span className="st" />
+          <span>{toast}</span>
+        </div>
+      )}
     </div>
   );
 }

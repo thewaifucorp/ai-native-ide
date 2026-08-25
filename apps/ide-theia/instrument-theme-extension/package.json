@@ -1,0 +1,29 @@
+{
+  "private": true,
+  "name": "instrument-theme-extension",
+  "version": "0.0.1",
+  "description": "Local Theia extension: reskins the workbench toward sketch 001 'Instrumento' — a dark-instrument color theme plus app-wide CSS (Geologica/DM Mono fonts, tight radii, restyled status bar).",
+  "license": "MIT",
+  "main": "lib/browser/instrument-frontend-module.js",
+  "types": "lib/browser/instrument-frontend-module.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "@theia/core": "1.74.1",
+    "@theia/monaco": "1.74.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rimraf lib"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/instrument-frontend-module"
+    }
+  ]
+}

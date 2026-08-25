@@ -1,0 +1,33 @@
+{
+  "private": true,
+  "name": "instrument-shell-extension",
+  "version": "0.0.1",
+  "description": "Local Theia extension (Phase 4 spike): reproduces the full sketch 001 'Instrumento' information architecture — 56px rail, 240px navigator, work surface, 288px context dock, 44px crumb titlebar, 42px pulse strip with timeline drawer — as Theia ReactWidgets mounted into the shell.",
+  "license": "MIT",
+  "main": "lib/browser/instrument-shell-module.js",
+  "types": "lib/browser/instrument-shell-module.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "@theia/core": "1.74.1",
+    "@theia/editor": "1.74.1",
+    "@theia/filesystem": "1.74.1",
+    "@theia/workspace": "1.74.1",
+    "engine-extension": "0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rimraf lib"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/instrument-shell-module",
+      "backend": "lib/node/instrument-backend-module"
+    }
+  ]
+}

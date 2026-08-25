@@ -1,0 +1,494 @@
+/* ============================================================
+   Sketch 001 "Instrumento" — FULL information architecture.
+   Phase 4 spike: the 001 <style> ported faithfully, scoped under
+   `.iws` (each region widget's root carries the class), plus the
+   overlay positioning that reassembles the four-column grid over a
+   suppressed native Theia shell. Fonts (Geologica / DM Mono) come
+   from the Phase-3 theme extension's @font-face — kept intact.
+   ============================================================ */
+
+/* ---- 001 tokens: defined on every region root, inherited by children ---- */
+.iws {
+  --bg: #101113;
+  --panel: #151619;
+  --panel-2: #1b1c20;
+  --raise: #24262b;
+  --raise-2: #2e3138;
+  --line: rgba(255, 255, 255, .07);
+  --line-2: rgba(255, 255, 255, .14);
+  --text: #e9eaec;
+  --mut: #9b9da4;
+  --faint: #85888f;
+  --step: #79a3d0;
+  --ok: #58b287;
+  --need: #d9a03c;
+  --bad: #e3655b;
+  --ext: #b98cd0; /* soft purple = third-party extension surface (Store door) */
+
+  --r1: 4px;
+  --r2: 7px;
+  --r3: 10px;
+  --h-ctl: 26px;
+  --h-ctl-lg: 30px;
+
+  --ui: "Geologica", system-ui, sans-serif;
+  --mono: "DM Mono", ui-monospace, monospace;
+  --mono-w: 500;
+
+  font: 400 13px/1.5 var(--ui);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.iws *, .iws *::before, .iws *::after { box-sizing: border-box; margin: 0; }
+.iws button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.iws ::selection { background: rgba(255, 255, 255, .16); }
+.iws input { caret-color: var(--text); }
+.iws svg.i {
+  width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none;
+  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+.iws .tag {
+  font: 600 10px/1 var(--ui);
+  letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+}
+
+/* ---- controls ---- */
+.iws .btn {
+  height: var(--h-ctl); display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 9px; border-radius: var(--r1);
+  font: 500 12px var(--ui); color: var(--mut);
+  background: transparent; white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.iws .btn:hover { background: var(--raise); color: var(--text); }
+.iws .btn:active { background: var(--raise-2); }
+.iws .btn.pri {
+  background: var(--text); color: var(--bg); font-weight: 600;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .16);
+}
+.iws .btn.pri:hover { background: #fff; }
+.iws .btn.lg { height: var(--h-ctl-lg); padding: 0 12px; font-size: 12.5px; }
+.iws .kbd { font: var(--mono-w) 10px var(--mono); opacity: .5; letter-spacing: 0; }
+
+/* ============================================================
+   REAL-SHELL SLOTS — the 001 chrome bound into genuine Theia shell
+   areas via InstrumentApplicationShell.createLayout(). No overlay,
+   no hidden native shell. Each `iws-*-host` node is a widget the
+   Lumino layout owns; the min/max sizes below are the size hints the
+   BoxLayout reads to pin the 56px rail / 44px crumb / 42px pulse.
+   The 240px navigator is the REAL @theia/navigator explorer in the
+   native left panel; the work surface and 288px dock live in the
+   native main and right areas.
+   ============================================================ */
+.iws-rail-host  { min-width: 56px; max-width: 56px; height: 100%; overflow: hidden; }
+.iws-crumb-host { min-height: 44px; max-height: 44px; width: 100%; overflow: hidden; }
+.iws-pulse-host { min-height: 42px; max-height: 42px; width: 100%; }
+.iws-work-host  { height: 100%; width: 100%; }
+.iws-dock-host  { height: 100%; width: 100%; }
+.iws-navmodes-host { min-height: 40px; max-height: 40px; width: 100%; overflow: hidden; }
+
+.iws-crumb-host .titlebar,
+.iws-rail-host .rail,
+.iws-work-host .work,
+.iws-dock-host .dock { width: 100%; height: 100%; }
+
+/* The BoxPanel that carries the far-left rail + workbench must fill its row. */
+#iws-center { min-height: 0; }
+
+/* ============================================================
+   M2 SHELL RECONCILIATION — eliminate leftover stock-Theia chrome
+   so the workbench reads as the clean 001 "Instrumento" grid.
+   ============================================================ */
+
+/* (1) Hide the native VERTICAL ACTIVITY BAR (the Explorer/Search/SCM/Debug/…
+   icon strip + its bottom settings/accounts cluster) on BOTH sides. This is the
+   whole `theia-app-sidebar-container` (tab bar + bottom menu widget); the DOCK
+   PANEL that holds the actual view content is a sibling and stays visible, so
+   revealing a view-container still shows its content. View switching is done by
+   the bespoke navigator "modes" row instead. */
+body.iws-shell .theia-app-sidebar-container { display: none !important; }
+
+/* (2) The navigator "modes" row — pinned strip at the top of the left column,
+   replacing the activity bar. Ported from sketch 003. */
+.iws .nav-modes {
+  display: flex; gap: 2px; margin: 7px 8px 3px; padding: 3px;
+  border-radius: var(--r1); background: var(--panel-2);
+}
+.iws .nav-mode {
+  flex: 1; height: 26px; border-radius: 3px; display: grid; place-items: center;
+  color: var(--faint); position: relative; transition: background .12s, color .12s;
+}
+.iws .nav-mode:hover { color: var(--text); background: var(--raise); }
+.iws .nav-mode.on { color: var(--text); background: var(--raise); }
+.iws .nav-mode .b {
+  position: absolute; right: 2px; top: 2px; min-width: 12px; height: 12px;
+  padding: 0 3px; border-radius: 6px; background: var(--need); color: #1a1200;
+  font: 600 8px/12px var(--mono); text-align: center;
+}
+
+/* The modes-row host + the real left panel share the 001 navigator surface. */
+.iws-navmodes-host { background: var(--panel); border-right: 1px solid var(--line); }
+
+/* (3) Pin the 001 grid widths and make the split handles non-draggable so the
+   instrument grid holds: rail 56 (a BoxPanel column — no handle), navigator/left
+   column 240, dock/right 288. min==max snaps them; the horizontal split handles
+   (direct children of the main content split) are made inert. The center editors
+   take the remaining space. */
+/* !important is required: Lumino's SplitLayout writes an inline `min-width`
+   (the natural content min) on each split child, and inline beats an id selector.
+   A CSS `!important` declaration outranks that inline min-width, and because
+   Lumino reserves split space from each child's COMPUTED min/max width, forcing
+   min==max here makes Lumino allocate exactly the 001 column widths. */
+#iws-left-column { min-width: 240px !important; max-width: 240px !important; }
+#theia-right-content-panel { min-width: 288px !important; max-width: 288px !important; }
+#theia-main-content-panel > .lm-SplitPanel-handle { pointer-events: none; }
+
+/* The real left panel fills the column below the modes row. */
+#iws-left-column #theia-left-content-panel { min-width: 0; width: 100%; }
+
+/* ============ TITLEBAR ============ */
+.iws .titlebar {
+  display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.iws .traffic { display: flex; gap: 7px; }
+.iws .traffic i { width: 11px; height: 11px; border-radius: 50%; background: var(--raise); }
+.iws .crumb { display: flex; align-items: baseline; gap: 8px; margin: 0 auto; }
+.iws .crumb .proj { font-weight: 600; font-size: 12.5px; }
+.iws .crumb .sep { color: var(--faint); }
+.iws .crumb .sess { font-size: 12.5px; color: var(--mut); }
+.iws .tb-right { display: flex; align-items: center; gap: 8px; }
+.iws .pill {
+  display: flex; align-items: center; gap: 6px; height: 24px;
+  font: var(--mono-w) 10.5px var(--mono); letter-spacing: .02em;
+  padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r1); color: var(--mut);
+}
+.iws .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.iws .gm-toggle {
+  display: flex; align-items: center; gap: 8px; height: 24px;
+  font: 600 10px var(--ui); letter-spacing: .1em; text-transform: uppercase;
+  padding: 0 7px; border: 1px solid var(--line); border-radius: var(--r1); color: var(--faint);
+  transition: color .2s, border-color .2s;
+}
+.iws .gm-toggle .sw { width: 22px; height: 12px; border-radius: 999px; background: var(--raise); position: relative; transition: background .2s; }
+.iws .gm-toggle .sw::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--faint); transition: transform .2s, background .2s;
+}
+body.game .iws .gm-toggle { color: var(--text); border-color: var(--line-2); }
+body.game .iws .gm-toggle .sw { background: rgba(255, 255, 255, .22); }
+body.game .iws .gm-toggle .sw::after { transform: translateX(10px); background: var(--text); }
+
+/* ============ RAIL ============ */
+.iws .rail {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 14px 0; border-right: 1px solid var(--line); background: var(--panel);
+}
+.iws .rail .logo {
+  width: 32px; height: 32px; border-radius: var(--r1); margin-bottom: 11px;
+  display: grid; place-items: center;
+  background: var(--raise); border: 1px solid var(--line-2);
+  color: var(--text); font: var(--mono-w) 13px var(--mono);
+}
+.iws .rail-btn {
+  width: 34px; height: 34px; border-radius: var(--r1); display: grid; place-items: center;
+  font: 600 11px var(--ui); letter-spacing: .02em; color: var(--faint); position: relative;
+  transition: background .12s, color .12s;
+}
+.iws .rail-btn:hover { background: var(--raise); color: var(--text); }
+.iws .rail-btn.on { background: var(--raise); color: var(--text); }
+.iws .rail-btn.on::before { content: ""; position: absolute; left: -11px; top: 8px; bottom: 8px; width: 2px; background: var(--text); }
+.iws .rail-btn .hb { position: absolute; right: 4px; top: 4px; width: 5px; height: 5px; border-radius: 50%; }
+.iws .rail-btn .hb.run { background: var(--text); }
+.iws .rail-btn .hb.need { background: var(--need); }
+.iws .rail-btn .cbadge {
+  position: absolute; right: 0; top: 0; min-width: 13px; height: 13px; padding: 0 3px;
+  border-radius: 7px; background: var(--need); color: #1a1200;
+  font: 600 8px/13px var(--mono); text-align: center;
+}
+.iws .rail-btn.home { color: var(--mut); }
+.iws .rail-btn.home:hover { color: var(--text); background: var(--raise); }
+/* One discreet Store door — the only extension-coloured element in the rail. */
+.iws .rail-btn.store { color: var(--ext); }
+.iws .rail-btn.store:hover { background: rgba(185, 140, 208, .14); }
+.iws .rail-div { width: 24px; height: 1px; background: var(--line-2); margin: 6px 0; }
+.iws .rail .sp { flex: 1; }
+.iws .avatar {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--raise); font: var(--mono-w) 10px var(--mono); color: var(--mut); position: relative;
+}
+body.game .iws .avatar::before {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  border: 1.5px solid var(--raise-2);
+  border-top-color: var(--step); border-right-color: var(--step);
+  transform: rotate(52deg);
+}
+.iws .lvl-badge {
+  display: none; position: absolute; right: -6px; bottom: -5px;
+  min-width: 14px; height: 14px; padding: 0 3px; border-radius: var(--r1);
+  background: var(--step); color: #0f1620;
+  font: 600 9px/14px var(--mono); text-align: center;
+}
+body.game .iws .lvl-badge { display: block; }
+
+/* ============ NAVIGATOR ============ */
+.iws .nav { overflow-y: auto; padding: 18px 12px; border-right: 1px solid var(--line); background: var(--panel); }
+.iws .proj-head { padding: 0 4px; }
+.iws .proj-head .name { font: 600 16px/1.2 var(--ui); letter-spacing: -.01em; }
+.iws .proj-head .meta { margin-top: 5px; font: 400 10.5px var(--mono); color: var(--faint); }
+.iws .nav-sec { margin-top: 22px; }
+.iws .nav-sec > .tag { display: block; padding: 0 6px 8px; }
+.iws .nav-item {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  height: 28px; padding: 0 6px; border-radius: var(--r1); font-size: 12.5px; color: var(--mut);
+  transition: background .12s, color .12s;
+}
+.iws .nav-item:hover { color: var(--text); background: var(--panel-2); }
+.iws .nav-item.on { color: var(--text); background: var(--raise); }
+.iws .nav-item svg.i { color: var(--faint); }
+.iws .nav-item.on svg.i { color: var(--text); }
+.iws .nav-item .n { margin-left: auto; font: var(--mono-w) 10px var(--mono); padding: 1px 5px; border-radius: 3px; background: var(--raise-2); color: var(--mut); }
+.iws .nav-item.on .n { background: rgba(0, 0, 0, .3); }
+.iws .nav-item .n.warn { color: var(--need); }
+.iws .res { padding: 8px 8px; margin-top: 4px; border-radius: var(--r1); border-left: 1px solid var(--line-2); transition: background .12s; }
+.iws .res:hover { background: var(--panel-2); }
+.iws .res b { display: block; font-weight: 500; font-size: 12px; }
+.iws .res small { display: flex; align-items: center; gap: 6px; margin-top: 3px; font: 400 10.5px var(--mono); color: var(--faint); }
+.iws .res small .st { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.iws .st.run { background: var(--text); }
+.iws .st.ok { background: var(--ok); }
+.iws .st.idle { background: var(--faint); }
+
+/* ============ WORK SURFACE ============ */
+.iws .work { min-width: 0; display: grid; grid-template-rows: 40px minmax(0, 1fr); background: var(--bg); }
+.iws .tabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--panel); }
+.iws .tab {
+  height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--faint); border-radius: 0;
+  border-right: 1px solid var(--line); transition: color .12s, background .12s;
+}
+.iws .tab:hover { color: var(--mut); background: var(--panel-2); }
+.iws .tab.on { background: var(--bg); color: var(--text); box-shadow: inset 0 2px 0 var(--text); }
+.iws .tab .mod { width: 6px; height: 6px; border-radius: 50%; background: var(--mut); }
+.iws .tab.file { font: 400 11px var(--mono); }
+.iws .tab.new { border-right: 0; color: var(--faint); padding: 0 11px; }
+
+/* -------- HOME view -------- */
+.iws .view { display: none; min-height: 0; }
+.iws .view.on { display: grid; }
+.iws #view-home { grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 1px; background: var(--line); }
+.iws #view-home > * { background: var(--bg); overflow-y: auto; }
+.iws .home-main { padding: 32px 36px 28px; }
+.iws .home-side { padding: 32px 24px 28px; background: var(--panel) !important; }
+.iws .h-sec { margin-bottom: 34px; }
+.iws .h-sec > .tag { display: block; margin-bottom: 14px; }
+.iws .continue .goal { font: 600 27px/1.3 var(--ui); letter-spacing: -.02em; max-width: 560px; text-wrap: balance; }
+.iws .continue .goal em { font-style: normal; color: var(--mut); }
+.iws .continue .next { margin-top: 16px; display: flex; align-items: center; gap: 14px; font-size: 12.5px; color: var(--mut); }
+.iws .continue .next .btn { flex: none; }
+.iws .now-list { max-width: 640px; border-top: 1px solid var(--line); }
+.iws .now-row { display: flex; align-items: baseline; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
+.iws .now-row .live { width: 7px; height: 7px; border-radius: 50%; background: var(--text); flex: none; align-self: flex-start; margin-top: 5px; animation: iws-breathe 2.4s ease-in-out infinite; }
+.iws .now-row .live.ok { background: var(--ok); animation: none; }
+.iws .now-row .who { font-weight: 500; font-size: 12.5px; flex: none; width: 158px; line-height: 1.4; }
+.iws .now-row .what { font-size: 12px; color: var(--mut); flex: 1; }
+.iws .now-row .meta { font: 400 10px var(--mono); color: var(--faint); flex: none; text-align: right; }
+.iws .need { max-width: 640px; }
+.iws .need-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 6px; border-radius: var(--r1); background: var(--panel); box-shadow: inset 2px 0 0 var(--need); }
+.iws .need-item .txt { min-width: 0; }
+.iws .need-item .txt b { display: block; font-weight: 500; font-size: 12.5px; }
+.iws .need-item .txt small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--mut); }
+.iws .need-item .acts { margin-left: auto; display: flex; gap: 2px; flex: none; }
+.iws .prod-map { display: grid; }
+.iws .prod-row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 6px; border-radius: var(--r1); font-size: 12.5px; transition: background .12s; }
+.iws .prod-row:hover { background: var(--panel-2); }
+.iws .prod-row .st { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.iws .prod-row .st.run { background: var(--step); }
+.iws .prod-row .nm { color: var(--text); font-weight: 500; }
+.iws .prod-row .ds { color: var(--faint); font-size: 11px; margin-left: 2px; }
+.iws .prod-row .lb { margin-left: auto; font: 400 10px var(--mono); color: var(--faint); }
+.iws .prod-row .lb.ok { color: var(--ok); }
+.iws .prod-row .lb.run { color: var(--step); }
+.iws .prod-row .lb.warn { color: var(--need); }
+.iws .recent { margin-top: 28px; }
+.iws .recent > .tag { display: block; margin-bottom: 6px; }
+.iws .recent .r { display: flex; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--mut); }
+.iws .recent .r time { font: 400 10px var(--mono); color: var(--faint); flex: none; width: 42px; padding-top: 2px; }
+.iws .recent .r em { font-style: normal; color: var(--text); }
+
+/* -------- BUILD view -------- */
+.iws #view-build { grid-template-columns: minmax(340px, .9fr) minmax(380px, 1.1fr); gap: 1px; background: var(--line); }
+.iws #view-build > * { background: var(--bg); min-height: 0; }
+.iws .conv { display: flex; flex-direction: column; overflow: hidden; }
+.iws .conv-scroll { flex: 1; overflow-y: auto; padding: 26px 28px 10px; }
+.iws .conv .goal { margin: 0 0 24px; font: 600 19px/1.35 var(--ui); letter-spacing: -.015em; max-width: 420px; text-wrap: balance; }
+.iws .msg { margin-bottom: 18px; max-width: 92%; }
+.iws .msg.user { margin-left: auto; }
+.iws .msg.user .bubble { font: 400 13px/1.5 var(--ui); color: var(--text); padding: 11px 14px; border-radius: var(--r2) var(--r2) 2px var(--r2); background: var(--panel-2); }
+.iws .msg.agent .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font: var(--mono-w) 10.5px var(--mono); letter-spacing: .04em; color: var(--mut); }
+.iws .msg.agent .head .live { width: 6px; height: 6px; border-radius: 50%; background: var(--text); animation: iws-breathe 2.4s ease-in-out infinite; }
+.iws .msg.agent .body { font-size: 12.5px; line-height: 1.55; color: var(--mut); }
+.iws .msg.agent .body strong { color: var(--text); font-weight: 500; }
+.iws .steps { margin-top: 12px; border-left: 1px solid var(--line-2); padding-left: 14px; display: grid; gap: 8px; }
+.iws .step { display: flex; align-items: center; gap: 9px; font: 400 11px var(--mono); color: var(--faint); }
+.iws .step svg.i { width: 12px; height: 12px; }
+.iws .step.done { color: var(--mut); }
+.iws .step.done svg.i { color: var(--ok); }
+.iws .step.run { color: var(--step); }
+.iws .step.run svg.i { animation: iws-breathe 1.6s infinite; }
+.iws .composer { margin: 10px 20px 18px; padding: 12px 13px; border: 1px solid var(--line-2); border-radius: var(--r2); background: var(--panel); transition: border-color .2s; }
+.iws .composer:focus-within { border-color: var(--faint); }
+.iws .composer input { width: 100%; border: 0; outline: 0; background: none; color: var(--text); font: 400 13px var(--ui); }
+.iws .composer input::placeholder { color: var(--faint); }
+.iws .composer .foot { display: flex; justify-content: space-between; gap: 14px; margin-top: 10px; font: 400 10px var(--mono); color: var(--faint); }
+.iws .composer .foot .hint em { color: var(--mut); font-style: normal; }
+.iws .preview { display: grid; grid-template-rows: 40px minmax(0, 1fr) auto; }
+.iws .pv-bar { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--faint); }
+.iws .pv-url { flex: 1; padding: 5px 9px; border-radius: var(--r1); background: var(--panel-2); font: 400 10.5px var(--mono); color: var(--faint); }
+.iws .pv-body { overflow-y: auto; padding: 26px; background: var(--panel); }
+.iws .site { max-width: 520px; margin: 0 auto; border-radius: var(--r3); overflow: hidden; background: #f7f7f5; color: #1c1d1f; box-shadow: 0 16px 40px rgba(0, 0, 0, .4), 0 2px 8px rgba(0, 0, 0, .25); font-family: var(--ui); }
+.iws .site-nav { display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid #e3e3df; }
+.iws .site-brand { font: 600 12px var(--ui); letter-spacing: .1em; }
+.iws .site-cta { padding: 7px 14px; border-radius: 6px; background: #1c1d1f; color: #f7f7f5; font: 600 11.5px var(--ui); }
+.iws .site-hero { padding: 30px 22px 8px; }
+.iws .site-hero h2 { font: 600 25px/1.15 var(--ui); letter-spacing: -.025em; }
+.iws .site-hero p { margin-top: 8px; font-size: 12.5px; color: #71716c; max-width: 340px; }
+.iws .bids { padding: 18px 22px 24px; display: grid; gap: 8px; }
+.iws .bid { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid #e3e3df; border-radius: 8px; background: #fff; }
+.iws .bid .rk { font: var(--mono-w) 13px var(--mono); color: #b0b0aa; text-align: center; }
+.iws .bid b { display: block; font-size: 13px; font-weight: 600; }
+.iws .bid small { color: #8f8f89; font-size: 11px; }
+.iws .bid .pr { font: var(--mono-w) 13px var(--mono); }
+.iws .bid.first { border-color: #1c1d1f; }
+.iws .bid.first .rk { color: #1c1d1f; }
+.iws .pv-foot { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--panel); box-shadow: inset 2px 0 0 var(--need); font-size: 11.5px; color: var(--mut); }
+.iws .pv-foot b { color: var(--text); font-weight: 500; }
+.iws .pv-foot .btn { margin-left: auto; }
+
+/* ============ CONTEXT DOCK ============ */
+.iws .dock { overflow-y: auto; padding: 18px 14px; border-left: 1px solid var(--line); background: var(--panel); }
+.iws .dock > .tag { display: block; margin-bottom: 12px; padding: 0 2px; }
+.iws .agent-card { border-radius: var(--r2); background: var(--panel-2); padding: 12px; }
+.iws .agent-top { display: flex; align-items: center; gap: 10px; }
+.iws .agent-orb { width: 30px; height: 30px; border-radius: var(--r1); display: grid; place-items: center; background: var(--raise); font: var(--mono-w) 12px var(--mono); color: var(--text); }
+.iws .agent-top .nm { font-weight: 600; font-size: 13px; }
+.iws .agent-top small { display: block; font: 400 10px var(--mono); color: var(--faint); margin-top: 2px; }
+.iws .krow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 9px; font-size: 11px; color: var(--faint); }
+.iws .krow b { font: var(--mono-w) 10.5px var(--mono); color: var(--mut); text-align: right; }
+.iws .krow b.em { color: var(--text); }
+.iws .meter { height: 3px; border-radius: 2px; background: var(--raise); overflow: hidden; margin-top: 5px; }
+.iws .meter i { display: block; height: 100%; background: var(--mut); }
+.iws .decision { margin-top: 12px; padding: 12px; border-radius: var(--r2); background: var(--panel-2); box-shadow: inset 2px 0 0 var(--need); }
+.iws .decision .st-row { display: flex; align-items: center; gap: 7px; font: var(--mono-w) 10px var(--mono); letter-spacing: .04em; color: var(--need); }
+.iws .decision h4 { margin: 8px 0 5px; font: 600 13.5px/1.35 var(--ui); }
+.iws .decision p { font-size: 11.5px; line-height: 1.5; color: var(--mut); }
+.iws .decision .acts { display: flex; justify-content: flex-end; gap: 2px; margin-top: 10px; }
+.iws .decision.resolved { box-shadow: inset 2px 0 0 var(--ok); }
+.iws .decision.resolved .st-row { color: var(--ok); }
+/* M3 governed-write diff preview (real ide-diff hunks) inside the decision card */
+.iws .decision .diff { margin: 8px 0 2px; padding: 8px 9px; border-radius: var(--r2); background: var(--panel); border: 1px solid var(--line, rgba(255,255,255,.06)); max-height: 168px; overflow: auto; }
+.iws .decision .diff .dl { font: 400 10.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--faint); }
+.iws .decision .diff .dl.added { color: var(--ok); }
+.iws .decision .diff .dl.removed { color: var(--need); }
+
+/* Game Mode progression */
+.iws .prog { display: none; margin-top: 12px; padding: 12px; border-radius: var(--r2); background: var(--panel-2); }
+body.game .iws .prog { display: block; }
+.iws .prog-top { display: flex; align-items: center; gap: 10px; }
+.iws .prog-lvl { width: 32px; height: 32px; border-radius: var(--r1); display: grid; place-items: center; background: rgba(121, 163, 208, .14); color: var(--step); font: 600 15px var(--mono); }
+.iws .prog-top .who b { display: block; font-weight: 600; font-size: 13px; }
+.iws .prog-top .who small { display: block; margin-top: 1px; font: 400 10px var(--mono); color: var(--faint); }
+.iws .prog-bar { margin-top: 11px; height: 3px; border-radius: 2px; background: var(--raise); overflow: hidden; }
+.iws .prog-bar i { display: block; height: 100%; background: var(--step); }
+.iws .prog-next { margin-top: 6px; font: 400 10px var(--mono); color: var(--faint); }
+.iws .prog-earn { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.iws .prog-earn > .tag { display: block; margin-bottom: 7px; }
+.iws .prog-earn .e { display: flex; gap: 8px; font-size: 11px; color: var(--mut); padding: 2px 0; }
+.iws .prog-earn .e em { font: var(--mono-w) 10px var(--mono); font-style: normal; color: var(--step); flex: none; width: 16px; }
+.iws .prog-never { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); font: 400 9.5px/1.5 var(--mono); color: var(--faint); }
+.iws .prog-never b { color: var(--mut); font-weight: 400; }
+.iws .prog-arch { margin-top: 9px; font: 400 9.5px var(--mono); color: var(--faint); }
+.iws .prog-arch button { color: var(--mut); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Marco atual (Home side, Game Mode) */
+.iws .quest { display: none; margin-top: 24px; padding: 12px; border-radius: var(--r2); background: var(--panel-2); }
+body.game .iws .quest { display: block; }
+.iws .quest .tag { color: var(--step); }
+.iws .quest p { margin-top: 8px; font: 500 13px/1.45 var(--ui); color: var(--text); }
+.iws .quest .qbar { margin-top: 10px; height: 3px; border-radius: 2px; background: var(--raise); overflow: hidden; }
+.iws .quest .qbar i { display: block; height: 100%; width: 60%; background: var(--step); }
+.iws .quest small { display: block; margin-top: 7px; font: 400 10px var(--mono); color: var(--faint); }
+
+/* ============ PULSE LINE + TIMELINE DRAWER ============ */
+.iws .drawer {
+  position: fixed; z-index: 40; left: 56px; right: 0; bottom: 64px; height: 190px;
+  background: var(--panel); border-top: 1px solid var(--line);
+  box-shadow: 0 -12px 28px rgba(0, 0, 0, .4);
+  transform: translateY(calc(100% + 64px)); opacity: 0; pointer-events: none;
+  transition: transform .26s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
+}
+.iws .drawer.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
+.iws .drawer-in { padding: 14px 22px; display: grid; gap: 7px; height: 100%; overflow-y: auto; align-content: start; }
+.iws .tl { display: flex; align-items: baseline; gap: 14px; font-size: 11.5px; color: var(--mut); }
+.iws .tl time { font: 400 10px var(--mono); color: var(--faint); width: 44px; flex: none; }
+.iws .tl .k { font: var(--mono-w) 10px var(--mono); width: 86px; flex: none; letter-spacing: .04em; color: var(--faint); }
+.iws .tl .k.ck { color: var(--ok); }
+.iws .tl .k.ed { color: var(--step); }
+.iws .tl .k.dc { color: var(--need); }
+.iws .tl .k.ev { color: var(--need); }
+.iws .tl .undo { margin-left: auto; font: 400 10px var(--mono); color: var(--faint); text-decoration: underline; text-underline-offset: 2px; }
+
+.iws .strip {
+  position: relative; width: 100%; height: 100%;
+  display: flex; align-items: center; gap: 18px; padding: 0 16px;
+  border-top: 1px solid var(--line); background: var(--panel);
+  cursor: pointer; user-select: none; pointer-events: auto;
+}
+.iws .strip .now { display: flex; align-items: center; gap: 8px; flex: none; font: 400 10.5px var(--mono); color: var(--text); }
+.iws .strip .now .live { width: 6px; height: 6px; border-radius: 50%; background: var(--text); animation: iws-breathe 1.8s infinite; }
+.iws .strand { flex: 1; position: relative; height: 100%; }
+.iws .strand .wire { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: linear-gradient(90deg, var(--line-2) 0%, rgba(121, 163, 208, .6) 72%, transparent 72%); }
+.iws .notch { position: absolute; top: 50%; transform: translate(-50%, -50%); }
+.iws .notch.ck { width: 7px; height: 7px; border-radius: 50%; background: var(--bg); border: 1.5px solid var(--ok); }
+.iws .notch.ed { width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
+.iws .notch.dc { width: 8px; height: 8px; background: var(--need); border-radius: 1px; transform: translate(-50%, -50%) rotate(45deg); animation: iws-breathe 1.6s infinite; }
+.iws .notch.dc.done { background: var(--ok); animation: none; }
+.iws .strand .head { position: absolute; left: 72%; top: 50%; transform: translate(-50%, -50%); width: 9px; height: 9px; border-radius: 50%; background: var(--step); }
+.iws .strand .head::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1px solid rgba(121, 163, 208, .55); animation: iws-ripple 2s ease-out infinite; }
+.iws .buddy { display: none; position: absolute; left: 72%; top: 50%; transform: translate(-50%, -58%); }
+body.game .iws .buddy { display: block; }
+body.game .iws .strand .head { opacity: 0; }
+.iws .buddy .bod { width: 18px; height: 15px; border-radius: 8px 8px 5px 5px; background: var(--step); animation: iws-bob 2.2s ease-in-out infinite; position: relative; }
+.iws .buddy .bod::before, .iws .buddy .bod::after { content: ""; position: absolute; top: 5px; width: 2.5px; height: 4px; border-radius: 2px; background: #141c26; animation: iws-blink 4.6s infinite; }
+.iws .buddy .bod::before { left: 5px; }
+.iws .buddy .bod::after { right: 5px; }
+.iws .buddy .stage { position: absolute; bottom: calc(100% + 3px); left: 50%; transform: translateX(-50%); font: var(--mono-w) 8.5px var(--mono); letter-spacing: .08em; color: var(--step); white-space: nowrap; }
+.iws .strip .stats { display: flex; align-items: center; gap: 14px; flex: none; font: 400 10.5px var(--mono); color: var(--faint); }
+.iws .strip .stats .ok { color: var(--ok); }
+.iws .strip .stats .warn { color: var(--need); }
+.iws .strip .lvl-strip { display: none; color: var(--step); }
+body.game .iws .strip .lvl-strip { display: inline; }
+.iws .strip .open-hint { font: 400 10px var(--mono); color: var(--faint); }
+
+/* ============ TOAST ============ */
+.iws .toast {
+  position: fixed; right: 22px; bottom: 60px; z-index: 50; pointer-events: auto;
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--r2);
+  background: var(--raise); border: 1px solid var(--line-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45); font-size: 12.5px;
+  opacity: 0; transform: translateY(8px); pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+.iws .toast.show { opacity: 1; transform: none; pointer-events: auto; }
+.iws .toast .st { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+
+/* ============ animations ============ */
+@keyframes iws-breathe { 50% { opacity: .3; } }
+@keyframes iws-ripple { from { transform: scale(.5); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+@keyframes iws-bob { 50% { transform: translateY(-2.5px); } }
+@keyframes iws-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .iws *, .iws *::before, .iws *::after { animation: none !important; transition: none !important; }
+}

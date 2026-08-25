@@ -1,0 +1,69 @@
+{
+  "private": true,
+  "name": "ide-theia-spike",
+  "version": "0.0.1",
+  "description": "Minimal Eclipse Theia browser app spike (Phase 1 R&D)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "engine-extension": "link:engine-extension",
+    "instrument-theme-extension": "link:instrument-theme-extension",
+    "instrument-shell-extension": "link:instrument-shell-extension",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@theia/core": "1.74.1",
+    "@theia/editor": "1.74.1",
+    "@theia/filesystem": "1.74.1",
+    "@theia/workspace": "1.74.1",
+    "@theia/navigator": "1.74.1",
+    "@theia/scm": "1.74.1",
+    "@theia/search-in-workspace": "1.74.1",
+    "@theia/monaco": "1.74.1",
+    "@theia/terminal": "1.74.1",
+    "@theia/preferences": "1.74.1",
+    "@theia/messages": "1.74.1",
+    "@theia/plugin-ext": "1.74.1",
+    "@theia/plugin-ext-vscode": "1.74.1",
+    "@theia/vsx-registry": "1.74.1"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.74.1",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "prepare": "theia build --mode development",
+    "clean": "theia clean",
+    "patch:drivelist": "node scripts/patch-drivelist.js",
+    "build:ext": "tsc -p engine-extension && tsc -p instrument-theme-extension && tsc -p instrument-shell-extension",
+    "build": "yarn build:ext && theia build --mode development",
+    "download:plugins": "theia download:plugins",
+    "start": "VSX_REGISTRY_URL=https://open-vsx.org theia start ./workspace --plugins=local-dir:plugins --hostname 0.0.0.0 --port 3010"
+  },
+  "theia": {
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Instrument · IDE (001 spike)",
+        "defaultTheme": "instrument-dark",
+        "preferences": {
+          "files.enableTrash": false,
+          "security.workspace.trust.enabled": false,
+          "workbench.colorTheme": "instrument-dark",
+          "window.menuBarVisibility": "hidden",
+          "editor.fontFamily": "'DM Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace",
+          "editor.fontSize": 13,
+          "editor.lineHeight": 20,
+          "terminal.integrated.fontFamily": "'DM Mono', ui-monospace, monospace"
+        }
+      }
+    }
+  },
+  "theiaPluginsDir": "plugins",
+  "theiaPlugins": {
+    "mtxr.sqltools": "https://open-vsx.org/api/mtxr/sqltools/0.28.6/file/mtxr.sqltools-0.28.6.vsix"
+  }
+}

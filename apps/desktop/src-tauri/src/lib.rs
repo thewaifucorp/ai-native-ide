@@ -1398,23 +1398,18 @@ async fn navigate_subject(
     let truth = bridge.truth_list().await;
     // The implementation hop is the set of consumers each source of truth binds
     // to the subject: they are the code/resources that realise the declaration.
-    let implementations: Vec<ide_context::ImplementationRef> = truth
-        .iter()
-        .filter(|declaration| declaration.subject == subject)
-        .flat_map(|declaration| {
-            declaration
-                .consumers
-                .iter()
-                .enumerate()
-                .map(move |(index, consumer)| ide_context::ImplementationRef {
-                    id: format!("{}:{index}", declaration.id),
-                    subject: subject.clone(),
-                    location: consumer.clone(),
-                    kind: "consumer".to_owned(),
-                    provenance: format!("truth {}", declaration.authority_path),
-                })
-        })
-        .collect();
+    let mut implementations: Vec<ide_context::ImplementationRef> = Vec::new();
+    for declaration in truth.iter().filter(|d| d.subject == subject) {
+        for (index, consumer) in declaration.consumers.iter().enumerate() {
+            implementations.push(ide_context::ImplementationRef {
+                id: format!("{}:{index}", declaration.id),
+                subject: subject.clone(),
+                location: consumer.clone(),
+                kind: "consumer".to_owned(),
+                provenance: format!("truth {}", declaration.authority_path),
+            });
+        }
+    }
     let inputs = ContextInputs {
         intent: String::new(),
         applied_guidance: Vec::new(),
@@ -1742,3 +1737,5 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("failed to run AI-Native IDE desktop host");
 }
+
+// build: reembed frontend assets (001 shell)
