@@ -34,6 +34,7 @@ import {
   type PublishRecord,
   type Hunk,
   type LoopTranscript,
+  type ProjectReference,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -155,6 +156,9 @@ function App() {
     outputTokens: 0,
   });
   const [modelLoop, setModelLoop] = useState<LoopTranscript | null>(null);
+  const [references, setReferences] = useState<ProjectReference[]>([]);
+  const [referenceName, setReferenceName] = useState("");
+  const [referenceEndpoint, setReferenceEndpoint] = useState("");
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
@@ -679,6 +683,15 @@ function App() {
     }
   }
   useEffect(() => {
+    if (!project) {
+      setReferences([]);
+      return;
+    }
+    void hostClient.listProjectReferences(project.id).then((result) => {
+      if (result.state === "available") setReferences(result.value);
+    });
+  }, [project]);
+  useEffect(() => {
     void hostClient.listPacks().then((result) => {
       if (result.state === "available") setPacks(result.value);
     });
@@ -732,6 +745,26 @@ function App() {
         agentSession?.sessionId,
       ),
     );
+  }
+  async function refreshReferences(projectId: string) {
+    const result = await hostClient.listProjectReferences(projectId);
+    if (result.state === "available") setReferences(result.value);
+  }
+  async function linkReference(kind: "service" | "environment") {
+    if (!project || !referenceName.trim() || !referenceEndpoint.trim()) return;
+    const id = `${kind}:${referenceName.trim().toLowerCase().replace(/\s+/g, "-")}`;
+    const result = await hostClient.linkReference(
+      id,
+      kind,
+      referenceName.trim(),
+      referenceEndpoint.trim(),
+      project.id,
+    );
+    if (result.state === "available") {
+      setReferenceName("");
+      setReferenceEndpoint("");
+      await refreshReferences(project.id);
+    }
   }
   async function runModelLoop() {
     const result = await hostClient.runModelLoop(agentPrompt || intent, 3);
@@ -1671,6 +1704,46 @@ function App() {
             <div className="guidance-empty">
               <p>{resources.length} recursos pertencem a este projeto; terminal, agente e editor usam somente o recurso selecionado.</p>
             </div>
+          )}
+          {references.map((reference) => (
+            <div className="guidance-empty" key={reference.id}>
+              <strong>
+                {reference.kind === "service" ? "serviço" : "ambiente"}: {reference.name}
+              </strong>
+              <small>{reference.endpoint}</small>
+            </div>
+          ))}
+          {project && (
+            <>
+              <input
+                onChange={(event) => setReferenceName(event.target.value)}
+                placeholder="Nome (serviço/ambiente)"
+                value={referenceName}
+              />
+              <input
+                onChange={(event) => setReferenceEndpoint(event.target.value)}
+                placeholder="Endpoint/URL"
+                value={referenceEndpoint}
+              />
+              <div className="mode-group">
+                <button
+                  className="mode-button"
+                  disabled={!referenceName.trim() || !referenceEndpoint.trim()}
+                  onClick={() => void linkReference("service")}
+                  type="button"
+                >
+                  + Serviço
+                </button>
+                <button
+                  className="mode-button"
+                  disabled={!referenceName.trim() || !referenceEndpoint.trim()}
+                  onClick={() => void linkReference("environment")}
+                  type="button"
+                >
+                  + Ambiente
+                </button>
+              </div>
+            </>
           )}
         </section>
         <section className="dock-section">

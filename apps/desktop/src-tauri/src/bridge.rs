@@ -39,6 +39,7 @@ use ide_lifecycle::{ExportInputs, ExportManifest, ExportedResource, PublishLog, 
 use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, PackRegistry, ReadinessVerdict};
 use ide_reconciliation::CausalLinks;
+use ide_references::{ProjectReference, ReferenceKind, ReferenceRegistry};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -186,6 +187,7 @@ pub struct DesktopBridge {
     config: Mutex<ConfigStore>,
     packs: Mutex<PackRegistry>,
     publish_log: Mutex<PublishLog>,
+    references: Mutex<ReferenceRegistry>,
     exports_dir: PathBuf,
 }
 
@@ -214,8 +216,34 @@ impl DesktopBridge {
             config: Mutex::new(ConfigStore::open(data_directory.join("config"))?),
             packs: Mutex::new(PackRegistry::open(data_directory.join("packs"))?),
             publish_log: Mutex::new(PublishLog::open(data_directory.join("lifecycle"))?),
+            references: Mutex::new(ReferenceRegistry::open(data_directory.join("references"))?),
             exports_dir: data_directory.join("exports"),
         })
+    }
+
+    // --- Non-filesystem references (services / environments) -------------
+
+    pub async fn link_reference(
+        &self,
+        id: &str,
+        kind: ReferenceKind,
+        name: &str,
+        endpoint: &str,
+        project_id: &str,
+    ) -> anyhow::Result<ProjectReference> {
+        validate_identifier("project id", project_id)?;
+        self.references
+            .lock()
+            .await
+            .link(id, kind, name, endpoint, project_id)
+    }
+
+    pub async fn project_references(&self, project_id: &str) -> Vec<ProjectReference> {
+        self.references.lock().await.for_project(project_id)
+    }
+
+    pub async fn unlink_reference(&self, id: &str, project_id: &str) -> anyhow::Result<()> {
+        self.references.lock().await.unlink(id, project_id)
     }
 
     // --- Export / publish / republish -----------------------------------

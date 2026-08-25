@@ -335,6 +335,15 @@ export interface PublishRecord {
 }
 export type ConfirmationDecision = "proceed" | "confirm_first";
 
+export type ReferenceKind = "service" | "environment";
+export interface ProjectReference {
+  id: string;
+  kind: ReferenceKind;
+  name: string;
+  endpoint: string;
+  projects: string[];
+}
+
 export type PackCapability =
   | "read_workspace"
   | "run_deterministic_check"
@@ -646,6 +655,21 @@ interface HostCommandMap {
     args: { packId: string; passed: string[]; failed: string[] };
     result: ReadinessVerdict;
   };
+  link_reference: {
+    args: {
+      id: string;
+      kind: ReferenceKind;
+      name: string;
+      endpoint: string;
+      projectId: string;
+    };
+    result: ProjectReference;
+  };
+  list_project_references: {
+    args: { projectId: string };
+    result: ProjectReference[];
+  };
+  unlink_reference: { args: { id: string; projectId: string }; result: void };
   export_project: { args: { projectId: string }; result: ExportManifest };
   publish_project: { args: { projectId: string }; result: PublishRecord };
   republish_project: {
@@ -872,6 +896,17 @@ export interface HostClient {
     passed: string[],
     failed: string[],
   ): Promise<HostCall<ReadinessVerdict>>;
+  linkReference(
+    id: string,
+    kind: ReferenceKind,
+    name: string,
+    endpoint: string,
+    projectId: string,
+  ): Promise<HostCall<ProjectReference>>;
+  listProjectReferences(
+    projectId: string,
+  ): Promise<HostCall<ProjectReference[]>>;
+  unlinkReference(id: string, projectId: string): Promise<HostCall<void>>;
   exportProject(projectId: string): Promise<HostCall<ExportManifest>>;
   publishProject(projectId: string): Promise<HostCall<PublishRecord>>;
   republishProject(
@@ -1110,6 +1145,12 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
     revertPack: (packId) => call("revert_pack", { packId }),
     packReadiness: (packId, passed, failed) =>
       call("pack_readiness", { packId, passed, failed }),
+    linkReference: (id, kind, name, endpoint, projectId) =>
+      call("link_reference", { id, kind, name, endpoint, projectId }),
+    listProjectReferences: (projectId) =>
+      call("list_project_references", { projectId }),
+    unlinkReference: (id, projectId) =>
+      call("unlink_reference", { id, projectId }),
     exportProject: (projectId) => call("export_project", { projectId }),
     publishProject: (projectId) => call("publish_project", { projectId }),
     republishProject: (projectId, problem, relatedResources) =>

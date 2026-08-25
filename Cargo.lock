@@ -37,6 +37,7 @@ dependencies = [
  "ide-modes",
  "ide-packs",
  "ide-reconciliation",
+ "ide-references",
  "ide-semantic",
  "notify",
  "portable-pty",
@@ -2011,6 +2012,15 @@ dependencies = [
 name = "ide-reconciliation"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ide-references"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
 ]

@@ -44,6 +44,7 @@ use ide_lifecycle::{ConfirmationDecision, ExportManifest, PublishRecord};
 use ide_model_loop::{LocalEchoProvider, LoopConfig, LoopTranscript};
 use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, ReadinessVerdict};
+use ide_references::{ProjectReference, ReferenceKind};
 use ide_semantic::{EvaluationBudget, SemanticReport};
 use model::{HostStatus, TauriViabilityReport};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1053,6 +1054,43 @@ async fn promote_prototype(
         .await
 }
 
+/// Links a non-filesystem reference (a service or environment) to a project.
+/// Shared by id, so the same service can belong to several projects.
+#[tauri::command]
+async fn link_reference(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    id: String,
+    kind: ReferenceKind,
+    name: String,
+    endpoint: String,
+    project_id: String,
+) -> Result<ProjectReference, String> {
+    bridge
+        .link_reference(&id, kind, &name, &endpoint, &project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_project_references(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project_id: String,
+) -> Result<Vec<ProjectReference>, String> {
+    Ok(bridge.project_references(&project_id).await)
+}
+
+#[tauri::command]
+async fn unlink_reference(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    id: String,
+    project_id: String,
+) -> Result<(), String> {
+    bridge
+        .unlink_reference(&id, &project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Exports the project to a portable local manifest — no ShinAI infrastructure,
 /// no lock-in, no absolute machine paths.
 #[tauri::command]
@@ -1457,6 +1495,9 @@ pub fn run() {
             apply_pack,
             revert_pack,
             pack_readiness,
+            link_reference,
+            list_project_references,
+            unlink_reference,
             export_project,
             publish_project,
             republish_project,
