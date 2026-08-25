@@ -341,6 +341,152 @@ e ser verificada no host Tauri antes de qualquer item acima ser marcado.
 - [ ] Caminho feliz pede somente intenção, agente e primeiro efeito externo irreversível.
 - [ ] Pessoa pouco técnica completa a jornada e pessoa técnica preserva acesso raw.
 
+## Pivô Theia — casca 001 real (M4→M10 + Agentes)
+
+**Objetivo:** depois do pivô da base do editor para Eclipse Theia (ver
+`.planning/DECISION-theia-base.md`), tornar a casca do design 001 ("Instrumento")
+toda real — cada região e modo alimentado por engine/serviço de verdade, não mock.
+Conceito-núcleo: a IDE é a **interface simplificada + ajuda de setup para uma
+família de ferramentas AI-native** (grafo, skills, capabilities, agents, memory),
+vibecoding-friendly sem limitar o dev pro; cada capability é instância de um padrão
+comum. Fronteira Katsui intacta: tudo local por projeto; registries org, economia
+de inferência e Iai Gate = Katsui.
+
+App em `apps/ide-theia/` (Theia 1.74). Base já real (M1–M3): ApplicationShell 001,
+explorer/Monaco/SQLTools/busca reais, tema 001.
+
+### M4 — Effect broker real no loop governado (feito)
+
+- [x] Loop propor→Permitir→Reverter atravessa o `WorkspaceEffectBroker` real do
+      `ide-domain` (capability + SqliteApprovalGate + snapshot + auditoria), via
+      sidecar; troca o stand-in Node. Diff pelo `ide-diff`.
+- [x] 1ª proposta enfileira (nada escrito); approve libera o gate; 2ª proposta
+      executa + snapshota; rollback restaura.
+
+### M5 — Probe honesto do agente (feito)
+
+- [x] Card "Contexto ativo" reflete o adaptador real via `ide-agent`
+      `AcpxAgentFacade` (descriptor + health): disponibilidade, versão, resume/
+      steer, degradações. Binário ausente → `unavailable` honesto, nunca "ready"
+      fabricado.
+
+### M6 — Git real (feito)
+
+- [x] Modo Git = Source Control real via extensão builtin `vscode.git` (o
+      `@theia/git` foi removido do Theia moderno) alimentando o `@theia/scm`.
+      Commit/stage/branch reais do repo.
+
+### M7 — Modo Grafo, 1ª capability surface (feito)
+
+- [x] Modo "Grafo" abre o knowledge graph aag real (`.aag/graph.html`) como aba da
+      work surface, servido same-origin. Cobre só o estado **instalado** — dívida
+      pro M8 (estado não-instalado + gerar).
+
+### Fixes de UX da casca (feitos)
+
+- [x] Elimina faixa cinza de 48px entre rail e explorer (slot da activity bar
+      nativa oculta).
+- [x] Colunas responsivas: dock/left encolhem em janela estreita, editor nunca
+      colapsa; restaura ao alargar.
+- [x] View-containers do painel esquerdo empilham vertical, não em colunas
+      espremidas (id colidia com `MAIN_AREA_ID` do Theia). Remove "Open Editors".
+
+### M8 — Chassi de capability surface + install-assist
+
+**Contrato:** generalizar o Grafo num chassi reutilizável — toda ferramenta
+AI-native vira capability plugável com estado instalado/não-instalado e caminho de
+setup. Ancorar em `ide-packs` (packs = capabilities instaláveis).
+
+- [ ] Registro de capabilities (front+back): id, nome, ícone, estado
+      (`installed`|`available`|`installing`|`error`), detecção e install/gerar.
+- [ ] `CapabilitySurface` base: renderiza a ferramenta se instalada; senão, estado
+      de setup com botão que dispara o install e mostra progresso/erro honesto.
+- [ ] Grafo (M7) refeito como instância: sem `.aag/`, botão "Gerar grafo" roda o
+      aag e re-renderiza sem reload.
+- [ ] Modo Ferramentas lista capabilities + estados (hub); 2ª capability-stub
+      aparece sem tocar no código do Grafo.
+- [ ] Anti-goal: não implementar skills/memory/agents de verdade aqui; nada de rede
+      sem ação explícita.
+
+### M9 — Produto (visão semântica) + Verdade/SoT reais
+
+**Contrato:** modo Produto deixa de ser mock (projeto semântico real via
+`ide-semantic`/`ide-references`); nasce o modo Verdade/SoT — fontes de verdade e
+divergências intenção↔código (dual-state truth do `ide-domain` + Local Truth
+Registry).
+
+- [ ] Produto lista recursos semânticos reais do projeto aberto.
+- [ ] SoT mostra ≥1 divergência real; clicar abre o arquivo no Monaco.
+- [ ] Resolver a divergência (loop governado M4) remove-a após reconciliação.
+- [ ] Projeto sem SoT → estado honesto, não erro.
+- [ ] Anti-goal: sem editor de intenção completo; sem propagação cross-projeto
+      (isso é Katsui).
+
+### M10 — Overview real + Loja
+
+**Contrato:** Overview vira superfície de evidência real (preview/checks/
+reconciliação via `ide-harness`/`ide-reconciliation`); nasce a Loja — marketplace
+de capabilities/packs instaláveis (`ide-packs`), plugado no chassi M8.
+
+- [ ] Overview mostra checks/preview/reconciliação do projeto real; mudar o projeto
+      muda os números.
+- [ ] Loja lista ≥1 pack real; instalar liga a capability via M8.
+- [ ] Pack de terceiro roxo (fora do gate), pack governado azul.
+- [ ] Anti-goal: a Loja é creator/consumer (open + ads), **não** o registry org da
+      Katsui; sem publicação/assinatura aqui; não dar Iai Gate de graça.
+
+## Agentes — substrato de times governados (paperclip)
+
+**Objetivo:** mecanismo (não um time SDLC padrão) onde um agente cria outros e
+divide tasks entre si, e todo efeito passa pela governança do broker. Formato
+**próprio e agnóstico** (via ACP), **não** reusa `.claude/agents` nem amarra a
+vendor. Mesmo substrato do SDLC do Bastion (`bastion-agent-runtime`/`bastion-core`)
+— encaixar, não reimplementar. Orquestração híbrida: fixa E LLM-driven.
+
+Moat: ninguém junta as três metades — formação de time dinâmica (paperclip) + gate
+pré-execução + snapshot/rollback por-efeito. As duas últimas já são o broker (M4).
+Base pronta: `AcpxAgentFacade` (multi-sessão, swap/resume/adopt), broker, probe.
+
+### A1 — Sessão de agente viva
+
+- [ ] Modo Agentes; o probe (M5) vira sessão real: `start_session` de 1 agente,
+      status/usage/eventos ao vivo, cancelar.
+
+### A2 — Efeitos governados do agente
+
+- [ ] Write/command que o agente propõe atravessa o broker → Permitir/Reverter.
+      Deixa de ser YOLO; rollback restaura. (Já entrega o diferencial-núcleo.)
+
+### A3 — Formato próprio agnóstico do time
+
+- [ ] Manifesto nosso (agente + divisão de trabalho), neutro via ACP; modo Agentes
+      carrega o time do formato. Sem spawn ainda.
+
+### A4 — Paperclip (spawn + divisão)
+
+- [ ] Um agente cria sub-agentes e reparte tasks (substrato do SDLC Bastion). Árvore
+      de spawn + divisão no painel, tudo governado.
+
+### A5 — Orquestração híbrida
+
+- [ ] Pipeline fixo E líder-LLM em runtime; handoff-graph, paralelo, swap/resume
+      preservando contexto.
+
+### A6 — Budget + policy por time
+
+- [ ] Cap local por projeto + YOLO-com-histórico e policy por permissão por papel.
+
+### Perguntas abertas (Agentes + capabilities)
+
+- [ ] Formato do manifesto (campos/sintaxe; descrever "divisão de trabalho" sem
+      virar waterfall).
+- [ ] Limite de profundidade do spawn e como broker/budget contêm.
+- [ ] Quanto do spawn/divisão vem do `bastion-agent-runtime` vs a IDE por cima.
+- [ ] Onde mora o registro de capabilities (front só vs serviço no sidecar que
+      detecta/instala pelo broker).
+- [ ] SoT: de onde a IDE lê a "intenção declarada" (arquivo no repo? `ide-semantic`?).
+- [ ] Grafo per-projeto vs repo (workspace aninhado precisa do seu `.aag/`).
+
 ## Futuro, não iniciar antes do v1
 
 - [ ] Voz e edição visual.
