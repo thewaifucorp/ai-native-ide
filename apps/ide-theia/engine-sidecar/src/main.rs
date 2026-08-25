@@ -28,6 +28,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use ide_agent::{AcpxAgentFacade, AgentAvailability};
 use ide_diff::{diff, merge_selected, Hunk};
 use ide_domain::{WorkspaceEffectBroker, WorkspaceWrite};
 use serde::{Deserialize, Serialize};
@@ -177,6 +178,47 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let activity = broker.activity().await;
             Ok(json!({ "activity": activity }))
         }
+        "agent_probe" => {
+            #[derive(Deserialize)]
+            struct AgentProbeParams {
+                agent: String,
+            }
+            let p: AgentProbeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            // Build the REAL ide-agent facade and run its non-authenticated health
+            // probe. A missing `acpx`/agent binary surfaces as an honest
+            // `unavailable` with a reason — never a fabricated "ready".
+            match AcpxAgentFacade::new(p.agent.clone()) {
+                Ok(facade) => {
+                    let d = facade.descriptor();
+                    let h = facade.health().await;
+                    let availability = match h.availability {
+                        AgentAvailability::Ready => "ready",
+                        AgentAvailability::Degraded => "degraded",
+                        AgentAvailability::Unavailable => "unavailable",
+                    };
+                    Ok(json!({
+                        "agent": p.agent,
+                        "available": h.availability != AgentAvailability::Unavailable,
+                        "availability": availability,
+                        "detail": h.detail,
+                        "detectedVersion": h.detected_version,
+                        "transport": d.transport,
+                        "adapterVersion": d.adapter_version,
+                        "targetVersion": d.target_version,
+                        "supportsResume": d.supports_resume,
+                        "supportsSteer": d.supports_steer,
+                        "degradations": h.degradations,
+                    }))
+                }
+                Err(error) => Ok(json!({
+                    "agent": p.agent,
+                    "available": false,
+                    "availability": "unavailable",
+                    "detail": error.to_string(),
+                    "degradations": [],
+                })),
+            }
+        }
         other => Err(format!("unknown method: {other}")),
     }
 }
@@ -261,6 +303,19 @@ mod tests {
     #[tokio::test]
     async fn unknown_method_errors() {
         assert!(handle("nope", Value::Null).await.is_err());
+    }
+
+    /// The agent probe never panics and always yields a well-formed card: a string
+    /// `availability` and a boolean `available`. In CI (no acpx/agent binary) it
+    /// reports the honest `unavailable` rather than a fabricated ready state.
+    #[tokio::test]
+    async fn agent_probe_reports_honest_availability() {
+        let v = handle("agent_probe", json!({ "agent": "codex" }))
+            .await
+            .expect("probe ok");
+        assert!(v["availability"].is_string(), "availability must be a string");
+        assert!(v["available"].is_boolean(), "available must be a boolean");
+        assert_eq!(v["agent"], json!("codex"));
     }
 
     /// End-to-end proof over the sidecar protocol that the REAL broker governs:

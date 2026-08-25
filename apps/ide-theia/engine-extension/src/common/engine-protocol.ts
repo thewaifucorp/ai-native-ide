@@ -36,9 +36,36 @@ export interface BrokerActivity {
 }
 
 /**
+ * Real probe of an agent adapter via `ide-agent`'s `AcpxAgentFacade`
+ * (descriptor + non-authenticated health check). `availability` is honest:
+ * a missing `acpx`/agent binary reports `unavailable` with a `detail`, never a
+ * fabricated `ready`.
+ */
+export interface AgentProbe {
+    /** Adapter id probed (e.g. "codex"). */
+    agent: string;
+    /** True unless the adapter is unavailable. */
+    available: boolean;
+    availability: 'ready' | 'degraded' | 'unavailable';
+    /** Human-readable reason when degraded/unavailable. */
+    detail?: string;
+    /** Version the health check detected, if any. */
+    detectedVersion?: string;
+    /** Descriptor facts (present only when the facade built). */
+    transport?: string;
+    adapterVersion?: string;
+    targetVersion?: string;
+    supportsResume?: boolean;
+    supportsSteer?: boolean;
+    /** Policy/capability surfaces the IDE does NOT enforce — shown, not hidden. */
+    degradations: string[];
+}
+
+/**
  * Backend service proxied to the frontend over JSON-RPC. Served by the Rust
- * sidecar child process, which now hosts TWO real engines: `ide-diff` (diff /
- * merge) and `ide-domain`'s `WorkspaceEffectBroker` (the governed-write broker).
+ * sidecar child process, which now hosts THREE real engines: `ide-diff` (diff /
+ * merge), `ide-domain`'s `WorkspaceEffectBroker` (the governed-write broker), and
+ * `ide-agent`'s `AcpxAgentFacade` (the agent probe).
  */
 export interface EngineService {
     /** Health check — confirms the Rust sidecar spawned and is responding. */
@@ -73,4 +100,7 @@ export interface EngineService {
 
     /** The broker's honest audit trail for this (owner, root). */
     brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }>;
+
+    /** Real `ide-agent` probe: descriptor + honest health of an agent adapter. */
+    agentProbe(agent: string): Promise<AgentProbe>;
 }

@@ -20,6 +20,9 @@ path = "src/main.rs"
 #                snapshot store) that replaces the M3 Node governance stand-in (M4)
 ide-diff = { path = "../../../crates/ide-diff" }
 ide-domain = { path = "../../../crates/ide-domain" }
+#  - ide-agent: the REAL AcpxAgentFacade (descriptor + honest health probe) so the
+#               dock's "Contexto ativo" reflects a real agent adapter, not mock text (M5)
+ide-agent = { path = "../../../crates/ide-agent" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

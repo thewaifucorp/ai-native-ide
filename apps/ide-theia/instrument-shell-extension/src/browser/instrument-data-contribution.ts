@@ -28,7 +28,11 @@ import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { EditorManager } from '@theia/editor/lib/browser';
 import { GovernedWriteService } from '../common/governed-protocol';
+import { EngineService } from 'engine-extension';
 import { InstrumentStore } from './instrument-store';
+
+/** Agent adapter probed for the "Contexto ativo" card. */
+const DEFAULT_AGENT = 'codex';
 
 /** Default real file the demo proposes a governed write on. */
 const DEFAULT_REL = 'docs/product-intent.md';
@@ -55,11 +59,34 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
     @inject(MessageService) protected readonly messages!: MessageService;
     @inject(FrontendApplicationStateService) protected readonly stateService!: FrontendApplicationStateService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
+    @inject(EngineService) protected readonly engine!: EngineService;
     @inject(InstrumentStore) protected readonly store!: InstrumentStore;
 
     onStart(): void {
-        this.stateService.reachedState('ready').then(() => this.loadWorkspace());
+        this.stateService.reachedState('ready').then(() => {
+            this.loadWorkspace();
+            this.probeAgent();
+        });
         this.workspace.onWorkspaceChanged(() => this.loadWorkspace());
+    }
+
+    /** M5: probe the real agent adapter (ide-agent AcpxAgentFacade via the sidecar)
+     *  and push descriptor + honest health into the store. A missing acpx/agent
+     *  binary — or a sidecar error — becomes an honest `unavailable` card, never a
+     *  fabricated "ready". */
+    protected async probeAgent(): Promise<void> {
+        try {
+            const probe = await this.engine.agentProbe(DEFAULT_AGENT);
+            this.store.setAgentProbe(probe);
+        } catch (err) {
+            this.store.setAgentProbe({
+                agent: DEFAULT_AGENT,
+                available: false,
+                availability: 'unavailable',
+                detail: this.msg(err),
+                degradations: []
+            });
+        }
     }
 
     registerCommands(commands: CommandRegistry): void {

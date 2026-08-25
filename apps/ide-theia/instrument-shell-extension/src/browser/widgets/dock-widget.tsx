@@ -30,18 +30,7 @@ export class DockWidget extends AbstractInstrumentWidget {
         return (
             <aside className="dock">
                 <span className="tag">Contexto ativo</span>
-                <div className="agent-card">
-                    <div className="agent-top">
-                        <div className="agent-orb">C</div>
-                        <div><span className="nm">Codex</span><small>CLI · sessão retomável</small></div>
-                    </div>
-                    <div className="krow"><span>Escopo</span><b>app-web apenas</b></div>
-                    <div className="krow"><span>Efeitos permitidos</span><b>locais e reversíveis</b></div>
-                    <div className="krow"><span>Contexto usado</span><b className="em">68%</b></div>
-                    <div className="meter"><i style={{ width: '68%' }} /></div>
-                    <div className="krow"><span>Budget da sessão</span><b className="em">dentro do limite</b></div>
-                    <button className="btn" onClick={() => this.store.toast('Detalhes de uso: R$ 0,84 · 1.8k tokens · nenhuma inferência em idle')}>Ver uso detalhado</button>
-                </div>
+                {this.renderAgentCard()}
 
                 {this.renderDecision()}
 
@@ -65,6 +54,65 @@ export class DockWidget extends AbstractInstrumentWidget {
                     <div className="prog-arch">também presente: Architect · <button>ocultar leitura</button></div>
                 </div>
             </aside>
+        );
+    }
+
+    /** REAL (M5): the active-agent identity + honest availability, from the
+     *  ide-agent AcpxAgentFacade probe (descriptor + health) via the sidecar.
+     *  While probing, `agent` is undefined → a "conectando" placeholder. A missing
+     *  acpx/agent binary shows "indisponível" + the reason, never a fake "pronto". */
+    protected renderAgentCard(): React.ReactNode {
+        const a = this.store.agent;
+        if (!a) {
+            return (
+                <div className="agent-card">
+                    <div className="agent-top">
+                        <div className="agent-orb">…</div>
+                        <div><span className="nm">Agente</span><small>conectando ao adaptador…</small></div>
+                    </div>
+                </div>
+            );
+        }
+        const name = a.agent.charAt(0).toUpperCase() + a.agent.slice(1);
+        const orb = a.agent.charAt(0).toUpperCase() || 'A';
+        const color =
+            a.availability === 'ready' ? 'var(--ok)'
+                : a.availability === 'degraded' ? 'var(--need)'
+                    : 'var(--bad)';
+        const statusLabel =
+            a.availability === 'ready' ? 'pronto'
+                : a.availability === 'degraded' ? 'degradado'
+                    : 'indisponível';
+        const transport = a.transport ? a.transport.toUpperCase() : 'ACP';
+        const sub = a.availability === 'ready' && a.supportsResume
+            ? `${transport} · sessão retomável`
+            : `${transport} · ${statusLabel}`;
+        return (
+            <div className="agent-card">
+                <div className="agent-top">
+                    <div className="agent-orb">{orb}</div>
+                    <div><span className="nm">{name}</span><small>{sub}</small></div>
+                    <span className="agent-status" style={{ marginLeft: 'auto', color, fontWeight: 600, fontSize: '11px' }}>
+                        ● {statusLabel}
+                    </span>
+                </div>
+                {a.detail && (
+                    <div className="krow"><span>Estado</span><b style={{ color }}>{a.detail}</b></div>
+                )}
+                {a.detectedVersion && (
+                    <div className="krow"><span>Versão detectada</span><b>{a.detectedVersion}</b></div>
+                )}
+                {(a.adapterVersion || a.targetVersion) && (
+                    <div className="krow"><span>Adaptador</span><b>{a.adapterVersion || '—'} → {a.targetVersion || '—'}</b></div>
+                )}
+                <div className="krow"><span>Resume / steer</span><b>{a.supportsResume ? 'sim' : 'não'} / {a.supportsSteer ? 'sim' : 'não'}</b></div>
+                {a.degradations.length > 0 && (
+                    <div className="agent-degr">
+                        <span className="tag">fora do gate da IDE</span>
+                        {a.degradations.map((d, i) => <div key={i} className="e">{d}</div>)}
+                    </div>
+                )}
+            </div>
         );
     }
 

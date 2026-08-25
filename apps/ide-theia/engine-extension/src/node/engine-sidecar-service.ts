@@ -6,7 +6,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
+import { AgentProbe, BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
 
 interface PendingRequest {
     resolve(value: unknown): void;
@@ -174,5 +174,9 @@ export class EngineSidecarService implements EngineService {
 
     brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }> {
         return this.call('broker_activity', { root, owner });
+    }
+
+    agentProbe(agent: string): Promise<AgentProbe> {
+        return this.call('agent_probe', { agent });
     }
 }

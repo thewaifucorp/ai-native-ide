@@ -10,6 +10,7 @@
 import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { WriteProposal } from '../common/governed-protocol';
+import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build';
 export type DecisionState = 'pending' | 'executing' | 'verified';
@@ -47,6 +48,11 @@ export class InstrumentStore {
     // ── REAL governed-write proposal (M3): the current awaiting/approved/rolled-
     //    back write over a real file. Drives the dock decision card + pulse strip.
     proposal: WriteProposal | undefined;
+
+    // ── REAL agent probe (M5): descriptor + honest health of the agent adapter,
+    //    from ide-agent's AcpxAgentFacade via the sidecar. `undefined` = probing.
+    //    Drives the dock's "Contexto ativo" identity + availability badge.
+    agent: AgentProbe | undefined;
 
     protected toastTimer: number | undefined;
     protected pulseNow = 'codex · testando concorrência';
@@ -86,6 +92,13 @@ export class InstrumentStore {
         this.workspaceName = name;
         this.workspaceRootUri = rootUri;
         this.resources = resources;
+        this.emit();
+    }
+
+    // ── REAL agent probe ────────────────────────────────────────────────────
+
+    setAgentProbe(probe: AgentProbe): void {
+        this.agent = probe;
         this.emit();
     }
 
