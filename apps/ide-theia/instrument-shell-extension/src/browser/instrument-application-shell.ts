@@ -91,7 +91,14 @@ export class InstrumentApplicationShell extends ApplicationShell {
             { orientation: 'horizontal', spacing: 0 }
         );
         const panelForSideAreas = new TheiaSplitPanel({ layout: leftRightSplitLayout });
-        panelForSideAreas.id = 'theia-main-content-panel';
+        // NB: must NOT be 'theia-main-content-panel' — that is Theia's MAIN_AREA_ID,
+        // and ViewContainer.getOrientation() returns 'horizontal' for any node
+        // inside #theia-main-content-panel (or the bottom area). Reusing that id
+        // made EVERY left-panel view-container (SCM's Changes|Graph, the explorer's
+        // sections, …) lay its parts out in cramped side-by-side columns instead of
+        // stacking them vertically. A bespoke id keeps the side split while letting
+        // the real editor dock keep the sole MAIN_AREA_ID, so left views go vertical.
+        panelForSideAreas.id = 'iws-side-areas';
         this.sideAreasPanel = panelForSideAreas;
 
         // Prepend the bespoke 56px rail as a fixed far-left column (BoxLayout, so no

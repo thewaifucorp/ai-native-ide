@@ -146,7 +146,7 @@ body.iws-shell .theia-app-sidebar-container { display: none !important; }
   min-width: var(--iws-dock-w, 288px) !important;
   max-width: var(--iws-dock-w, 288px) !important;
 }
-#theia-main-content-panel > .lm-SplitPanel-handle { pointer-events: none; }
+#iws-side-areas > .lm-SplitPanel-handle { pointer-events: none; }
 
 /* The real left panel fills the column below the modes row. */
 #iws-left-column #theia-left-content-panel { min-width: 0; width: 100%; }
