@@ -27,6 +27,7 @@ import { CrumbWidget } from './widgets/crumb-widget';
 import { PulseWidget } from './widgets/pulse-widget';
 import { NavModesWidget } from './widgets/nav-modes-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
+import { GraphWidget } from './widgets/graph-widget';
 
 import '../../src/browser/style/instrument-shell.css';
 
@@ -36,7 +37,7 @@ import '../../src/browser/style/instrument-shell.css';
 // Bump LAYOUT_VERSION on any structural shell change to drop the stale layout
 // BEFORE Theia's ShellLayoutRestorer reads it. Runs at module-load, i.e. well
 // before `initializeLayout`. Preferences and other storage are untouched.
-const LAYOUT_VERSION = 'm2-instrument-grid-1';
+const LAYOUT_VERSION = 'm2-instrument-grid-2-grafo';
 try {
     if (typeof localStorage !== 'undefined' && localStorage.getItem('iws.layoutVersion') !== LAYOUT_VERSION) {
         Object.keys(localStorage)
@@ -56,6 +57,7 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(PulseWidget).toSelf().inSingletonScope();
     bind(NavModesWidget).toSelf().inSingletonScope();
     bind(ProdutoWidget).toSelf().inSingletonScope();
+    bind(GraphWidget).toSelf().inSingletonScope();
 
     // Widget factories so the two tracked area widgets (Overview in MAIN, dock in
     // RIGHT) are recreated when Theia restores a persisted layout on reload.
@@ -72,6 +74,12 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
         id: ProdutoWidget.ID,
         createWidget: () => container.get(ProdutoWidget)
+    })).inSingletonScope();
+    // Grafo (aag knowledge graph) is a MAIN-area tab; a factory recreates it when
+    // a persisted layout is restored on reload.
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: GraphWidget.ID,
+        createWidget: () => container.get(GraphWidget)
     })).inSingletonScope();
 
     // Reshape the workbench: the 001 four-column instrument is the actual shell.

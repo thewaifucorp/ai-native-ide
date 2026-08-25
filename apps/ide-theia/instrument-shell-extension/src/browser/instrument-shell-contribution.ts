@@ -29,6 +29,7 @@ import { InstrumentStore, NavMode } from './instrument-store';
 import { WorkWidget } from './widgets/work-widget';
 import { DockWidget } from './widgets/dock-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
+import { GraphWidget } from './widgets/graph-widget';
 
 const EXPLORER_CONTAINER_ID = 'explorer-view-container';
 
@@ -53,6 +54,7 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
     @inject(WorkWidget) protected readonly work!: WorkWidget;
     @inject(DockWidget) protected readonly dock!: DockWidget;
     @inject(ProdutoWidget) protected readonly produto!: ProdutoWidget;
+    @inject(GraphWidget) protected readonly graph!: GraphWidget;
 
     onStart(_app: FrontendApplication): void {
         // The ported 001 CSS keys Game-Mode rules off a `game` class on <body>,
@@ -67,7 +69,7 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
     }
 
     protected registerModeCommands(): void {
-        const modes: NavMode[] = ['produto', 'arquivos', 'busca', 'git', 'ferramentas'];
+        const modes: NavMode[] = ['produto', 'arquivos', 'busca', 'git', 'grafo', 'ferramentas'];
         for (const mode of modes) {
             this.commandRegistry.registerCommand(
                 { id: `instrument.mode.${mode}`, label: `Instrument: mostrar ${mode}` },
@@ -83,6 +85,10 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
             await this.shell.revealWidget(ProdutoWidget.ID);
             return;
         }
+        if (mode === 'grafo') {
+            await this.revealGraph();
+            return;
+        }
         if (mode === 'ferramentas') {
             await this.revealTools();
             return;
@@ -91,6 +97,17 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
         if (command) {
             await this.commandService.executeCommand(command);
         }
+    }
+
+    /** Grafo mode: the aag knowledge graph opens as a MAIN-area tab (it is a big
+     *  interactive surface, not a sidebar list). Mounted lazily on first select so
+     *  the heavy iframe isn't created until asked for, then just re-activated. */
+    protected async revealGraph(): Promise<void> {
+        const already = this.shell.getWidgets('main').some(w => w.id === GraphWidget.ID);
+        if (!already) {
+            await this.shell.addWidget(this.graph, { area: 'main', rank: 150 });
+        }
+        await this.shell.activateWidget(GraphWidget.ID);
     }
 
     /** Ferramentas mode: prefer the SQLTools view-container; fall back to the

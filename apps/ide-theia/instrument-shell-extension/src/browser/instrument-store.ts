@@ -16,7 +16,7 @@ export type WorkView = 'home' | 'build';
 export type DecisionState = 'pending' | 'executing' | 'verified';
 
 /** Which real (or bespoke) view-container the navigator "modes" row is showing. */
-export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'ferramentas';
+export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'grafo' | 'ferramentas';
 
 /** A real top-level workspace resource (file or folder), from FileService. */
 export interface WorkspaceResource {

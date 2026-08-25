@@ -42,6 +42,10 @@ const MODES: ModeDef[] = [
         icon: <><circle cx="4" cy="4" r="1.8" /><circle cx="4" cy="12" r="1.8" /><circle cx="12" cy="6.5" r="1.8" /><path d="M4 5.8v4.4M4 10.2C4 7 12 9 12 6.5" /></>
     },
     {
+        mode: 'grafo', title: 'Grafo — code intelligence (aag)',
+        icon: <><circle cx="8" cy="3.5" r="1.7" /><circle cx="3.5" cy="12" r="1.7" /><circle cx="12.5" cy="12" r="1.7" /><path d="M8 5.2 4.2 10.4M8 5.2l3.8 5.2M5 12h6" /></>
+    },
+    {
         mode: 'ferramentas', title: 'Ferramentas / extensões',
         icon: <path d="M6 2h4v2.2a1.6 1.6 0 0 0 3.2 0V2M6 14h8V8.5h-2.4a1.6 1.6 0 0 0 0-3.2H14" />
     }
