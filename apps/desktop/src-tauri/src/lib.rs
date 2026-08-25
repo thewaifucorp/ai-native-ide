@@ -41,6 +41,7 @@ use ide_guidance::{
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use ide_lifecycle::{ConfirmationDecision, ExportManifest, PublishRecord};
+use ide_model_loop::{LocalEchoProvider, LoopConfig, LoopTranscript};
 use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, ReadinessVerdict};
 use ide_semantic::{EvaluationBudget, SemanticReport};
@@ -597,6 +598,18 @@ async fn propose_workspace_write(
         });
     }
     Ok(result)
+}
+
+/// Runs an IDE-controlled model loop with the offline local provider. The IDE
+/// owns the turn budget and can stop; a real API/gateway provider plugs into the
+/// same trait without changing the loop control. No paid inference runs here.
+#[tauri::command]
+fn run_model_loop(prompt: String, max_turns: Option<usize>) -> LoopTranscript {
+    let config = LoopConfig {
+        max_turns: max_turns.unwrap_or(3),
+        stop_on_marker: None,
+    };
+    ide_model_loop::run_loop(&LocalEchoProvider, &prompt, config, &|| false)
 }
 
 /// The per-effect approval policy for the active permission level.
@@ -1409,6 +1422,7 @@ pub fn run() {
             propose_partial_workspace_write,
             effect_policy,
             apply_workspace_write_yolo,
+            run_model_loop,
             approve_next_workspace_write,
             rollback_workspace_write,
             start_benchmark_preview,

@@ -19,7 +19,25 @@ export interface HostStatus {
 }
 
 export type ViabilityGateStatus =
-  "pendingArtifactMeasurement" | "passingByConstruction" | "blocker";
+  | "pendingArtifactMeasurement"
+  | "passingByConstruction"
+  | "measuredPassing"
+  | "blocker";
+
+export interface LoopTurn {
+  prompt: string;
+  response: string;
+}
+export type StopReason =
+  | "budget_reached"
+  | "marker_found"
+  | "provider_error"
+  | "cancelled";
+export interface LoopTranscript {
+  turns: LoopTurn[];
+  stopped: StopReason;
+  error: string | null;
+}
 
 export interface TauriViabilityReport {
   host: "tauri";
@@ -655,6 +673,10 @@ interface HostCommandMap {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
   };
+  run_model_loop: {
+    args: { prompt: string; maxTurns?: number };
+    result: LoopTranscript;
+  };
   effect_policy: {
     args: { class: EffectClass };
     result: EffectPolicyDecision;
@@ -874,6 +896,10 @@ export interface HostClient {
     projectId: string,
     request: WorkspaceWriteRequest,
   ): Promise<HostCall<WorkspaceEffectResult>>;
+  runModelLoop(
+    prompt: string,
+    maxTurns?: number,
+  ): Promise<HostCall<LoopTranscript>>;
   effectPolicy(
     effectClass: EffectClass,
   ): Promise<HostCall<EffectPolicyDecision>>;
@@ -1101,6 +1127,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
+    runModelLoop: (prompt, maxTurns) =>
+      call("run_model_loop", { prompt, maxTurns }),
     effectPolicy: (effectClass) =>
       call("effect_policy", { class: effectClass }),
     applyWorkspaceWriteYolo: (projectId, request) =>

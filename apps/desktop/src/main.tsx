@@ -33,6 +33,7 @@ import {
   type ExportManifest,
   type PublishRecord,
   type Hunk,
+  type LoopTranscript,
   type AgentCapabilityCard,
   type AgentEvent,
   type AgentTarget,
@@ -153,6 +154,7 @@ function App() {
     inputTokens: 0,
     outputTokens: 0,
   });
+  const [modelLoop, setModelLoop] = useState<LoopTranscript | null>(null);
   const [terminal, setTerminal] = useState<TerminalRunStatus | null>(null);
   const [terminalCall, setTerminalCall] =
     useState<HostCall<TerminalRunStatus> | null>(null);
@@ -730,6 +732,10 @@ function App() {
         agentSession?.sessionId,
       ),
     );
+  }
+  async function runModelLoop() {
+    const result = await hostClient.runModelLoop(agentPrompt || intent, 3);
+    if (result.state === "available") setModelLoop(result.value);
   }
   async function runHarness() {
     if (!project || !resource) return;
@@ -1601,6 +1607,21 @@ function App() {
               </p>
             </div>
           )}
+        </section>
+        <section className="dock-section">
+          <span className="dock-label">LOOP DA IDE</span>
+          <p>
+            {modelLoop
+              ? `${modelLoop.turns.length} turnos · parou: ${modelLoop.stopped}`
+              : "Loop controlado pela IDE (budget de turnos), provider local offline. API/gateway plugam no mesmo contrato."}
+          </p>
+          <button
+            className="text-button"
+            onClick={() => void runModelLoop()}
+            type="button"
+          >
+            Rodar loop local <span>→</span>
+          </button>
         </section>
         <section className="dock-section">
           <span className="dock-label">TERMINAL</span>

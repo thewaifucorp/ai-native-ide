@@ -33,6 +33,7 @@ dependencies = [
  "ide-guidance",
  "ide-harness",
  "ide-lifecycle",
+ "ide-model-loop",
  "ide-modes",
  "ide-packs",
  "ide-reconciliation",
@@ -1980,6 +1981,13 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ide-model-loop"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

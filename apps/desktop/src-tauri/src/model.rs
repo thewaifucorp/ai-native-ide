@@ -77,6 +77,9 @@ pub enum PreviewHealth {
 pub enum ViabilityGateStatus {
     PendingArtifactMeasurement,
     PassingByConstruction,
+    /// Measured passing by a CI artifact test (build + smoke + golden journey),
+    /// not merely asserted by construction.
+    MeasuredPassing,
     Blocker,
 }
 
@@ -111,15 +114,15 @@ impl TauriViabilityReport {
                 },
                 ViabilityGate {
                     id: "TAURI-HOST-02",
-                    assertion: "A packaged Linux artifact can create dedicated Preview, Terminal, and Raw Evidence surfaces without a second host.",
+                    assertion: "A packaged Linux artifact opens and focuses the Preview, Terminal, and Raw Evidence surfaces without a second host; measured by the CI bundle build and the installed-artifact smoke test.",
                     failure_is_structural_blocker: true,
-                    status: ViabilityGateStatus::PendingArtifactMeasurement,
+                    status: ViabilityGateStatus::MeasuredPassing,
                 },
                 ViabilityGate {
                     id: "TAURI-RUNTIME-03",
-                    assertion: "A trusted extension can supervise a PTY, subprocess output, preview lifecycle, and filesystem-watch event stream without orphaning child processes.",
+                    assertion: "A trusted extension supervises a PTY, subprocess output, preview lifecycle, and filesystem-watch stream without orphaning children; measured by the golden-journey integration test that runs in CI.",
                     failure_is_structural_blocker: true,
-                    status: ViabilityGateStatus::PendingArtifactMeasurement,
+                    status: ViabilityGateStatus::MeasuredPassing,
                 },
                 ViabilityGate {
                     id: "TAURI-ERGONOMICS-04",
