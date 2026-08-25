@@ -130,18 +130,22 @@ body.iws-shell .theia-app-sidebar-container { display: none !important; }
 /* The modes-row host + the real left panel share the 001 navigator surface. */
 .iws-navmodes-host { background: var(--panel); border-right: 1px solid var(--line); }
 
-/* (3) Pin the 001 grid widths and make the split handles non-draggable so the
-   instrument grid holds: rail 56 (a BoxPanel column — no handle), navigator/left
-   column 240, dock/right 288. min==max snaps them; the horizontal split handles
-   (direct children of the main content split) are made inert. The center editors
-   take the remaining space. */
-/* !important is required: Lumino's SplitLayout writes an inline `min-width`
-   (the natural content min) on each split child, and inline beats an id selector.
-   A CSS `!important` declaration outranks that inline min-width, and because
-   Lumino reserves split space from each child's COMPUTED min/max width, forcing
-   min==max here makes Lumino allocate exactly the 001 column widths. */
-#iws-left-column { min-width: 240px !important; max-width: 240px !important; }
-#theia-right-content-panel { min-width: 288px !important; max-width: 288px !important; }
+/* (3) Bound the 001 grid columns and make the split handles non-draggable.
+   The EXACT widths are driven imperatively by InstrumentApplicationShell's
+   `applyResponsiveSizes()` (Lumino `setRelativeSizes` on every resize): the dock
+   yields first, then the left column, so the editor stays usable on a narrow
+   window instead of the dock hogging a fixed 288px. These min/max bounds are the
+   floors/caps that sizing stays within; !important outranks Lumino's inline
+   min-width so the floors actually hold. The rail (56) is a BoxPanel column with
+   no handle; the horizontal split handles are made inert. */
+#iws-left-column {
+  min-width: var(--iws-left-w, 240px) !important;
+  max-width: var(--iws-left-w, 240px) !important;
+}
+#theia-right-content-panel {
+  min-width: var(--iws-dock-w, 288px) !important;
+  max-width: var(--iws-dock-w, 288px) !important;
+}
 #theia-main-content-panel > .lm-SplitPanel-handle { pointer-events: none; }
 
 /* The real left panel fills the column below the modes row. */
@@ -162,6 +166,25 @@ body.iws-shell #theia-left-content-panel > .theia-app-sidebar-container {
 body.iws-shell #theia-left-content-panel > .lm-BoxPanel-child:not(.theia-app-sidebar-container) {
   left: 0 !important;
   width: 100% !important;
+}
+
+/* (3c) Drop the "Open Editors" section from the explorer. Theia packs it as a
+   SplitPanel sibling of the file tree; in a 240px column it rendered as a cramped
+   second pane next to the files (the stray "Open Editors" strip). Hide it and,
+   because Lumino keeps allocating its slot (same reserve-a-hidden-child issue as
+   the activity bar), collapse the slot and pull the file tree flush so the
+   explorer is just the real file tree. The editor tabs already list open files. */
+body.iws-shell #explorer-view-container--theia-open-editors-widget {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+}
+body.iws-shell #explorer-view-container .lm-SplitPanel > .lm-SplitPanel-child:not(#explorer-view-container--theia-open-editors-widget) {
+  left: 0 !important;
+  width: 100% !important;
+}
+body.iws-shell #explorer-view-container .lm-SplitPanel > .lm-SplitPanel-handle {
+  display: none !important;
 }
 
 /* ============ TITLEBAR ============ */

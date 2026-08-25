@@ -26,11 +26,22 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { TheiaSplitPanel } from '@theia/core/lib/browser/shell/theia-split-panel';
-import { BoxPanel, Layout } from '@theia/core/shared/@lumino/widgets';
+import { BoxPanel, Layout, Widget } from '@theia/core/shared/@lumino/widgets';
+import { MessageLoop } from '@theia/core/shared/@lumino/messaging';
 import { RailWidget } from './widgets/rail-widget';
 import { CrumbWidget } from './widgets/crumb-widget';
 import { PulseWidget } from './widgets/pulse-widget';
 import { NavModesWidget } from './widgets/nav-modes-widget';
+
+/** 001 ideal column widths, and the floors they may shrink to when the window is
+ *  too narrow to hold all three plus a usable editor. The rail (56px) lives in
+ *  the OUTER box, so these govern only the left | editor | dock split. */
+const RAIL_W = 56;
+const LEFT_IDEAL = 240;
+const LEFT_MIN = 168;
+const DOCK_IDEAL = 288;
+const DOCK_MIN = 200;
+const CENTER_MIN = 360;
 
 @injectable()
 export class InstrumentApplicationShell extends ApplicationShell {
@@ -39,6 +50,10 @@ export class InstrumentApplicationShell extends ApplicationShell {
     @inject(CrumbWidget) protected readonly crumbWidget!: CrumbWidget;
     @inject(PulseWidget) protected readonly pulseWidget!: PulseWidget;
     @inject(NavModesWidget) protected readonly navModesWidget!: NavModesWidget;
+
+    /** The horizontal left | editor | dock split, sized responsively on resize. */
+    protected sideAreasPanel?: TheiaSplitPanel;
+    private applyingSizes = false;
 
     protected override createLayout(): Layout {
         // The rail/crumb/pulse widgets already carry their `iws-*-host` classes
@@ -77,6 +92,7 @@ export class InstrumentApplicationShell extends ApplicationShell {
         );
         const panelForSideAreas = new TheiaSplitPanel({ layout: leftRightSplitLayout });
         panelForSideAreas.id = 'theia-main-content-panel';
+        this.sideAreasPanel = panelForSideAreas;
 
         // Prepend the bespoke 56px rail as a fixed far-left column (BoxLayout, so no
         // draggable split handle appears between rail and the workbench).
@@ -94,5 +110,67 @@ export class InstrumentApplicationShell extends ApplicationShell {
             [0, 0, 1, 0, 0],
             { direction: 'top-to-bottom', spacing: 0 }
         );
+    }
+
+    // ── Responsive column sizing ───────────────────────────────────────────────
+    // Lumino gives the two stretch-0 side columns their pinned width and shrinks
+    // ONLY the stretch-1 editor to absorb any deficit — so on a narrow window the
+    // editor collapses to nothing while the dock keeps 288px. `setRelativeSizes`
+    // doesn't stick: on the next fit Lumino renormalises stretch-0 children back
+    // toward their CSS max-width. What DOES hold is the min==max pin the 001 grid
+    // already relies on — so we make that pin DYNAMIC: the CSS pins left/dock to
+    // `var(--iws-left-w)` / `var(--iws-dock-w)`, and this handler recomputes those
+    // vars on every resize and forces the split to re-fit. The dock yields first,
+    // then the left column, keeping the editor at/above CENTER_MIN.
+    protected override onResize(msg: Widget.ResizeMessage): void {
+        super.onResize(msg);
+        this.applyResponsiveSizes();
+    }
+
+    protected override onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        // First pass once the shell has real dimensions.
+        window.requestAnimationFrame(() => this.applyResponsiveSizes());
+    }
+
+    protected applyResponsiveSizes(): void {
+        const panel = this.sideAreasPanel;
+        if (!panel || !panel.isAttached || this.applyingSizes) {
+            return;
+        }
+        // The split spans the window minus the fixed rail. Deriving `total` from
+        // innerWidth (not the panel's box) avoids reading a stale mid-resize width
+        // during Lumino's resize pass — the bug that left the dock stuck narrow
+        // when the window grew back.
+        const total = window.innerWidth - RAIL_W;
+        if (total <= 0) {
+            return;
+        }
+        let left = LEFT_IDEAL;
+        let dock = DOCK_IDEAL;
+        // Shrink the dock first, then the left column, to protect the editor.
+        if (total - left - dock < CENTER_MIN) {
+            dock = Math.max(DOCK_MIN, total - left - CENTER_MIN);
+        }
+        if (total - left - dock < CENTER_MIN) {
+            left = Math.max(LEFT_MIN, total - dock - CENTER_MIN);
+        }
+        const style = document.body.style;
+        const nextLeft = `${Math.round(left)}px`;
+        const nextDock = `${Math.round(dock)}px`;
+        if (style.getPropertyValue('--iws-left-w') === nextLeft
+            && style.getPropertyValue('--iws-dock-w') === nextDock) {
+            return; // no change — avoid a needless re-fit
+        }
+        style.setProperty('--iws-left-w', nextLeft);
+        style.setProperty('--iws-dock-w', nextDock);
+        // Re-fit the split so Lumino re-reads the new min==max pins and repositions
+        // all three columns (and the editor) consistently.
+        this.applyingSizes = true;
+        try {
+            MessageLoop.sendMessage(panel, Widget.ResizeMessage.UnknownSize);
+        } finally {
+            this.applyingSizes = false;
+        }
     }
 }
