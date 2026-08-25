@@ -404,6 +404,7 @@ export interface SemanticReport {
 }
 
 export type EffectClass = "prototype" | "durable";
+export type EffectPolicyDecision = "require_approval" | "auto_approve_recorded";
 export type InterruptionDecision =
   | "proceed"
   | "proceed_recording_hypothesis"
@@ -654,6 +655,14 @@ interface HostCommandMap {
     args: { projectId: string; request: WorkspaceWriteRequest };
     result: WorkspaceEffectResult;
   };
+  effect_policy: {
+    args: { class: EffectClass };
+    result: EffectPolicyDecision;
+  };
+  apply_workspace_write_yolo: {
+    args: { projectId: string; request: WorkspaceWriteRequest };
+    result: WorkspaceEffectResult;
+  };
   workspace_file_diff: {
     args: {
       projectId: string;
@@ -862,6 +871,13 @@ export interface HostClient {
     note: string,
   ): Promise<HostCall<PromotionRecord>>;
   proposeWorkspaceWrite(
+    projectId: string,
+    request: WorkspaceWriteRequest,
+  ): Promise<HostCall<WorkspaceEffectResult>>;
+  effectPolicy(
+    effectClass: EffectClass,
+  ): Promise<HostCall<EffectPolicyDecision>>;
+  applyWorkspaceWriteYolo(
     projectId: string,
     request: WorkspaceWriteRequest,
   ): Promise<HostCall<WorkspaceEffectResult>>;
@@ -1085,6 +1101,10 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
       }),
     proposeWorkspaceWrite: (projectId, request) =>
       call("propose_workspace_write", { projectId, request }),
+    effectPolicy: (effectClass) =>
+      call("effect_policy", { class: effectClass }),
+    applyWorkspaceWriteYolo: (projectId, request) =>
+      call("apply_workspace_write_yolo", { projectId, request }),
     workspaceFileDiff: (projectId, resourceId, relativePath, proposed) =>
       call("workspace_file_diff", {
         projectId,

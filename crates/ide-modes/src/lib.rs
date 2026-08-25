@@ -6,7 +6,7 @@
 //! deterministic and shell-neutral so every mode decision is testable and the
 //! host applies it before a durable effect.
 
-use ide_config::BuildMode;
+use ide_config::{BuildMode, Permissions};
 use serde::{Deserialize, Serialize};
 
 /// Whether an effect targets a throwaway prototype or durable project state.
@@ -42,6 +42,30 @@ pub fn interruption_policy(mode: BuildMode, class: EffectClass) -> InterruptionD
         }
         (BuildMode::Hybrid, EffectClass::Durable) => InterruptionDecision::RequireCheckpoint,
         (BuildMode::Spec, EffectClass::Durable) => InterruptionDecision::ResolveContractFirst,
+    }
+}
+
+/// What the permission policy requires before a controllable effect executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectPolicyDecision {
+    /// The effect must be explicitly approved before it runs.
+    RequireApproval,
+    /// YOLO: the effect runs without a per-effect prompt, but every effect is
+    /// still snapshotted and recorded in history — nothing is hidden.
+    AutoApproveRecorded,
+}
+
+/// Deterministic per-effect policy. Only explicit YOLO auto-approves, and even
+/// then the effect keeps its snapshot and history; a prototype never needs
+/// approval, and every other permission level requires it for a durable effect.
+pub fn effect_policy(permissions: Permissions, class: EffectClass) -> EffectPolicyDecision {
+    match (permissions, class) {
+        (_, EffectClass::Prototype) => EffectPolicyDecision::AutoApproveRecorded,
+        (Permissions::Yolo, EffectClass::Durable) => EffectPolicyDecision::AutoApproveRecorded,
+        (Permissions::Cautious | Permissions::Balanced, EffectClass::Durable) => {
+            EffectPolicyDecision::RequireApproval
+        }
     }
 }
 
@@ -129,6 +153,22 @@ mod tests {
         assert_eq!(
             interruption_policy(BuildMode::Spec, EffectClass::Durable),
             InterruptionDecision::ResolveContractFirst
+        );
+    }
+
+    #[test]
+    fn yolo_auto_approves_durable_effects_others_require_approval() {
+        assert_eq!(
+            effect_policy(Permissions::Yolo, EffectClass::Durable),
+            EffectPolicyDecision::AutoApproveRecorded
+        );
+        assert_eq!(
+            effect_policy(Permissions::Balanced, EffectClass::Durable),
+            EffectPolicyDecision::RequireApproval
+        );
+        assert_eq!(
+            effect_policy(Permissions::Cautious, EffectClass::Prototype),
+            EffectPolicyDecision::AutoApproveRecorded
         );
     }
 

@@ -41,7 +41,7 @@ use ide_guidance::{
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use ide_lifecycle::{ConfirmationDecision, ExportManifest, PublishRecord};
-use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
+use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, ReadinessVerdict};
 use ide_semantic::{EvaluationBudget, SemanticReport};
 use model::{HostStatus, TauriViabilityReport};
@@ -584,6 +584,48 @@ async fn propose_workspace_write(
             activity_id: None,
         });
     } else if result["written"] == serde_json::Value::Bool(true) {
+        let activity_id = bridge
+            .effect_causal_links(&project_id, &resource_id, &effect_id)
+            .await
+            .ok()
+            .and_then(|links| links.activity_ids.into_iter().next());
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::Written,
+            effect_id,
+            path,
+            activity_id,
+        });
+    }
+    Ok(result)
+}
+
+/// The per-effect approval policy for the active permission level.
+#[tauri::command]
+async fn effect_policy(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    class: EffectClass,
+) -> Result<EffectPolicyDecision, String> {
+    Ok(bridge.effect_policy(class).await)
+}
+
+/// Explicit YOLO write: proposes and auto-approves in one step, only at the Yolo
+/// permission level. The broker still records snapshot, revision and activity —
+/// the history stays complete.
+#[tauri::command]
+async fn apply_workspace_write_yolo(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    project_id: String,
+    request: WorkspaceWriteRequest,
+) -> Result<serde_json::Value, String> {
+    let resource_id = request.resource_id.clone();
+    let effect_id = request.effect_id.clone();
+    let path = request.relative_path.display().to_string();
+    let result = bridge
+        .yolo_write(&project_id, request)
+        .await
+        .map_err(|error| error.to_string())?;
+    if result["written"] == serde_json::Value::Bool(true) {
         let activity_id = bridge
             .effect_causal_links(&project_id, &resource_id, &effect_id)
             .await
@@ -1365,6 +1407,8 @@ pub fn run() {
             propose_workspace_write,
             workspace_file_diff,
             propose_partial_workspace_write,
+            effect_policy,
+            apply_workspace_write_yolo,
             approve_next_workspace_write,
             rollback_workspace_write,
             start_benchmark_preview,

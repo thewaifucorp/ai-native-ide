@@ -22,7 +22,9 @@ use ide_agent::{
     AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
     AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
 };
-use ide_config::{ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig};
+use ide_config::{
+    ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig, Permissions,
+};
 use ide_diff::Hunk;
 use ide_domain::{
     ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
@@ -34,7 +36,7 @@ use ide_guidance::{
     TruthRegistry,
 };
 use ide_lifecycle::{ExportInputs, ExportManifest, ExportedResource, PublishLog, PublishRecord};
-use ide_modes::{EffectClass, InterruptionDecision, PromotionRecord};
+use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
 use ide_packs::{Pack, PackRegistry, ReadinessVerdict};
 use ide_reconciliation::CausalLinks;
 use serde::{Deserialize, Serialize};
@@ -381,6 +383,33 @@ impl DesktopBridge {
         let mode = self.config.lock().await.config().mode.value;
         ide_modes::promote_prototype(mode, prototype_effect_id, checkpoint_effect_id, note)
             .map_err(|error| error.to_string())
+    }
+
+    /// The per-effect approval policy for the active permission level.
+    pub async fn effect_policy(&self, class: EffectClass) -> EffectPolicyDecision {
+        let permissions = self.config.lock().await.config().permissions.value;
+        ide_modes::effect_policy(permissions, class)
+    }
+
+    /// Explicit YOLO write: only allowed at the Yolo permission level, it proposes
+    /// and auto-approves the effect in one step. It never bypasses the broker —
+    /// the snapshot, revision and activity are all still recorded.
+    pub async fn yolo_write(
+        &self,
+        project_id: &str,
+        request: WorkspaceWriteRequest,
+    ) -> anyhow::Result<serde_json::Value> {
+        let permissions = self.config.lock().await.config().permissions.value;
+        if !matches!(permissions, Permissions::Yolo) {
+            bail!("YOLO writes require the explicit Yolo permission level")
+        }
+        let resource_id = request.resource_id.clone();
+        let first = self.propose_write(project_id, request.clone()).await?;
+        if first["written"] == serde_json::Value::Bool(true) {
+            return Ok(first);
+        }
+        self.approve_next_write(project_id, &resource_id).await?;
+        self.propose_write(project_id, request).await
     }
 
     // --- Guidance -------------------------------------------------------

@@ -617,6 +617,23 @@ function App() {
     setFileEffectId(effectId);
     await proposeSelectedFile(effectId);
   }
+  async function saveWorkspaceFileYolo() {
+    if (!project || !resource || !selectedFile) return;
+    const effectId = `yolo-${project.id}-${Date.now()}`;
+    const result = await hostClient.applyWorkspaceWriteYolo(project.id, {
+      resourceId: resource.id,
+      effectId,
+      relativePath: selectedFile,
+      content: rawDocument,
+    });
+    if (result.state === "available" && result.value.written) {
+      setLastFileEffectId(effectId);
+      setEffectState("written");
+      await loadWorkspaceFiles(project, resource);
+    } else if (result.state === "failed") {
+      setEffectState("failed");
+    }
+  }
   function beginNewWorkspaceFile() {
     const path = newFilePath.trim();
     if (!path) return;
@@ -1454,6 +1471,11 @@ function App() {
                   <button className="text-button" disabled={!selectedFile} onClick={() => void loadHunks()} type="button">
                     Diff por hunk
                   </button>
+                  {config?.permissions.value === "yolo" && (
+                    <button className="text-button" disabled={!selectedFile} onClick={() => void saveWorkspaceFileYolo()} type="button">
+                      Salvar (YOLO, com histórico)
+                    </button>
+                  )}
                   {hunks.length > 0 && (
                     <div className="file-list" aria-label="Hunks do arquivo">
                       {hunks.map((hunk) => (
