@@ -147,6 +147,23 @@ body.iws-shell .theia-app-sidebar-container { display: none !important; }
 /* The real left panel fills the column below the modes row. */
 #iws-left-column #theia-left-content-panel { min-width: 0; width: 100%; }
 
+/* (3b) Collapse the hidden left ACTIVITY BAR's reserved slot. Rule (1) sets the
+   `.theia-app-sidebar-container` to display:none, but Lumino's BoxLayout still
+   allocates its 48px and writes an inline `left:48px` onto the sibling that
+   holds the actual side panel — leaving a dead 48px strip between the rail and
+   the explorer. A stylesheet `!important` outranks Lumino's inline geometry (and
+   is re-applied on every relayout), so force the slot to 0 and pull the panel
+   flush against the rail. Left column only — the right/dock column is the
+   bespoke widget, not a native side panel, so it has no such gap. */
+body.iws-shell #theia-left-content-panel > .theia-app-sidebar-container {
+  width: 0 !important;
+  min-width: 0 !important;
+}
+body.iws-shell #theia-left-content-panel > .lm-BoxPanel-child:not(.theia-app-sidebar-container) {
+  left: 0 !important;
+  width: 100% !important;
+}
+
 /* ============ TITLEBAR ============ */
 .iws .titlebar {
   display: flex; align-items: center; gap: 16px; padding: 0 16px;
