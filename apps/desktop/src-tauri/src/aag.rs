@@ -13,6 +13,8 @@ use std::process::Command;
 /// navigation context, not authority, so a large result is truncated rather than
 /// flooded into the renderer.
 const MAX_RELATED: usize = 20;
+/// Upper bound on an `explore` query length — caps the argv and rejects pathological input.
+const MAX_QUERY_LEN: usize = 512;
 
 /// Probes AAG availability and, when present, asks it for the references related
 /// to `query`. A missing binary, a failing probe, or an empty result all degrade
@@ -41,8 +43,17 @@ fn probe_availability() -> AagAvailability {
 }
 
 fn explore(query: &str) -> Option<Vec<String>> {
+    // Reject anything that could be smuggled in as a flag: a leading dash would let the query
+    // masquerade as an `aag` option (argument injection). Also bound the length so a pathological
+    // input can't blow up the argv. Belt-and-suspenders with the `--` end-of-options marker below,
+    // which stops `aag` from treating any later value as a flag regardless.
+    let query = query.trim();
+    if query.is_empty() || query.starts_with('-') || query.len() > MAX_QUERY_LEN {
+        return None;
+    }
     let output = Command::new("aag")
         .arg("explore")
+        .arg("--")
         .arg(query)
         .output()
         .ok()?;
