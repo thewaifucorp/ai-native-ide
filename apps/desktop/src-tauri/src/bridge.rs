@@ -20,24 +20,25 @@
 use anyhow::{anyhow, bail, Context};
 use ide_agent::{
     AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
-    AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession,
+    AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession, SwapReport,
 };
 use ide_config::{
-    ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig, Permissions,
+    available_profiles, ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig,
+    LayoutProfile, Permissions, PolicyScope,
 };
 use ide_diff::Hunk;
 use ide_domain::{
     ChangeCause, CreateProject, ProjectId, ProjectRecord, Resource, ResourceId, ResourceKind,
-    SemanticProjectStore, WorkspaceEffectBroker, WorkspaceWrite,
+    SemanticProjectStore, WorkspaceAssetWrite, WorkspaceEffectBroker, WorkspaceWrite,
 };
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft,
-    GuidanceRegistry, GuidanceScope, GuidanceState, HygieneFinding, TruthDeclaration, TruthFinding,
-    TruthRegistry,
+    GuidanceRegistry, GuidanceScope, GuidanceState, HygieneFinding, SyncProposal, TruthDeclaration,
+    TruthFinding, TruthRegistry,
 };
 use ide_lifecycle::{ExportInputs, ExportManifest, ExportedResource, PublishLog, PublishRecord};
 use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
-use ide_packs::{Pack, PackRegistry, ReadinessVerdict};
+use ide_packs::{FindingDisposition, Pack, PackRegistry, ReadinessVerdict};
 use ide_reconciliation::CausalLinks;
 use ide_references::{ProjectReference, ReferenceKind, ReferenceRegistry};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,17 @@ pub struct WorkspaceWriteRequest {
     pub effect_id: String,
     pub relative_path: PathBuf,
     pub content: String,
+}
+
+/// A governed binary asset write. Its bytes travel as a plain octet array; the
+/// broker snapshots and can roll back the exact prior bytes, like a text write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetWriteRequest {
+    pub resource_id: String,
+    pub effect_id: String,
+    pub relative_path: PathBuf,
+    pub bytes: Vec<u8>,
 }
 
 /// A native-host-issued workspace selection. Deliberately not serializable or
@@ -146,6 +158,15 @@ pub struct StartedAgentSession {
     pub session_id: String,
     pub read_only: bool,
     pub policy_note: &'static str,
+}
+
+/// The outcome of swapping to a different agent: the new session id plus an
+/// honest report of what state was preserved and what could not be moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwappedAgentSession {
+    pub session_id: String,
+    pub report: SwapReport,
 }
 
 /// A renderer-safe file descriptor. Paths are always relative to an attached
@@ -368,6 +389,37 @@ impl DesktopBridge {
         Ok(ide_packs::readiness(&pack, &passed, &failed))
     }
 
+    /// Records a reviewable disposition (correction, false positive or scoped
+    /// exception) against a readiness finding. It never mutates the pack rules.
+    pub async fn record_pack_disposition(
+        &self,
+        finding_key: &str,
+        disposition: FindingDisposition,
+        note: &str,
+    ) -> anyhow::Result<()> {
+        self.packs
+            .lock()
+            .await
+            .record_disposition(finding_key, disposition, note)
+    }
+
+    /// Readiness that honours recorded dispositions: a false-positive or scoped
+    /// exception no longer blocks, while genuine failures and unknowns still do.
+    pub async fn pack_readiness_dispositioned(
+        &self,
+        pack_id: &str,
+        passed: Vec<String>,
+        failed: Vec<String>,
+    ) -> anyhow::Result<ReadinessVerdict> {
+        let packs = self.packs.lock().await;
+        let pack = packs
+            .list()
+            .into_iter()
+            .find(|pack| pack.id == pack_id)
+            .with_context(|| format!("unknown pack {pack_id}"))?;
+        Ok(packs.readiness_for(&pack, &passed, &failed))
+    }
+
     // --- Configuration --------------------------------------------------
 
     pub async fn config(&self) -> IdeConfig {
@@ -394,6 +446,17 @@ impl DesktopBridge {
         Ok(self.config.lock().await.reset_field(field)?.clone())
     }
 
+    /// Applies a named layout profile, setting both layout and depth in one
+    /// choice without fragmenting the project.
+    pub async fn apply_config_profile(&self, name: &str) -> anyhow::Result<IdeConfig> {
+        Ok(self.config.lock().await.apply_profile(name)?.clone())
+    }
+
+    /// The built-in layout profiles a user can switch between.
+    pub fn config_profiles(&self) -> Vec<LayoutProfile> {
+        available_profiles().to_vec()
+    }
+
     // --- Build modes ----------------------------------------------------
 
     /// The interruption the active mode requires before an effect of this class.
@@ -417,6 +480,48 @@ impl DesktopBridge {
     pub async fn effect_policy(&self, class: EffectClass) -> EffectPolicyDecision {
         let permissions = self.config.lock().await.config().permissions.value;
         ide_modes::effect_policy(permissions, class)
+    }
+
+    /// The per-effect approval policy resolved for a specific project, resource
+    /// and tool: the most specific scoped override wins, else the global level.
+    pub async fn effect_policy_scoped(
+        &self,
+        project: Option<String>,
+        resource: Option<String>,
+        tool: Option<String>,
+        class: EffectClass,
+    ) -> EffectPolicyDecision {
+        let permissions = self.config.lock().await.config().resolve_permissions(
+            project.as_deref(),
+            resource.as_deref(),
+            tool.as_deref(),
+        );
+        ide_modes::effect_policy(permissions, class)
+    }
+
+    /// Declares a scoped permission override for a project/resource/tool. It is
+    /// reversible and never rewrites the global level silently.
+    pub async fn set_scoped_permission(
+        &self,
+        scope: PolicyScope,
+        permissions: Permissions,
+    ) -> anyhow::Result<IdeConfig> {
+        Ok(self
+            .config
+            .lock()
+            .await
+            .set_scoped_permission(scope, permissions)?
+            .clone())
+    }
+
+    /// Removes a scoped permission override, restoring the fallback resolution.
+    pub async fn clear_scoped_permission(&self, scope: PolicyScope) -> anyhow::Result<IdeConfig> {
+        Ok(self
+            .config
+            .lock()
+            .await
+            .clear_scoped_permission(&scope)?
+            .clone())
     }
 
     /// Explicit YOLO write: only allowed at the Yolo permission level, it proposes
@@ -478,6 +583,19 @@ impl DesktopBridge {
         self.guidance.lock().await.hygiene()
     }
 
+    /// Hygiene including obsolescence: guidance idle beyond `staleness_window_ms`
+    /// as of `now_ms` is surfaced as a reviewable finding, never auto-removed.
+    pub async fn guidance_hygiene_with_staleness(
+        &self,
+        now_ms: u64,
+        staleness_window_ms: u64,
+    ) -> Vec<HygieneFinding> {
+        self.guidance
+            .lock()
+            .await
+            .hygiene_with_staleness(now_ms, staleness_window_ms)
+    }
+
     // --- Local Truth Registry ------------------------------------------
 
     pub async fn truth_declare(
@@ -508,6 +626,16 @@ impl DesktopBridge {
 
     pub async fn truth_conflicts(&self) -> Vec<TruthFinding> {
         self.truth.lock().await.conflicts()
+    }
+
+    /// Proposes which consumers of a source of truth are out of sync, without
+    /// changing anything: the sync stays a reviewable proposal.
+    pub async fn truth_sync_proposal(
+        &self,
+        id: &str,
+        up_to_date: Vec<String>,
+    ) -> anyhow::Result<SyncProposal> {
+        self.truth.lock().await.propose_sync(id, &up_to_date)
     }
 
     pub fn create_project(&self, input: ProjectIntentInput) -> anyhow::Result<ProjectRecord> {
@@ -654,6 +782,51 @@ impl DesktopBridge {
         // Bastion returns its internal snake_case capability receipt. Translate
         // the renderer boundary once so the TypeScript DTO remains idiomatic
         // and no WebView consumer needs to know a Core implementation detail.
+        if result["awaiting_approval"] == serde_json::Value::Bool(true) {
+            result["awaitingApproval"] = serde_json::Value::Bool(true);
+        }
+        drop(workspaces);
+        if result["written"] == serde_json::Value::Bool(true) {
+            if let Some(revision) = self.projects.record_ide_revision(
+                &ResourceId(request.resource_id.clone()),
+                &request.relative_path,
+                &request.effect_id,
+            )? {
+                self.effect_links.lock().await.insert(
+                    effect_link_key(project_id, &request.resource_id, &request.effect_id),
+                    CausalLinks {
+                        effect_ids: vec![request.effect_id.clone()],
+                        activity_ids: vec![format!("activity:{}", revision.id)],
+                        file_paths: vec![request.relative_path.display().to_string()],
+                    },
+                );
+            }
+        }
+        Ok(result)
+    }
+
+    /// Proposes a governed binary asset write through the same broker as text:
+    /// snapshot before mutation, approval by exact payload, rollback of prior
+    /// bytes. Code, Markdown and config use text writes; assets use this path.
+    pub async fn propose_asset_write(
+        &self,
+        project_id: &str,
+        request: AssetWriteRequest,
+    ) -> anyhow::Result<serde_json::Value> {
+        validate_identifier("project id", project_id)?;
+        validate_identifier("resource id", &request.resource_id)?;
+        validate_identifier("effect id", &request.effect_id)?;
+        validate_relative_path(&request.relative_path)?;
+        let workspaces = self.workspaces.lock().await;
+        let workspace = workspace_for(&workspaces, project_id, &request.resource_id)?;
+        let mut result = workspace
+            .broker
+            .propose_asset_write(&WorkspaceAssetWrite {
+                effect_id: request.effect_id.clone(),
+                relative_path: request.relative_path.clone(),
+                bytes: request.bytes.clone(),
+            })
+            .await?;
         if result["awaiting_approval"] == serde_json::Value::Bool(true) {
             result["awaitingApproval"] = serde_json::Value::Bool(true);
         }
@@ -925,6 +1098,45 @@ impl DesktopBridge {
             .cancel(&AgentSessionId(session_id.to_owned()), true)
             .await
             .map_err(anyhow::Error::from)
+    }
+
+    /// Resumes a session on its own provider when the capability is present.
+    /// It degrades honestly (an error) when the provider cannot reattach.
+    pub async fn resume_agent_session(&self, session_id: &str) -> anyhow::Result<String> {
+        let agent = self.agent_for(session_id).await?;
+        let state = agent
+            .capture_state(&AgentSessionId(session_id.to_owned()))
+            .await?;
+        let resumed = agent.resume(&state).await?;
+        self.agents
+            .lock()
+            .await
+            .insert(resumed.0.clone(), agent);
+        Ok(resumed.0)
+    }
+
+    /// Swaps the conversation to a different agent without losing transferable
+    /// state. The returned report names exactly what was preserved and what the
+    /// new provider could not adopt.
+    pub async fn swap_agent_session(
+        &self,
+        session_id: &str,
+        new_target: AcpxTarget,
+    ) -> anyhow::Result<SwappedAgentSession> {
+        let current = self.agent_for(session_id).await?;
+        let state = current
+            .capture_state(&AgentSessionId(session_id.to_owned()))
+            .await?;
+        let new_facade = Arc::new(AcpxAgentFacade::new(new_target.as_acpx_agent())?);
+        let (new_id, report) = new_facade.adopt_state(state).await?;
+        self.agents
+            .lock()
+            .await
+            .insert(new_id.0.clone(), new_facade);
+        Ok(SwappedAgentSession {
+            session_id: new_id.0,
+            report,
+        })
     }
 
     /// Resolves the host-owned root for a project resource. The path is kept

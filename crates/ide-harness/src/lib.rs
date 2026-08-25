@@ -61,6 +61,12 @@ pub struct HarnessInputs {
     pub dependency_locks: Vec<DependencyLock>,
     /// Effects still awaiting approval at scan time.
     pub pending_effects: usize,
+    /// Outcome of the host's build run, or `None` when it was not run.
+    pub build: Option<ToolOutcome>,
+    /// Outcome of the host's test run, or `None` when it was not run.
+    pub test: Option<ToolOutcome>,
+    /// Outcome of the host's typecheck run, or `None` when it was not run.
+    pub typecheck: Option<ToolOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +75,29 @@ pub struct DependencyLock {
     pub manifest: String,
     pub lock: String,
     pub lock_present: bool,
+}
+
+/// Whether a supplied build/test/typecheck run succeeded, failed or was
+/// inconclusive. Layer-0 never executes the tool; it evaluates this reported
+/// status. An absent outcome (`None`) is distinct and maps to `NotRun`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolStatus {
+    Succeeded,
+    Failed,
+    /// The run neither clearly passed nor failed (e.g. crashed, timed out).
+    Inconclusive,
+}
+
+/// The outcome of an external build/test/typecheck run, observed by the host and
+/// handed to the deterministic harness. The harness only classifies it; it never
+/// shells out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolOutcome {
+    pub status: ToolStatus,
+    /// The observed fact backing the status (e.g. exit code or error summary).
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +117,7 @@ pub fn run_layer0(inputs: &HarnessInputs) -> HarnessReport {
     findings.extend(secret_scan(&inputs.files));
     findings.extend(dependency_locks(&inputs.dependency_locks));
     findings.push(pending_effects(inputs.pending_effects));
+    findings.extend(build_test_typecheck(inputs));
     let findings = dedup(findings);
 
     let mut report = HarnessReport {
@@ -305,6 +335,83 @@ pub fn pending_effects(count: usize) -> Finding {
     }
 }
 
+/// Classifies the supplied build, test and typecheck outcomes into findings. The
+/// harness never runs the tools; a missing outcome (`None`) is `NotRun`, an
+/// inconclusive one is `Unknown`, and neither is ever reported as an approval.
+pub fn build_test_typecheck(inputs: &HarnessInputs) -> Vec<Finding> {
+    vec![
+        tool_finding("build", "Build", inputs.build.as_ref()),
+        tool_finding("test", "Testes", inputs.test.as_ref()),
+        tool_finding("typecheck", "Verificação de tipos", inputs.typecheck.as_ref()),
+    ]
+}
+
+/// Maps one tool's optional outcome to a finding, preserving the shared
+/// claim/evidence/remediation shape of the other Layer-0 checks.
+fn tool_finding(slug: &str, title: &str, outcome: Option<&ToolOutcome>) -> Finding {
+    let id = format!("layer0:{slug}");
+    let claim = format!("{title}: a execução foi observada e teve sucesso.");
+    match outcome {
+        None => Finding {
+            id,
+            check_id: slug.to_owned(),
+            layer: 0,
+            title: title.to_owned(),
+            state: CheckState::NotRun,
+            severity: Severity::Info,
+            claim,
+            evidence: format!("Nenhum resultado de {title} foi observado."),
+            remediation: None,
+        },
+        Some(ToolOutcome {
+            status: ToolStatus::Succeeded,
+            detail,
+        }) => Finding {
+            id,
+            check_id: slug.to_owned(),
+            layer: 0,
+            title: title.to_owned(),
+            state: CheckState::Passed,
+            severity: Severity::Info,
+            claim,
+            evidence: format!("{title} concluiu com sucesso: {detail}"),
+            remediation: None,
+        },
+        Some(ToolOutcome {
+            status: ToolStatus::Failed,
+            detail,
+        }) => Finding {
+            id,
+            check_id: slug.to_owned(),
+            layer: 0,
+            title: title.to_owned(),
+            state: CheckState::Failed,
+            severity: Severity::High,
+            claim,
+            evidence: format!("{title} falhou: {detail}"),
+            remediation: Some(format!(
+                "Corrija a falha de {title} e reexecute a verificação antes de aprovar."
+            )),
+        },
+        Some(ToolOutcome {
+            status: ToolStatus::Inconclusive,
+            detail,
+        }) => Finding {
+            id,
+            check_id: slug.to_owned(),
+            layer: 0,
+            title: title.to_owned(),
+            state: CheckState::Unknown,
+            severity: Severity::Medium,
+            claim,
+            evidence: format!("{title} teve resultado inconclusivo: {detail}"),
+            remediation: Some(format!(
+                "Reexecute {title} até obter um resultado determinístico."
+            )),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,9 +482,107 @@ mod tests {
                 lock_present: true,
             }],
             pending_effects: 0,
+            build: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "exit 0".to_owned(),
+            }),
+            test: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "12 passed".to_owned(),
+            }),
+            typecheck: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "no errors".to_owned(),
+            }),
         };
         let report = run_layer0(&inputs);
         assert_eq!(report.failed, 0);
         assert!(report.passed >= 3);
+    }
+
+    #[test]
+    fn build_test_typecheck_all_not_run() {
+        let inputs = HarnessInputs::default();
+        let findings = build_test_typecheck(&inputs);
+        assert_eq!(findings.len(), 3);
+        assert!(findings
+            .iter()
+            .all(|finding| finding.state == CheckState::NotRun
+                && finding.remediation.is_none()));
+    }
+
+    #[test]
+    fn build_failed_reports_high_severity_failure() {
+        let inputs = HarnessInputs {
+            build: Some(ToolOutcome {
+                status: ToolStatus::Failed,
+                detail: "E0433".to_owned(),
+            }),
+            ..Default::default()
+        };
+        let build = build_test_typecheck(&inputs)
+            .into_iter()
+            .find(|finding| finding.check_id == "build")
+            .expect("build finding present");
+        assert_eq!(build.state, CheckState::Failed);
+        assert_eq!(build.severity, Severity::High);
+        assert!(build.remediation.is_some());
+    }
+
+    #[test]
+    fn test_failed_reports_failure() {
+        let inputs = HarnessInputs {
+            test: Some(ToolOutcome {
+                status: ToolStatus::Failed,
+                detail: "2 failed".to_owned(),
+            }),
+            ..Default::default()
+        };
+        let test = build_test_typecheck(&inputs)
+            .into_iter()
+            .find(|finding| finding.check_id == "test")
+            .expect("test finding present");
+        assert_eq!(test.state, CheckState::Failed);
+        assert!(test.evidence.contains("2 failed"));
+    }
+
+    #[test]
+    fn typecheck_inconclusive_is_unknown_never_passed() {
+        let inputs = HarnessInputs {
+            typecheck: Some(ToolOutcome {
+                status: ToolStatus::Inconclusive,
+                detail: "tool crashed".to_owned(),
+            }),
+            ..Default::default()
+        };
+        let typecheck = build_test_typecheck(&inputs)
+            .into_iter()
+            .find(|finding| finding.check_id == "typecheck")
+            .expect("typecheck finding present");
+        assert_eq!(typecheck.state, CheckState::Unknown);
+        assert_eq!(typecheck.severity, Severity::Medium);
+    }
+
+    #[test]
+    fn all_passed_reports_three_passes() {
+        let inputs = HarnessInputs {
+            build: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "exit 0".to_owned(),
+            }),
+            test: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "12 passed".to_owned(),
+            }),
+            typecheck: Some(ToolOutcome {
+                status: ToolStatus::Succeeded,
+                detail: "no errors".to_owned(),
+            }),
+            ..Default::default()
+        };
+        let findings = build_test_typecheck(&inputs);
+        assert!(findings
+            .iter()
+            .all(|finding| finding.state == CheckState::Passed));
     }
 }

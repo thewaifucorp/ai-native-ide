@@ -156,17 +156,48 @@ pub struct Authority {
     pub consumers: Vec<String>,
 }
 
+/// A code artifact or resource that implements a subject.
+///
+/// Implementation links are supplied to [`navigate`]; the crate never scans the
+/// filesystem itself, consistent with how authorities and evidence are provided.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImplementationRef {
+    /// Stable identifier of the implementation link.
+    pub id: String,
+    /// Subject (or resource) this implementation realises.
+    pub subject: String,
+    /// Where the implementation lives (path, service, environment, ...).
+    pub location: String,
+    /// Kind of implementation reference, e.g. `"code"`, `"service"`, `"environment"`.
+    pub kind: String,
+    /// How this link is known, kept for honest provenance.
+    pub provenance: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Navigation {
     pub subject: String,
     pub authorities: Vec<Authority>,
+    /// The implementation hop: code/resources that realise the subject. Empty
+    /// (never absent) when no implementation link was supplied for the subject.
+    pub implementations: Vec<ImplementationRef>,
     pub evidence: Vec<EvidenceRef>,
 }
 
-/// Maps a subject to its authorities (source of truth) and the evidence whose
-/// source references it, so a person can navigate subject → SoT → evidence.
-pub fn navigate(inputs: &ContextInputs, subject: &str) -> Navigation {
+/// Maps a subject to its authorities (source of truth), the implementations that
+/// realise it, and the evidence whose source references it, so a person can
+/// navigate subject → SoT → implementation → evidence.
+///
+/// Implementation links are supplied by the caller (`implementations`); a subject
+/// with no matching link degrades to an explicit empty-implementation state while
+/// authorities and evidence are still returned.
+pub fn navigate(
+    inputs: &ContextInputs,
+    subject: &str,
+    implementations: &[ImplementationRef],
+) -> Navigation {
     let mut authorities: Vec<Authority> = inputs
         .truth
         .iter()
@@ -178,6 +209,13 @@ pub fn navigate(inputs: &ContextInputs, subject: &str) -> Navigation {
         })
         .collect();
     authorities.sort_by_key(|authority| std::cmp::Reverse(authority.precedence));
+    let mut implementations: Vec<ImplementationRef> = implementations
+        .iter()
+        .filter(|implementation| implementation.subject == subject)
+        .cloned()
+        .collect();
+    // Deterministic order regardless of caller input order.
+    implementations.sort_by(|left, right| left.id.cmp(&right.id));
     let evidence = inputs
         .evidence
         .iter()
@@ -187,6 +225,7 @@ pub fn navigate(inputs: &ContextInputs, subject: &str) -> Navigation {
     Navigation {
         subject: subject.to_owned(),
         authorities,
+        implementations,
         evidence,
     }
 }
@@ -286,8 +325,18 @@ mod tests {
         assert_eq!(compiled.segments[0].origin, "guidance:strong");
     }
 
+    fn implementation(id: &str, subject: &str, location: &str) -> ImplementationRef {
+        ImplementationRef {
+            id: id.to_owned(),
+            subject: subject.to_owned(),
+            location: location.to_owned(),
+            kind: "code".to_owned(),
+            provenance: "test".to_owned(),
+        }
+    }
+
     #[test]
-    fn navigate_maps_subject_to_authorities_and_evidence() {
+    fn navigate_returns_all_four_hops_in_order() {
         let inputs = ContextInputs {
             intent: String::new(),
             applied_guidance: vec![],
@@ -299,9 +348,43 @@ mod tests {
             }],
             budget_chars: 1000,
         };
-        let navigation = navigate(&inputs, "checkout");
+        let implementations = vec![
+            implementation("impl-b", "checkout", "src/checkout/pay.rs"),
+            implementation("impl-a", "checkout", "src/checkout/cart.rs"),
+            implementation("other", "billing", "src/billing.rs"),
+        ];
+        let navigation = navigate(&inputs, "checkout", &implementations);
+        // Hop 1: subject.
+        assert_eq!(navigation.subject, "checkout");
+        // Hop 2: SoT/authorities.
         assert_eq!(navigation.authorities.len(), 1);
         assert_eq!(navigation.authorities[0].authority_path, "docs/checkout.md");
+        // Hop 3: implementation — only matching subject, deterministically ordered.
+        assert_eq!(navigation.implementations.len(), 2);
+        assert_eq!(navigation.implementations[0].id, "impl-a");
+        assert_eq!(navigation.implementations[1].id, "impl-b");
+        // Hop 4: evidence.
+        assert_eq!(navigation.evidence.len(), 1);
+    }
+
+    #[test]
+    fn navigate_missing_implementation_degrades_to_empty_state() {
+        let inputs = ContextInputs {
+            intent: String::new(),
+            applied_guidance: vec![],
+            truth: vec![truth("checkout", "docs/checkout.md", 10)],
+            evidence: vec![EvidenceRef {
+                id: "e1".to_owned(),
+                summary: "teste do checkout passou".to_owned(),
+                source: "checkout-suite".to_owned(),
+            }],
+            budget_chars: 1000,
+        };
+        // No implementation link supplied for the subject: explicit empty hop,
+        // never a panic; authorities and evidence are still present.
+        let navigation = navigate(&inputs, "checkout", &[]);
+        assert!(navigation.implementations.is_empty());
+        assert_eq!(navigation.authorities.len(), 1);
         assert_eq!(navigation.evidence.len(), 1);
     }
 }

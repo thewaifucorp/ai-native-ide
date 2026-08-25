@@ -101,33 +101,73 @@ pub struct ReadinessVerdict {
     pub ready: bool,
     pub missing_checks: Vec<String>,
     pub failed_checks: Vec<String>,
+    /// Failed checks that did not block because they carry an accepting
+    /// disposition (false positive or scoped exception). Surfaced so the
+    /// acceptance is reviewable rather than silently dropped.
+    #[serde(default)]
+    pub dispositioned_checks: Vec<String>,
     pub note: String,
 }
 
 /// Evaluates readiness at a checkpoint: ready only when every pack check is
 /// observed as passed and none is failed. Unknown/absent checks block readiness
 /// rather than being treated as a pass.
+///
+/// This is the disposition-free entry point; it is equivalent to
+/// [`readiness_with_dispositions`] with an empty disposition map.
 pub fn readiness(pack: &Pack, passed: &[String], failed: &[String]) -> ReadinessVerdict {
+    readiness_with_dispositions(pack, passed, failed, &BTreeMap::new())
+}
+
+/// Evaluates readiness while honoring recorded finding dispositions.
+///
+/// A failed check whose finding carries an accepting disposition
+/// ([`FindingDisposition::FalsePositive`] or [`FindingDisposition::ScopedException`])
+/// no longer blocks readiness, but is reported under
+/// [`ReadinessVerdict::dispositioned_checks`] so the acceptance stays visible.
+/// A [`FindingDisposition::Corrected`] disposition is informational only: a
+/// still-failing check keeps blocking. Missing/unknown checks always block,
+/// regardless of any disposition — unknown is never treated as a pass.
+pub fn readiness_with_dispositions(
+    pack: &Pack,
+    passed: &[String],
+    failed: &[String],
+    dispositions: &BTreeMap<String, DispositionRecord>,
+) -> ReadinessVerdict {
     let mut missing_checks = Vec::new();
     let mut failed_checks = Vec::new();
+    let mut dispositioned_checks = Vec::new();
     for check in &pack.checks {
         if failed.contains(&check.id) {
-            failed_checks.push(check.id.clone());
+            let accepted = matches!(
+                dispositions.get(&check.id).map(|record| &record.disposition),
+                Some(FindingDisposition::FalsePositive)
+                    | Some(FindingDisposition::ScopedException { .. })
+            );
+            if accepted {
+                dispositioned_checks.push(check.id.clone());
+            } else {
+                failed_checks.push(check.id.clone());
+            }
         } else if !passed.contains(&check.id) {
             missing_checks.push(check.id.clone());
         }
     }
     let ready = missing_checks.is_empty() && failed_checks.is_empty();
+    let note = if !ready {
+        "Readiness bloqueada: checks pendentes ou falhos não contam como aprovação.".to_owned()
+    } else if dispositioned_checks.is_empty() {
+        "Todos os checks do pack passaram nesta verificação.".to_owned()
+    } else {
+        "Readiness liberada: findings aceitos por disposição registrada (revisáveis).".to_owned()
+    };
     ReadinessVerdict {
         pack_id: pack.id.clone(),
         ready,
         missing_checks,
         failed_checks,
-        note: if ready {
-            "Todos os checks do pack passaram nesta verificação.".to_owned()
-        } else {
-            "Readiness bloqueada: checks pendentes ou falhos não contam como aprovação.".to_owned()
-        },
+        dispositioned_checks,
+        note,
     }
 }
 
@@ -143,16 +183,32 @@ pub enum FindingDisposition {
     },
 }
 
+/// A recorded disposition against a specific finding, carrying provenance so the
+/// decision is reviewable and never mutates a pack rule silently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispositionRecord {
+    /// The stable finding key this disposition applies to (typically a check id).
+    pub finding_key: String,
+    /// The disposition itself.
+    pub disposition: FindingDisposition,
+    /// Free-text provenance: who/why, for later review.
+    pub note: String,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct PacksSnapshot {
     installed: Vec<Pack>,
     applied: Vec<String>,
+    #[serde(default)]
+    dispositions: BTreeMap<String, DispositionRecord>,
 }
 
 pub struct PackRegistry {
     path: PathBuf,
     installed: BTreeMap<String, Pack>,
     applied: Vec<String>,
+    dispositions: BTreeMap<String, DispositionRecord>,
 }
 
 impl PackRegistry {
@@ -171,6 +227,7 @@ impl PackRegistry {
             PacksSnapshot {
                 installed: vec![auction_starter_pack()],
                 applied: Vec::new(),
+                dispositions: BTreeMap::new(),
             }
         };
         let installed = snapshot
@@ -182,6 +239,7 @@ impl PackRegistry {
             path,
             installed,
             applied: snapshot.applied,
+            dispositions: snapshot.dispositions,
         };
         registry.persist()?;
         Ok(registry)
@@ -219,10 +277,49 @@ impl PackRegistry {
         self.persist()
     }
 
+    /// Records a disposition against a specific finding (keyed by a stable
+    /// finding id, typically a check id) and persists it. Re-recording the same
+    /// key overwrites the prior disposition; the decision is always stored with
+    /// its note for later review rather than mutating any pack rule.
+    pub fn record_disposition(
+        &mut self,
+        finding_key: &str,
+        disposition: FindingDisposition,
+        note: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        self.dispositions.insert(
+            finding_key.to_owned(),
+            DispositionRecord {
+                finding_key: finding_key.to_owned(),
+                disposition,
+                note: note.into(),
+            },
+        );
+        self.persist()
+    }
+
+    /// The recorded dispositions, keyed by finding id, for review.
+    pub fn dispositions(&self) -> &BTreeMap<String, DispositionRecord> {
+        &self.dispositions
+    }
+
+    /// Evaluates readiness for a pack while honoring the registry's recorded
+    /// dispositions. Convenience over [`readiness_with_dispositions`] that wires
+    /// the persisted disposition map.
+    pub fn readiness_for(
+        &self,
+        pack: &Pack,
+        passed: &[String],
+        failed: &[String],
+    ) -> ReadinessVerdict {
+        readiness_with_dispositions(pack, passed, failed, &self.dispositions)
+    }
+
     fn persist(&self) -> anyhow::Result<()> {
         let snapshot = PacksSnapshot {
             installed: self.installed.values().cloned().collect(),
             applied: self.applied.clone(),
+            dispositions: self.dispositions.clone(),
         };
         let json = serde_json::to_vec_pretty(&snapshot)?;
         fs::write(&self.path, json).with_context(|| format!("write {}", self.path.display()))?;
@@ -274,6 +371,92 @@ mod tests {
         assert_eq!(registry.applied(), vec!["auction-starter".to_owned()]);
         registry.revert("auction-starter").unwrap();
         assert!(registry.applied().is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn dispo(kind: FindingDisposition) -> BTreeMap<String, DispositionRecord> {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "auction-privacy".to_owned(),
+            DispositionRecord {
+                finding_key: "auction-privacy".to_owned(),
+                disposition: kind,
+                note: "reviewed by mario".to_owned(),
+            },
+        );
+        map
+    }
+
+    #[test]
+    fn false_positive_disposition_unblocks_readiness() {
+        let pack = auction_starter_pack();
+        let passed = vec!["auction-concurrency".to_owned()];
+        let failed = vec!["auction-privacy".to_owned()];
+        let map = dispo(FindingDisposition::FalsePositive);
+        let verdict = readiness_with_dispositions(&pack, &passed, &failed, &map);
+        assert!(verdict.ready);
+        assert!(verdict.failed_checks.is_empty());
+        assert_eq!(verdict.dispositioned_checks, vec!["auction-privacy".to_owned()]);
+    }
+
+    #[test]
+    fn scoped_exception_disposition_unblocks_readiness() {
+        let pack = auction_starter_pack();
+        let passed = vec!["auction-concurrency".to_owned()];
+        let failed = vec!["auction-privacy".to_owned()];
+        let map = dispo(FindingDisposition::ScopedException {
+            scope: "staging".to_owned(),
+            justification: "leaderboard privado no ambiente de teste".to_owned(),
+        });
+        let verdict = readiness_with_dispositions(&pack, &passed, &failed, &map);
+        assert!(verdict.ready);
+        assert_eq!(verdict.dispositioned_checks, vec!["auction-privacy".to_owned()]);
+    }
+
+    #[test]
+    fn correction_is_informational_and_real_failure_still_blocks() {
+        let pack = auction_starter_pack();
+        let passed = vec!["auction-concurrency".to_owned()];
+        let failed = vec!["auction-privacy".to_owned()];
+        let map = dispo(FindingDisposition::Corrected);
+        let verdict = readiness_with_dispositions(&pack, &passed, &failed, &map);
+        assert!(!verdict.ready);
+        assert_eq!(verdict.failed_checks, vec!["auction-privacy".to_owned()]);
+        assert!(verdict.dispositioned_checks.is_empty());
+    }
+
+    #[test]
+    fn unknown_check_still_not_a_pass_even_with_disposition() {
+        let pack = auction_starter_pack();
+        // Nothing observed: both checks are missing/unknown.
+        let map = dispo(FindingDisposition::FalsePositive);
+        let verdict = readiness_with_dispositions(&pack, &[], &[], &map);
+        assert!(!verdict.ready);
+        assert!(verdict.missing_checks.contains(&"auction-privacy".to_owned()));
+    }
+
+    #[test]
+    fn registry_records_and_reloads_dispositions() {
+        let root = temp_root("dispo");
+        let _ = fs::remove_dir_all(&root);
+        {
+            let mut registry = PackRegistry::open(&root).unwrap();
+            registry
+                .record_disposition(
+                    "auction-privacy",
+                    FindingDisposition::FalsePositive,
+                    "não vaza: campo é interno",
+                )
+                .unwrap();
+            let pack = auction_starter_pack();
+            let passed = vec!["auction-concurrency".to_owned()];
+            let failed = vec!["auction-privacy".to_owned()];
+            assert!(registry.readiness_for(&pack, &passed, &failed).ready);
+        }
+        let registry = PackRegistry::open(&root).unwrap();
+        let record = registry.dispositions().get("auction-privacy").unwrap();
+        assert_eq!(record.disposition, FindingDisposition::FalsePositive);
+        assert_eq!(record.note, "não vaza: campo é interno");
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, RwLock};
 
 mod effects;
 
-pub use effects::{BrokerActivity, WorkspaceEffectBroker, WorkspaceWrite};
+pub use effects::{BrokerActivity, WorkspaceAssetWrite, WorkspaceEffectBroker, WorkspaceWrite};
 
 mod semantic;
 

@@ -8,9 +8,9 @@
 use bastion_agent_runtime::{
     acpx::AcpxAgentRuntime, AgentRuntime, ApprovalCoverage, ArtifactKind, AuthProfileRef,
     BudgetCoverage, CancelMode, EgressCoverage, EnvPolicy, PermissionAction, PermissionProfile,
-    PolicyCoverage, RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth, RuntimeSession,
-    SandboxCoverage, SandboxProfile, SessionSpec, SessionStatus, TaskExpectation, TaskInput,
-    TaskOutcome, ToolVisibility, WorkspacePolicy,
+    PolicyCoverage, ResumeSpec, RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth,
+    RuntimeSession, SandboxCoverage, SandboxProfile, SessionHandle, SessionSpec, SessionStatus,
+    TaskExpectation, TaskInput, TaskOutcome, ToolVisibility, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -188,10 +188,69 @@ pub enum AgentFacadeError {
     Unavailable { detail: String },
     #[error("agent runtime error: {detail}")]
     Runtime { detail: String },
+    /// The selected agent does not declare the resume capability at all. Returned
+    /// without touching the runtime, so the UI can honestly say resume is a
+    /// capability this agent lacks rather than a transient failure.
+    #[error("agent does not support session resume: {detail}")]
+    ResumeUnsupported { detail: String },
+    /// The agent supports resume, but this specific handle can no longer reattach
+    /// (expired, evicted, foreign owner). Distinct from [`AgentFacadeError::ResumeUnsupported`]
+    /// so the host never silently starts a fresh session in its place.
+    #[error("agent session cannot be resumed: {detail}")]
+    NotResumable { detail: String },
+}
+
+/// Running totals the facade accumulates from [`RuntimeEvent::Usage`] as events are
+/// drained. Part of the portable snapshot so a swap does not lose spend accounting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentUsageTotals {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// A host-persistable snapshot of a session's transferable state.
+///
+/// It exists so the desktop host can (a) resume a session after a restart and
+/// (b) swap the active agent without losing the state the runtime actually
+/// exposes. `external_ref` is the opaque adapter session reference: it is for
+/// host-side persistence only and must never be surfaced to the UI (the UI keeps
+/// working with the IDE-owned [`AgentSessionId`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSessionState {
+    pub session_id: AgentSessionId,
+    /// Adapter id the handle belongs to; resume/adopt revalidate it.
+    pub runtime_id: String,
+    pub owner: String,
+    /// Opaque adapter session reference. Host-persistence only, never shown in the UI.
+    pub external_ref: String,
+    /// The original open request, re-appliable to start a fresh session when the
+    /// live harness session cannot be transferred to the target agent.
+    pub origin: StartAgentSession,
+    pub usage: AgentUsageTotals,
+    pub last_status: SessionStatus,
+}
+
+/// Honest accounting of what a swap moved and what it could not.
+///
+/// A swap to an agent that can reattach the original harness session keeps the
+/// conversation/context (`resumed == true`). A swap to any other agent must start
+/// fresh: the harness-owned conversation is not portable across backends, so it is
+/// reported as dropped rather than silently lost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwapReport {
+    /// True when the target reattached the original harness session (context kept).
+    pub resumed: bool,
+    pub preserved: Vec<String>,
+    pub dropped: Vec<String>,
 }
 
 struct ManagedSession {
     runtime_session: Box<dyn RuntimeSession>,
+    /// The request that opened (or last resumed) this session, kept so the state
+    /// can be re-applied on a resume or a fresh-start swap.
+    origin: StartAgentSession,
+    /// Usage accumulated from drained [`RuntimeEvent::Usage`] events.
+    usage: AgentUsageTotals,
 }
 
 /// An ACPX-backed, host-neutral facade. It does no credential discovery and never logs input.
@@ -251,9 +310,22 @@ impl AcpxAgentFacade {
 
         let session = self
             .runtime
-            .start(session_spec_from(request))
+            .start(session_spec_from(request.clone()))
             .await
             .map_err(map_runtime_error)?;
+        Ok(self
+            .insert_session(session, request, AgentUsageTotals::default())
+            .await)
+    }
+
+    /// Registers a live runtime session under a fresh IDE-owned id, remembering the
+    /// request that opened it and any usage carried over from a prior session.
+    async fn insert_session(
+        &self,
+        session: Box<dyn RuntimeSession>,
+        origin: StartAgentSession,
+        usage: AgentUsageTotals,
+    ) -> AgentSessionId {
         let id = AgentSessionId(format!(
             "agent-{}",
             self.next_session_id.fetch_add(1, Ordering::Relaxed)
@@ -262,9 +334,142 @@ impl AcpxAgentFacade {
             id.clone(),
             ManagedSession {
                 runtime_session: session,
+                origin,
+                usage,
             },
         );
-        Ok(id)
+        id
+    }
+
+    /// Captures a host-persistable snapshot of a live session's transferable state:
+    /// the adapter handle, the opening request, and the usage accumulated so far.
+    /// This is what a host stores for a later [`AcpxAgentFacade::resume`] or hands to
+    /// another facade's [`AcpxAgentFacade::adopt_state`] for an agent swap.
+    pub async fn capture_state(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<AgentSessionState, AgentFacadeError> {
+        let sessions = self.sessions.lock().await;
+        let managed = sessions
+            .get(session_id)
+            .ok_or(AgentFacadeError::SessionNotFound)?;
+        let handle = managed.runtime_session.handle();
+        let last_status = managed
+            .runtime_session
+            .status()
+            .await
+            .map_err(map_runtime_error)?;
+        Ok(AgentSessionState {
+            session_id: session_id.clone(),
+            runtime_id: handle.runtime_id,
+            owner: handle.owner,
+            external_ref: handle.external_ref,
+            origin: managed.origin.clone(),
+            usage: managed.usage,
+            last_status,
+        })
+    }
+
+    /// Resumes a previously captured session, honoring the resume capability.
+    ///
+    /// If the agent does not declare `supports_resume`, this returns
+    /// [`AgentFacadeError::ResumeUnsupported`] without touching the runtime — an
+    /// honest capability answer, never a pretend reattach. When the capability is
+    /// present but this specific handle can no longer reattach, the runtime's
+    /// [`RuntimeError::NotResumable`] surfaces as [`AgentFacadeError::NotResumable`]
+    /// rather than silently starting a new session. On success a new IDE-owned
+    /// [`AgentSessionId`] is returned, carrying the snapshot's usage totals forward.
+    pub async fn resume(
+        &self,
+        state: &AgentSessionState,
+    ) -> Result<AgentSessionId, AgentFacadeError> {
+        if !self.descriptor().supports_resume {
+            return Err(AgentFacadeError::ResumeUnsupported {
+                detail: "the selected agent does not expose a session reattach protocol"
+                    .to_string(),
+            });
+        }
+        let health = self.health().await;
+        if health.availability == AgentAvailability::Unavailable {
+            return Err(AgentFacadeError::Unavailable {
+                detail: health
+                    .detail
+                    .unwrap_or_else(|| "ACPX is not ready".to_string()),
+            });
+        }
+        let handle = SessionHandle {
+            runtime_id: state.runtime_id.clone(),
+            owner: state.owner.clone(),
+            external_ref: state.external_ref.clone(),
+        };
+        let session = self
+            .runtime
+            .resume(&handle, resume_spec_from(&state.origin))
+            .await
+            .map_err(map_runtime_error)?;
+        Ok(self
+            .insert_session(session, state.origin.clone(), state.usage)
+            .await)
+    }
+
+    /// Adopts a snapshot captured from another agent facade, swapping the active
+    /// agent without losing more state than the runtimes allow.
+    ///
+    /// When this facade's agent is the same adapter that produced the snapshot and
+    /// it supports resume, the original harness session is reattached and the
+    /// conversation/context is preserved. Otherwise the conversation is harness-owned
+    /// and not portable across backends: a fresh session is started from the
+    /// snapshot's opening request, carrying owner, workspace/policy and usage totals,
+    /// while the conversation history, in-flight tasks, and the external session
+    /// reference are reported as dropped. The [`SwapReport`] records exactly which.
+    pub async fn adopt_state(
+        &self,
+        state: AgentSessionState,
+    ) -> Result<(AgentSessionId, SwapReport), AgentFacadeError> {
+        let descriptor = self.descriptor();
+        let same_adapter = descriptor.id == state.runtime_id;
+        if same_adapter && descriptor.supports_resume {
+            let id = self.resume(&state).await?;
+            return Ok((
+                id,
+                SwapReport {
+                    resumed: true,
+                    preserved: vec![
+                        "conversation history and harness context".to_string(),
+                        "external harness session reference".to_string(),
+                        "accumulated usage totals".to_string(),
+                    ],
+                    dropped: Vec::new(),
+                },
+            ));
+        }
+
+        let id = self
+            .insert_session(
+                self.runtime
+                    .start(session_spec_from(state.origin.clone()))
+                    .await
+                    .map_err(map_runtime_error)?,
+                state.origin.clone(),
+                state.usage,
+            )
+            .await;
+        Ok((
+            id,
+            SwapReport {
+                resumed: false,
+                preserved: vec![
+                    "owner and auth profile reference".to_string(),
+                    "workspace root and policy".to_string(),
+                    "accumulated usage totals".to_string(),
+                ],
+                dropped: vec![
+                    "conversation history and harness context".to_string(),
+                    "in-flight tasks".to_string(),
+                    "external harness session reference".to_string(),
+                ],
+            },
+        ))
     }
 
     pub async fn submit_task(
@@ -293,11 +498,13 @@ impl AcpxAgentFacade {
         let managed = sessions
             .get_mut(session_id)
             .ok_or(AgentFacadeError::SessionNotFound)?;
-        Ok(managed
-            .runtime_session
-            .next_event()
-            .await
-            .map(|event| event_to_ide(session_id, event)))
+        let event = managed.runtime_session.next_event().await;
+        if let Some(RuntimeEvent::Usage { delta, .. }) = &event {
+            let usage = &mut managed.usage;
+            usage.input_tokens = usage.input_tokens.saturating_add(delta.input_tokens);
+            usage.output_tokens = usage.output_tokens.saturating_add(delta.output_tokens);
+        }
+        Ok(event.map(|event| event_to_ide(session_id, event)))
     }
 
     /// Cancellation delegates to ACPX and preserves the adapter's idempotent semantics.
@@ -376,6 +583,29 @@ fn session_spec_from(request: StartAgentSession) -> SessionSpec {
         mcp_bridge: None,
         otel: Default::default(),
         model_hint: None,
+    }
+}
+
+/// Builds the re-appliable policy subset for a reattach from the opening request.
+/// Workspace and sandbox are deliberately omitted: a harness session's root and
+/// confinement are fixed at open time and cannot be renegotiated on resume.
+fn resume_spec_from(origin: &StartAgentSession) -> ResumeSpec {
+    ResumeSpec {
+        timeout: bastion_agent_runtime::TimeoutPolicy {
+            per_task: Duration::from_millis(origin.task_timeout_ms),
+            idle: Duration::from_millis(origin.idle_timeout_ms),
+        },
+        permissions: PermissionProfile {
+            allow: origin.allowed_actions.clone(),
+        },
+        env: EnvPolicy {
+            allow: [(
+                "HOME".to_string(),
+                origin.home_dir.to_string_lossy().into_owned(),
+            )]
+            .into_iter()
+            .collect(),
+        },
     }
 }
 
@@ -599,6 +829,7 @@ fn map_runtime_error(error: RuntimeError) -> AgentFacadeError {
         RuntimeError::Unavailable(detail)
         | RuntimeError::Version(detail)
         | RuntimeError::Auth(detail) => AgentFacadeError::Unavailable { detail },
+        RuntimeError::NotResumable(detail) => AgentFacadeError::NotResumable { detail },
         error => AgentFacadeError::Runtime {
             detail: sanitize_runtime_error(&error),
         },
@@ -614,36 +845,55 @@ fn sanitize_runtime_error(error: &RuntimeError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bastion_agent_runtime::{RuntimeSupports, SessionHandle, TaskId, Transport};
+    use bastion_agent_runtime::{RuntimeSupports, SessionHandle, TaskId, Transport, UsageDelta};
 
     #[derive(Clone, Default)]
     struct TestProbe {
         starts: Arc<Mutex<Vec<SessionSpec>>>,
         submissions: Arc<Mutex<Vec<TaskInput>>>,
         cancellations: Arc<Mutex<Vec<CancelMode>>>,
+        resumes: Arc<Mutex<Vec<SessionHandle>>>,
     }
 
+    #[derive(Default)]
     struct TestRuntime {
         probe: TestProbe,
         ready: bool,
+        resumable: bool,
+        /// Events each session opened by this runtime will replay in order.
+        session_events: Vec<RuntimeEvent>,
     }
 
     struct TestSession {
         probe: TestProbe,
         status: SessionStatus,
         next_task: u64,
+        events: std::collections::VecDeque<RuntimeEvent>,
+    }
+
+    impl TestRuntime {
+        fn session(&self) -> TestSession {
+            TestSession {
+                probe: self.probe.clone(),
+                status: SessionStatus::Idle,
+                next_task: 1,
+                events: self.session_events.iter().cloned().collect(),
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl AgentRuntime for TestRuntime {
         fn descriptor(&self) -> RuntimeDescriptor {
-            descriptor(PolicyCoverage {
+            let mut card = descriptor(PolicyCoverage {
                 tool_visibility: ToolVisibility::DeclaredOnly,
                 approvals: ApprovalCoverage::HarnessOwned,
                 egress: EgressCoverage::HarnessOwned,
                 budget: BudgetCoverage::Reported,
                 sandbox: SandboxCoverage::None,
-            })
+            });
+            card.supports.resume = self.resumable;
+            card
         }
 
         async fn health(&self) -> Result<RuntimeHealth, RuntimeError> {
@@ -656,21 +906,21 @@ mod tests {
 
         async fn start(&self, spec: SessionSpec) -> Result<Box<dyn RuntimeSession>, RuntimeError> {
             self.probe.starts.lock().await.push(spec);
-            Ok(Box::new(TestSession {
-                probe: self.probe.clone(),
-                status: SessionStatus::Idle,
-                next_task: 1,
-            }))
+            Ok(Box::new(self.session()))
         }
 
         async fn resume(
             &self,
-            _handle: &SessionHandle,
-            _spec: bastion_agent_runtime::ResumeSpec,
+            handle: &SessionHandle,
+            _spec: ResumeSpec,
         ) -> Result<Box<dyn RuntimeSession>, RuntimeError> {
-            Err(RuntimeError::NotResumable(
-                "test runtime cannot resume".to_string(),
-            ))
+            self.probe.resumes.lock().await.push(handle.clone());
+            if !self.resumable {
+                return Err(RuntimeError::NotResumable(
+                    "test runtime cannot resume".to_string(),
+                ));
+            }
+            Ok(Box::new(self.session()))
         }
     }
 
@@ -693,7 +943,7 @@ mod tests {
         }
 
         async fn next_event(&mut self) -> Option<RuntimeEvent> {
-            None
+            self.events.pop_front()
         }
 
         async fn steer(&mut self, _text: &str) -> Result<(), RuntimeError> {
@@ -826,6 +1076,7 @@ mod tests {
         let facade = AcpxAgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: true,
+            ..Default::default()
         });
 
         let session_id = facade.start_session(session_request()).await.unwrap();
@@ -876,10 +1127,128 @@ mod tests {
         let facade = AcpxAgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: false,
+            ..Default::default()
         });
 
         let error = facade.start_session(session_request()).await.unwrap_err();
         assert!(matches!(error, AgentFacadeError::Unavailable { .. }));
         assert!(probe.starts.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_reattaches_the_original_handle_when_capability_is_present() {
+        let probe = TestProbe::default();
+        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: true,
+            resumable: true,
+            ..Default::default()
+        });
+
+        let session_id = facade.start_session(session_request()).await.unwrap();
+        let state = facade.capture_state(&session_id).await.unwrap();
+
+        let resumed = facade.resume(&state).await.unwrap();
+        assert_eq!(resumed, AgentSessionId("agent-2".to_string()));
+        let resumes = probe.resumes.lock().await;
+        assert_eq!(resumes.len(), 1);
+        assert_eq!(resumes[0].runtime_id, "test-runtime");
+        assert_eq!(resumes[0].external_ref, "never-exposed");
+    }
+
+    #[tokio::test]
+    async fn resume_degrades_honestly_when_capability_is_absent() {
+        let probe = TestProbe::default();
+        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: true,
+            resumable: false,
+            ..Default::default()
+        });
+
+        let session_id = facade.start_session(session_request()).await.unwrap();
+        let state = facade.capture_state(&session_id).await.unwrap();
+
+        let error = facade.resume(&state).await.unwrap_err();
+        assert!(matches!(error, AgentFacadeError::ResumeUnsupported { .. }));
+        // Honest degradation: the runtime's reattach protocol was never even called.
+        assert!(probe.resumes.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn swap_to_resumable_agent_preserves_context_and_usage() {
+        // Source agent accrues usage, then a same-adapter resumable target adopts it.
+        let source = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: TestProbe::default(),
+            ready: true,
+            resumable: true,
+            session_events: vec![RuntimeEvent::Usage {
+                task: bastion_agent_runtime::TaskId(1),
+                delta: UsageDelta {
+                    input_tokens: 120,
+                    output_tokens: 45,
+                },
+            }],
+        });
+        let session_id = source.start_session(session_request()).await.unwrap();
+        // Drain the usage event so the facade accumulates it into the snapshot.
+        source.next_event(&session_id).await.unwrap();
+        let state = source.capture_state(&session_id).await.unwrap();
+        assert_eq!(state.usage.input_tokens, 120);
+        assert_eq!(state.usage.output_tokens, 45);
+
+        let target_probe = TestProbe::default();
+        let target = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: target_probe.clone(),
+            ready: true,
+            resumable: true,
+            ..Default::default()
+        });
+        let (new_id, report) = target.adopt_state(state).await.unwrap();
+
+        assert!(report.resumed);
+        assert!(report.dropped.is_empty());
+        assert_eq!(target_probe.resumes.lock().await.len(), 1);
+        // Usage totals ride along into the adopted session.
+        let carried = target.capture_state(&new_id).await.unwrap();
+        assert_eq!(carried.usage.input_tokens, 120);
+        assert_eq!(carried.usage.output_tokens, 45);
+    }
+
+    #[tokio::test]
+    async fn swap_to_non_resumable_agent_starts_fresh_and_reports_dropped_conversation() {
+        let source = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: TestProbe::default(),
+            ready: true,
+            resumable: true,
+            ..Default::default()
+        });
+        let session_id = source.start_session(session_request()).await.unwrap();
+        let state = source.capture_state(&session_id).await.unwrap();
+        let owner = state.origin.owner.clone();
+
+        let target_probe = TestProbe::default();
+        let target = AcpxAgentFacade::from_runtime(TestRuntime {
+            probe: target_probe.clone(),
+            ready: true,
+            resumable: false,
+            ..Default::default()
+        });
+        let (_new_id, report) = target.adopt_state(state).await.unwrap();
+
+        assert!(!report.resumed);
+        // A fresh session was started, not a reattach.
+        assert!(target_probe.resumes.lock().await.is_empty());
+        assert_eq!(target_probe.starts.lock().await.len(), 1);
+        assert_eq!(target_probe.starts.lock().await[0].owner, owner);
+        // The harness-owned conversation is honestly reported as dropped.
+        assert!(report
+            .dropped
+            .iter()
+            .any(|note| note.contains("conversation")));
+        assert!(report
+            .preserved
+            .iter()
+            .any(|note| note.contains("usage")));
     }
 }

@@ -162,6 +162,15 @@ pub enum HygieneFinding {
     Duplicate { ids: Vec<String>, name: String },
     /// A task/session-scoped instruction saved as permanent.
     PointRuleAsPermanent { id: String, name: String },
+    /// Active guidance untouched for longer than the staleness window. Surfaced
+    /// for review only; obsolescence is never acted on automatically so a rule
+    /// is never removed silently.
+    Obsolete {
+        id: String,
+        name: String,
+        /// How long since this guidance was last used, in milliseconds.
+        idle_ms: u64,
+    },
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -341,9 +350,33 @@ impl GuidanceRegistry {
             .collect()
     }
 
-    /// Detects the hygiene problems this slice can prove deterministically:
-    /// duplicate name+scope, and a task/session rule saved as permanent.
+    /// Detects the hygiene problems this slice can prove deterministically
+    /// without a clock: duplicate name+scope, and a task/session rule saved as
+    /// permanent.
+    ///
+    /// This signature is time-free and stable. To also surface obsolescence
+    /// (guidance idle beyond a staleness window), call
+    /// [`GuidanceRegistry::hygiene_with_staleness`].
     pub fn hygiene(&self) -> Vec<HygieneFinding> {
+        // A zero window with `now_ms == 0` yields `idle_ms == 0`, which never
+        // exceeds the window, so no obsolescence is reported here.
+        self.hygiene_with_staleness(0, u64::MAX)
+    }
+
+    /// Detects every hygiene problem [`GuidanceRegistry::hygiene`] does, plus
+    /// obsolescence: active guidance whose `last_used_ms` is older than
+    /// `staleness_window_ms` relative to `now_ms`.
+    ///
+    /// Time is injected — `now_ms` is the caller's current wall-clock in
+    /// milliseconds, never read from a clock here — so the result stays
+    /// deterministic and the crate keeps no wall-clock dependency. Obsolescence
+    /// is surfaced as a reviewable finding only; a rule is never removed
+    /// silently.
+    pub fn hygiene_with_staleness(
+        &self,
+        now_ms: u64,
+        staleness_window_ms: u64,
+    ) -> Vec<HygieneFinding> {
         let mut findings = Vec::new();
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for guidance in self.entries.values() {
@@ -358,6 +391,14 @@ impl GuidanceRegistry {
                 findings.push(HygieneFinding::PointRuleAsPermanent {
                     id: guidance.id.clone(),
                     name: guidance.name.clone(),
+                });
+            }
+            let idle_ms = now_ms.saturating_sub(guidance.last_used_ms);
+            if idle_ms > staleness_window_ms {
+                findings.push(HygieneFinding::Obsolete {
+                    id: guidance.id.clone(),
+                    name: guidance.name.clone(),
+                    idle_ms,
                 });
             }
         }
@@ -513,6 +554,22 @@ pub enum TruthFinding {
     AuthorityConflict { ids: Vec<String>, subject: String },
 }
 
+/// A reviewable proposal to synchronize the consumers of a subject with its
+/// authority. It only describes the work; it never performs the sync, so nothing
+/// is changed silently downstream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProposal {
+    /// The subject whose authority moved.
+    pub subject: String,
+    /// The authority file the consumers should be brought in line with.
+    pub authority_path: String,
+    /// Consumers currently out of sync with the authority.
+    pub consumers_to_update: Vec<String>,
+    /// A human-readable explanation of why the proposal was raised.
+    pub reason: String,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TruthSnapshot {
     entries: Vec<TruthDeclaration>,
@@ -600,6 +657,52 @@ impl TruthRegistry {
         consumers.sort();
         consumers.dedup();
         consumers
+    }
+
+    /// Proposes synchronizing the consumers of a declaration's subject with its
+    /// authority. `up_to_date` lists the consumers already known to match the
+    /// current authority; every other consumer of the declaration is proposed
+    /// for update.
+    ///
+    /// This only produces a reviewable [`SyncProposal`]; it performs no sync and
+    /// mutates nothing, so downstream consumers are never changed silently.
+    pub fn propose_sync(
+        &self,
+        id: &str,
+        up_to_date: &[String],
+    ) -> anyhow::Result<SyncProposal> {
+        let declaration = self
+            .entries
+            .get(id)
+            .with_context(|| format!("unknown truth declaration {id}"))?;
+        let consumers_to_update: Vec<String> = declaration
+            .consumers
+            .iter()
+            .filter(|consumer| !up_to_date.iter().any(|synced| synced == *consumer))
+            .cloned()
+            .collect();
+        let reason = if consumers_to_update.is_empty() {
+            format!(
+                "all {} consumer(s) of '{}' are already synchronized with {}",
+                declaration.consumers.len(),
+                declaration.subject,
+                declaration.authority_path,
+            )
+        } else {
+            format!(
+                "{} of {} consumer(s) of '{}' are out of sync with {}",
+                consumers_to_update.len(),
+                declaration.consumers.len(),
+                declaration.subject,
+                declaration.authority_path,
+            )
+        };
+        Ok(SyncProposal {
+            subject: declaration.subject.clone(),
+            authority_path: declaration.authority_path.clone(),
+            consumers_to_update,
+            reason,
+        })
     }
 
     /// A conflict is two authorities over one subject in an overlapping scope.
@@ -784,6 +887,79 @@ mod tests {
         assert!(findings
             .iter()
             .any(|finding| matches!(finding, HygieneFinding::PointRuleAsPermanent { .. })));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn hygiene_flags_obsolete_only_past_the_staleness_window() {
+        let root = temp_root("obsolete");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        // Captured guidance starts with last_used_ms == 0.
+        registry
+            .capture(
+                draft("regra antiga", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
+            .unwrap();
+
+        let window_ms = 2_000;
+        // Idle (1_000ms) within the window: not yet obsolete.
+        let fresh = registry.hygiene_with_staleness(1_000, window_ms);
+        assert!(!fresh
+            .iter()
+            .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
+
+        // Idle (5_000ms) beyond the window: obsolete surfaces for review.
+        let stale = registry.hygiene_with_staleness(5_000, window_ms);
+        assert!(stale.iter().any(|finding| matches!(
+            finding,
+            HygieneFinding::Obsolete { idle_ms, .. } if *idle_ms == 5_000
+        )));
+
+        // The time-free hygiene() never reports obsolescence.
+        assert!(!registry
+            .hygiene()
+            .iter()
+            .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn propose_sync_lists_only_out_of_sync_consumers() {
+        let root = temp_root("sync");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = TruthRegistry::open(&root).unwrap();
+        let declaration = registry
+            .declare(
+                "checkout",
+                GuidanceScope::Person,
+                "docs/checkout.md",
+                10,
+                "test",
+            )
+            .unwrap();
+        registry.add_consumer(&declaration.id, "cart-service").unwrap();
+        registry
+            .add_consumer(&declaration.id, "orders-service")
+            .unwrap();
+
+        // cart-service already matches the authority; orders-service does not.
+        let proposal = registry
+            .propose_sync(&declaration.id, &["cart-service".to_owned()])
+            .unwrap();
+        assert_eq!(proposal.subject, "checkout");
+        assert_eq!(proposal.authority_path, "docs/checkout.md");
+        assert_eq!(proposal.consumers_to_update, vec!["orders-service"]);
+
+        // With everyone synced, nothing is proposed.
+        let none = registry
+            .propose_sync(
+                &declaration.id,
+                &["cart-service".to_owned(), "orders-service".to_owned()],
+            )
+            .unwrap();
+        assert!(none.consumers_to_update.is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

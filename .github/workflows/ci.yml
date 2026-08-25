@@ -42,6 +42,8 @@ jobs:
         run: npm ci
       - name: Frontend checks
         run: npm run check
+      - name: Measure host security surface
+        run: bash scripts/measure-host-security.sh
       - name: Rust format
         run: cargo fmt --check
       - name: Rust lint

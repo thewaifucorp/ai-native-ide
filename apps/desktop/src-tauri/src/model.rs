@@ -108,9 +108,9 @@ impl TauriViabilityReport {
             gates: vec![
                 ViabilityGate {
                     id: "TAURI-IPC-01",
-                    assertion: "The renderer reaches native features only through typed, allowlisted commands and observable events.",
+                    assertion: "The renderer reaches native features only through typed, allowlisted commands and observable events; measured in CI by scripts/measure-host-security.sh, which asserts the shipped capability set stays within the allowlist and the CSP forbids eval and wildcard remote origins.",
                     failure_is_structural_blocker: true,
-                    status: ViabilityGateStatus::PassingByConstruction,
+                    status: ViabilityGateStatus::MeasuredPassing,
                 },
                 ViabilityGate {
                     id: "TAURI-HOST-02",
@@ -126,9 +126,15 @@ impl TauriViabilityReport {
                 },
                 ViabilityGate {
                     id: "TAURI-ERGONOMICS-04",
-                    assertion: "The host remains a single Rust process and permits a shell-neutral React UI; maintenance cost is reviewed against CI evidence.",
+                    assertion: "The host remains a single Rust process and permits a shell-neutral React UI; measured in CI by the installed-artifact smoke test, which bounds the Linux bundle size, counts the host processes, and asserts a clean shutdown with no orphans.",
                     failure_is_structural_blocker: false,
-                    status: ViabilityGateStatus::PassingByConstruction,
+                    status: ViabilityGateStatus::MeasuredPassing,
+                },
+                ViabilityGate {
+                    id: "TAURI-RESOURCE-05",
+                    assertion: "The packaged host stays within a bounded memory and process budget while idle; measured in CI by the installed-artifact smoke test, which samples peak resident memory and the live process shape against a ceiling.",
+                    failure_is_structural_blocker: false,
+                    status: ViabilityGateStatus::MeasuredPassing,
                 },
             ],
         }

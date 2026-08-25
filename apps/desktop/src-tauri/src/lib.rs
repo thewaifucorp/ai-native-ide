@@ -27,23 +27,26 @@ use benchmark_preview::{
     BenchmarkPreviewHost, BenchmarkPreviewStatus, PreviewFailureReport, PreviewReconciliationAction,
 };
 use bridge::{
-    AcpxTarget, AgentCapabilityCard, AgentTaskRequest, DesktopBridge, ProjectIntentInput,
-    StartedAgentSession, TrustedWorkspaceSelection, WorkspaceFile, WorkspaceFileContents,
-    WorkspaceWriteRequest,
+    AcpxTarget, AgentCapabilityCard, AgentTaskRequest, AssetWriteRequest, DesktopBridge,
+    ProjectIntentInput, StartedAgentSession, SwappedAgentSession, TrustedWorkspaceSelection,
+    WorkspaceFile, WorkspaceFileContents, WorkspaceWriteRequest,
 };
-use ide_config::{ConfigField, ConfigPatch, DetectedEnvironment, IdeConfig};
+use ide_config::{
+    ConfigField, ConfigPatch, DetectedEnvironment, IdeConfig, LayoutProfile, Permissions,
+    PolicyScope,
+};
 use ide_context::{CompiledContext, ContextInputs, Navigation};
 use ide_diff::Hunk;
 use ide_domain::{ProjectRecord, Resource, ResourceKind};
 use ide_guidance::{
     ActivityContext, AppliedGuidance, CaptureDestination, Guidance, GuidanceDraft, GuidanceScope,
-    HygieneFinding, TruthDeclaration, TruthFinding,
+    HygieneFinding, SyncProposal, TruthDeclaration, TruthFinding,
 };
 use ide_harness::{DependencyLock, HarnessInputs, HarnessReport};
 use ide_lifecycle::{ConfirmationDecision, ExportManifest, PublishRecord};
 use ide_model_loop::{LocalEchoProvider, LoopConfig, LoopTranscript};
 use ide_modes::{EffectClass, EffectPolicyDecision, InterruptionDecision, PromotionRecord};
-use ide_packs::{Pack, ReadinessVerdict};
+use ide_packs::{FindingDisposition, Pack, ReadinessVerdict};
 use ide_references::{ProjectReference, ReferenceKind};
 use ide_semantic::{EvaluationBudget, SemanticReport};
 use model::{HostStatus, TauriViabilityReport};
@@ -601,6 +604,46 @@ async fn propose_workspace_write(
     Ok(result)
 }
 
+/// Proposes a governed binary asset write. It travels the same broker as text
+/// (snapshot, approval by exact payload, rollback) and announces the effect on
+/// the Activity Strip, so code, Markdown, config and assets share one lifecycle.
+#[tauri::command]
+async fn propose_asset_write(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    runtime: State<'_, HostRuntime>,
+    project_id: String,
+    request: AssetWriteRequest,
+) -> Result<serde_json::Value, String> {
+    let resource_id = request.resource_id.clone();
+    let effect_id = request.effect_id.clone();
+    let path = request.relative_path.display().to_string();
+    let result = bridge
+        .propose_asset_write(&project_id, request)
+        .await
+        .map_err(|error| error.to_string())?;
+    if result["awaitingApproval"] == serde_json::Value::Bool(true) {
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::AwaitingApproval,
+            effect_id,
+            path,
+            activity_id: None,
+        });
+    } else if result["written"] == serde_json::Value::Bool(true) {
+        let activity_id = bridge
+            .effect_causal_links(&project_id, &resource_id, &effect_id)
+            .await
+            .ok()
+            .and_then(|links| links.activity_ids.into_iter().next());
+        runtime.publish(HostEvent::WorkspaceEffect {
+            phase: EffectPhase::Written,
+            effect_id,
+            path,
+            activity_id,
+        });
+    }
+    Ok(result)
+}
+
 /// Runs an IDE-controlled model loop with the offline local provider. The IDE
 /// owns the turn budget and can stop; a real API/gateway provider plugs into the
 /// same trait without changing the loop control. No paid inference runs here.
@@ -620,6 +663,46 @@ async fn effect_policy(
     class: EffectClass,
 ) -> Result<EffectPolicyDecision, String> {
     Ok(bridge.effect_policy(class).await)
+}
+
+/// The per-effect approval policy resolved for a specific project, resource and
+/// tool. The most specific scoped override wins; otherwise the global level.
+#[tauri::command]
+async fn effect_policy_scoped(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    project: Option<String>,
+    resource: Option<String>,
+    tool: Option<String>,
+    class: EffectClass,
+) -> Result<EffectPolicyDecision, String> {
+    Ok(bridge
+        .effect_policy_scoped(project, resource, tool, class)
+        .await)
+}
+
+/// Declares a reversible scoped permission override for a project/resource/tool.
+#[tauri::command]
+async fn set_scoped_permission(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    scope: PolicyScope,
+    permissions: Permissions,
+) -> Result<IdeConfig, String> {
+    bridge
+        .set_scoped_permission(scope, permissions)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Removes a scoped permission override, restoring the fallback resolution.
+#[tauri::command]
+async fn clear_scoped_permission(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    scope: PolicyScope,
+) -> Result<IdeConfig, String> {
+    bridge
+        .clear_scoped_permission(scope)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Explicit YOLO write: proposes and auto-approves in one step, only at the Yolo
@@ -922,6 +1005,19 @@ async fn guidance_hygiene(
     Ok(bridge.guidance_hygiene().await)
 }
 
+/// Hygiene including obsolescence: guidance idle beyond `staleness_window_ms` as
+/// of `now_ms` is surfaced as a reviewable finding, never removed silently.
+#[tauri::command]
+async fn guidance_hygiene_with_staleness(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    now_ms: u64,
+    staleness_window_ms: u64,
+) -> Result<Vec<HygieneFinding>, String> {
+    Ok(bridge
+        .guidance_hygiene_with_staleness(now_ms, staleness_window_ms)
+        .await)
+}
+
 #[tauri::command]
 async fn truth_declare(
     bridge: State<'_, Arc<DesktopBridge>>,
@@ -970,6 +1066,20 @@ async fn truth_conflicts(
     bridge: State<'_, Arc<DesktopBridge>>,
 ) -> Result<Vec<TruthFinding>, String> {
     Ok(bridge.truth_conflicts().await)
+}
+
+/// Proposes synchronizing the consumers of a source of truth that are not in the
+/// `up_to_date` set. It only proposes; nothing is changed downstream.
+#[tauri::command]
+async fn truth_sync_proposal(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    id: String,
+    up_to_date: Vec<String>,
+) -> Result<SyncProposal, String> {
+    bridge
+        .truth_sync_proposal(&id, up_to_date)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1027,6 +1137,25 @@ async fn reset_config_field(
 #[tauri::command]
 fn explain_config_field(field: ConfigField) -> String {
     ide_config::explain(field).to_owned()
+}
+
+/// Applies a named layout profile, setting layout and depth together so the user
+/// switches density without fragmenting the project.
+#[tauri::command]
+async fn apply_config_profile(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    name: String,
+) -> Result<IdeConfig, String> {
+    bridge
+        .apply_config_profile(&name)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The built-in layout profiles a user can switch between.
+#[tauri::command]
+fn list_config_profiles(bridge: State<'_, Arc<DesktopBridge>>) -> Vec<LayoutProfile> {
+    bridge.config_profiles()
 }
 
 /// The interruption the active build mode requires before an effect of this
@@ -1194,6 +1323,36 @@ async fn pack_readiness(
         .map_err(|error| error.to_string())
 }
 
+/// Records a reviewable disposition on a readiness finding: a correction, a false
+/// positive or a scoped exception. It never edits the pack's rules.
+#[tauri::command]
+async fn record_pack_disposition(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    finding_key: String,
+    disposition: FindingDisposition,
+    note: String,
+) -> Result<(), String> {
+    bridge
+        .record_pack_disposition(&finding_key, disposition, &note)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Readiness that honours recorded dispositions: a false positive or scoped
+/// exception stops blocking, while genuine failures and unknowns still block.
+#[tauri::command]
+async fn pack_readiness_dispositioned(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    pack_id: String,
+    passed: Vec<String>,
+    failed: Vec<String>,
+) -> Result<ReadinessVerdict, String> {
+    bridge
+        .pack_readiness_dispositioned(&pack_id, passed, failed)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Compiles the context that would be sent to an agent for the current activity,
 /// with explicit provenance and a budget. Policies, requirements and blocking
 /// guidance are kept verbatim; lower-priority material is dropped to fit.
@@ -1237,6 +1396,25 @@ async fn navigate_subject(
     subject: String,
 ) -> Result<Navigation, String> {
     let truth = bridge.truth_list().await;
+    // The implementation hop is the set of consumers each source of truth binds
+    // to the subject: they are the code/resources that realise the declaration.
+    let implementations: Vec<ide_context::ImplementationRef> = truth
+        .iter()
+        .filter(|declaration| declaration.subject == subject)
+        .flat_map(|declaration| {
+            declaration
+                .consumers
+                .iter()
+                .enumerate()
+                .map(move |(index, consumer)| ide_context::ImplementationRef {
+                    id: format!("{}:{index}", declaration.id),
+                    subject: subject.clone(),
+                    location: consumer.clone(),
+                    kind: "consumer".to_owned(),
+                    provenance: format!("truth {}", declaration.authority_path),
+                })
+        })
+        .collect();
     let inputs = ContextInputs {
         intent: String::new(),
         applied_guidance: Vec::new(),
@@ -1244,7 +1422,7 @@ async fn navigate_subject(
         evidence: Vec::new(),
         budget_chars: 0,
     };
-    Ok(ide_context::navigate(&inputs, &subject))
+    Ok(ide_context::navigate(&inputs, &subject, &implementations))
 }
 
 /// Runs the deterministic Layer-1 semantic evaluators over the declared intent.
@@ -1270,6 +1448,9 @@ async fn run_harness_layer0(
     bridge: State<'_, Arc<DesktopBridge>>,
     project_id: String,
     resource_id: String,
+    build: Option<ide_harness::ToolOutcome>,
+    test: Option<ide_harness::ToolOutcome>,
+    typecheck: Option<ide_harness::ToolOutcome>,
 ) -> Result<HarnessReport, String> {
     let root = bridge
         .workspace_root(&project_id, &resource_id)
@@ -1342,6 +1523,9 @@ async fn run_harness_layer0(
         files,
         dependency_locks,
         pending_effects,
+        build,
+        test,
+        typecheck,
     }))
 }
 
@@ -1418,6 +1602,33 @@ async fn cancel_agent_session(
         .map_err(|error| error.to_string())
 }
 
+/// Resumes a session on its own provider when the capability allows it, keeping
+/// its conversation and usage. It fails honestly when the provider cannot.
+#[tauri::command]
+async fn resume_agent_session(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    session_id: String,
+) -> Result<String, String> {
+    bridge
+        .resume_agent_session(&session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Swaps the conversation to a different agent without losing transferable
+/// state, returning the new session id and an honest preserved/dropped report.
+#[tauri::command]
+async fn swap_agent_session(
+    bridge: State<'_, Arc<DesktopBridge>>,
+    session_id: String,
+    target: AcpxTarget,
+) -> Result<SwappedAgentSession, String> {
+    bridge
+        .swap_agent_session(&session_id, target)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -1456,9 +1667,13 @@ pub fn run() {
             read_workspace_file,
             workspace_diff,
             propose_workspace_write,
+            propose_asset_write,
             workspace_file_diff,
             propose_partial_workspace_write,
             effect_policy,
+            effect_policy_scoped,
+            set_scoped_permission,
+            clear_scoped_permission,
             apply_workspace_write_yolo,
             run_model_loop,
             approve_next_workspace_write,
@@ -1474,17 +1689,21 @@ pub fn run() {
             list_guidance,
             guidance_applied_now,
             guidance_hygiene,
+            guidance_hygiene_with_staleness,
             truth_declare,
             truth_list,
             truth_add_consumer,
             truth_consumers,
             truth_conflicts,
+            truth_sync_proposal,
             run_harness_layer0,
             get_config,
             detect_and_apply_config_defaults,
             set_config,
             reset_config_field,
             explain_config_field,
+            apply_config_profile,
+            list_config_profiles,
             mode_interruption_policy,
             promote_prototype,
             evaluate_intent,
@@ -1495,6 +1714,8 @@ pub fn run() {
             apply_pack,
             revert_pack,
             pack_readiness,
+            record_pack_disposition,
+            pack_readiness_dispositioned,
             link_reference,
             list_project_references,
             unlink_reference,
@@ -1509,6 +1730,8 @@ pub fn run() {
             submit_agent_task,
             next_agent_event,
             cancel_agent_session,
+            resume_agent_session,
+            swap_agent_session,
             start_workspace_inspection,
             start_workspace_terminal,
             write_workspace_terminal,

@@ -238,3 +238,77 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
     fs::remove_dir_all(&root).expect("remove workspace");
     fs::remove_dir_all(&data).expect("remove host data");
 }
+
+/// Gate 6 for a non-technical person: the whole publish → reopen → diagnose →
+/// fix → republish loop is driven only through high-level semantic commands. No
+/// Git, no raw file editing and no version string is ever touched by hand; the
+/// host owns versioning and carries honest reversibility evidence on each record.
+#[tokio::test]
+async fn nontechnical_person_publishes_reopens_diagnoses_and_republishes() {
+    let data = temporary_directory("gate6-data");
+    let bridge = DesktopBridge::open(&data, "gate6.owner").expect("open desktop bridge");
+
+    let project = bridge
+        .create_project(ProjectIntentInput {
+            project_id: "auction".to_owned(),
+            title: "Leilão de posições".to_owned(),
+            intent: "Publicar um leilão simples de posições para pessoas divulgarem ferramentas."
+                .to_owned(),
+        })
+        .expect("persist semantic project from plain intent");
+
+    // Publish: an external effect. The record must carry honest reversibility
+    // evidence rather than pretend the publication can be simply undone.
+    let published = bridge
+        .publish_project(&project.id.0)
+        .await
+        .expect("publish the project locally");
+    assert!(
+        !matches!(published.reversibility, ide_lifecycle::Reversibility::Reversible),
+        "an external publication is never a plain reversible effect"
+    );
+
+    // Reopen the published product in the same project after the host forgot its
+    // in-memory state — no directory re-selection, no Git knowledge required.
+    let reopened = bridge
+        .restore_project(&project.id.0)
+        .await
+        .expect("reopen persisted project")
+        .expect("the published project still exists");
+    assert_eq!(reopened.id.0, project.id.0);
+
+    // Diagnose + fix: relate the observed problem to the intent by editing the
+    // spec in plain language, then republish. The host bumps the version.
+    bridge
+        .update_project_intent(
+            &project.id.0,
+            "Publicar um leilão de posições que também mostre o lance vencedor sem vazar quem lançou."
+                .to_owned(),
+        )
+        .expect("edit the spec in plain language");
+    let republished = bridge
+        .republish_project(
+            &project.id.0,
+            "O produto publicado vazava a identidade de quem deu o lance.",
+            vec!["auction-local".to_owned()],
+        )
+        .await
+        .expect("republish a fixed version");
+    assert_eq!(
+        republished.problem.as_deref(),
+        Some("O produto publicado vazava a identidade de quem deu o lance.")
+    );
+    assert_ne!(
+        republished.version, published.version,
+        "a republish must produce a new version"
+    );
+
+    let history = bridge.publish_history(&project.id.0).await;
+    assert_eq!(history.len(), 2, "publish then republish are both recorded");
+    assert!(
+        history.last().expect("republish record").problem.is_some(),
+        "the latest record explains the problem it fixed"
+    );
+
+    fs::remove_dir_all(&data).expect("remove host data");
+}

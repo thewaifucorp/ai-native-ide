@@ -74,6 +74,135 @@ pub fn bump_patch(version: &str) -> String {
     format!("{major}.{minor}.{}", patch + 1)
 }
 
+/// How far a lifecycle effect can be undone. Modeled honestly: an external
+/// publication is never a true undo, so it is never `Reversible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reversibility {
+    /// The effect can be fully undone, leaving no trace (e.g. deleting a local
+    /// exported file).
+    Reversible,
+    /// The effect cannot be undone, but its impact can be mitigated by a further
+    /// compensating action (e.g. publishing a retraction or a corrected
+    /// version). Not a rollback.
+    CompensationOnly,
+    /// The effect cannot be undone and no compensating action exists.
+    Irreversible,
+}
+
+/// Where an external publication lands, which decides whether it can be
+/// compensated at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishTarget {
+    /// A registry that accepts further publications, so a mistake can be
+    /// compensated by publishing a retraction or a corrected version.
+    ExternalCompensable,
+    /// A sink that cannot be amended or retracted once written, so no
+    /// compensating action is possible.
+    ExternalImmutable,
+}
+
+/// A lifecycle effect whose reversibility and compensation we can reason about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "effect")]
+pub enum LifecycleEffect {
+    /// A local export produced a deletable file at this portable path.
+    LocalExport { path: String },
+    /// A first external publication of a version.
+    Publish {
+        project_id: String,
+        version: String,
+        target: PublishTarget,
+    },
+    /// A republication of a new version over a previous one.
+    Republish {
+        project_id: String,
+        version: String,
+        target: PublishTarget,
+    },
+}
+
+impl LifecycleEffect {
+    /// Classifies how far this effect can be undone, independently of whether a
+    /// concrete compensation plan is available.
+    pub fn reversibility(&self) -> Reversibility {
+        match self {
+            LifecycleEffect::LocalExport { .. } => Reversibility::Reversible,
+            LifecycleEffect::Publish { target, .. }
+            | LifecycleEffect::Republish { target, .. } => match target {
+                PublishTarget::ExternalCompensable => Reversibility::CompensationOnly,
+                PublishTarget::ExternalImmutable => Reversibility::Irreversible,
+            },
+        }
+    }
+}
+
+/// The concrete compensating action for an effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompensationKind {
+    /// Delete the exported file — a true undo.
+    DeleteExportedFile,
+    /// Publish a compensating version (a retraction or a corrected version).
+    /// This mitigates but never truly undoes the original publication.
+    PublishCompensatingVersion,
+}
+
+/// A concrete, honest description of what can be undone and how. A plan is only
+/// produced when a real compensating action exists; a truly irreversible effect
+/// with no compensation yields no plan (see [`compensation_for`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompensationPlan {
+    pub reversibility: Reversibility,
+    pub kind: CompensationKind,
+    /// The concrete target the compensating action operates on: the exported
+    /// file path, or the `project_id@version` being compensated.
+    pub target: String,
+    /// A human-readable, honest note describing the compensating action.
+    pub note: String,
+}
+
+/// Describes the concrete compensating action for a lifecycle effect, or `None`
+/// when the effect is irreversible and no compensation is possible.
+///
+/// Honest degradation: this never fabricates a rollback. A local export is a
+/// true undo (delete the file); an external publication is compensation-only
+/// (publish a retraction or corrected version); an immutable external sink
+/// returns `None`, and callers must report that no undo exists rather than
+/// pretend otherwise.
+pub fn compensation_for(effect: &LifecycleEffect) -> Option<CompensationPlan> {
+    match effect {
+        LifecycleEffect::LocalExport { path } => Some(CompensationPlan {
+            reversibility: Reversibility::Reversible,
+            kind: CompensationKind::DeleteExportedFile,
+            target: path.clone(),
+            note: "Excluir o arquivo exportado desfaz o export por completo.".to_owned(),
+        }),
+        LifecycleEffect::Publish {
+            project_id,
+            version,
+            target,
+        }
+        | LifecycleEffect::Republish {
+            project_id,
+            version,
+            target,
+        } => match target {
+            PublishTarget::ExternalCompensable => Some(CompensationPlan {
+                reversibility: Reversibility::CompensationOnly,
+                kind: CompensationKind::PublishCompensatingVersion,
+                target: format!("{project_id}@{version}"),
+                note: "Publicação externa não tem undo real; \
+                       compensar publicando uma retratação ou versão corrigida."
+                    .to_owned(),
+            }),
+            PublishTarget::ExternalImmutable => None,
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishRecord {
@@ -84,6 +213,18 @@ pub struct PublishRecord {
     /// Resources related to the problem being fixed.
     pub related_resources: Vec<String>,
     pub note: String,
+    /// How far this publication can be undone. Evidence carried on the record
+    /// itself, so an auditor sees the honest reversibility class.
+    #[serde(default = "default_publish_reversibility")]
+    pub reversibility: Reversibility,
+    /// The concrete compensating action, or `None` when this publication is
+    /// irreversible with no compensation possible.
+    #[serde(default)]
+    pub compensation: Option<CompensationPlan>,
+}
+
+fn default_publish_reversibility() -> Reversibility {
+    Reversibility::CompensationOnly
 }
 
 /// What the IDE must do before an external effect. The first irreversible
@@ -150,12 +291,19 @@ impl PublishLog {
             Some(previous) => bump_patch(&previous),
             None => "0.0.1".to_owned(),
         };
+        let effect = LifecycleEffect::Publish {
+            project_id: project_id.to_owned(),
+            version: version.clone(),
+            target: PublishTarget::ExternalCompensable,
+        };
         let record = PublishRecord {
             project_id: project_id.to_owned(),
             version,
             problem: None,
             related_resources: Vec::new(),
             note: "Publicação local.".to_owned(),
+            reversibility: effect.reversibility(),
+            compensation: compensation_for(&effect),
         };
         self.records
             .entry(project_id.to_owned())
@@ -178,12 +326,19 @@ impl PublishLog {
             Some(previous) => bump_patch(&previous),
             None => anyhow::bail!("cannot republish a project that was never published"),
         };
+        let effect = LifecycleEffect::Republish {
+            project_id: project_id.to_owned(),
+            version: version.clone(),
+            target: PublishTarget::ExternalCompensable,
+        };
         let record = PublishRecord {
             project_id: project_id.to_owned(),
             version,
             problem: Some(problem.to_owned()),
             related_resources,
             note: "Republicação corrigindo um problema observado.".to_owned(),
+            reversibility: effect.reversibility(),
+            compensation: compensation_for(&effect),
         };
         self.records
             .entry(project_id.to_owned())
@@ -267,6 +422,59 @@ mod tests {
         );
         let history = log.history("auction");
         assert_eq!(history.len(), 2);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn local_export_is_reversible_with_delete_compensation() {
+        let effect = LifecycleEffect::LocalExport {
+            path: "exports/auction.json".to_owned(),
+        };
+        assert_eq!(effect.reversibility(), Reversibility::Reversible);
+        let plan = compensation_for(&effect).expect("local export has a compensation plan");
+        assert_eq!(plan.reversibility, Reversibility::Reversible);
+        assert_eq!(plan.kind, CompensationKind::DeleteExportedFile);
+        assert_eq!(plan.target, "exports/auction.json");
+    }
+
+    #[test]
+    fn external_compensable_publish_is_compensation_only_with_version_plan() {
+        let effect = LifecycleEffect::Publish {
+            project_id: "auction".to_owned(),
+            version: "0.0.1".to_owned(),
+            target: PublishTarget::ExternalCompensable,
+        };
+        assert_eq!(effect.reversibility(), Reversibility::CompensationOnly);
+        let plan = compensation_for(&effect).expect("compensable publish has a plan");
+        assert_eq!(plan.reversibility, Reversibility::CompensationOnly);
+        assert_eq!(plan.kind, CompensationKind::PublishCompensatingVersion);
+        assert_eq!(plan.target, "auction@0.0.1");
+    }
+
+    #[test]
+    fn immutable_external_publish_is_irreversible_with_explicit_no_compensation() {
+        let effect = LifecycleEffect::Publish {
+            project_id: "auction".to_owned(),
+            version: "0.0.1".to_owned(),
+            target: PublishTarget::ExternalImmutable,
+        };
+        assert_eq!(effect.reversibility(), Reversibility::Irreversible);
+        assert!(
+            compensation_for(&effect).is_none(),
+            "an immutable publish must honestly report no compensation, not a fake rollback"
+        );
+    }
+
+    #[test]
+    fn publish_record_carries_reversibility_and_compensation_evidence() {
+        let root = temp_root("compensation");
+        let _ = fs::remove_dir_all(&root);
+        let mut log = PublishLog::open(&root).unwrap();
+        let record = log.publish("auction").unwrap();
+        assert_eq!(record.reversibility, Reversibility::CompensationOnly);
+        let plan = record.compensation.expect("record carries a compensation plan");
+        assert_eq!(plan.kind, CompensationKind::PublishCompensatingVersion);
+        assert_eq!(plan.target, "auction@0.0.1");
         fs::remove_dir_all(&root).unwrap();
     }
 
