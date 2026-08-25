@@ -1246,9 +1246,6 @@ mod tests {
             .dropped
             .iter()
             .any(|note| note.contains("conversation")));
-        assert!(report
-            .preserved
-            .iter()
-            .any(|note| note.contains("usage")));
+        assert!(report.preserved.iter().any(|note| note.contains("usage")));
     }
 }

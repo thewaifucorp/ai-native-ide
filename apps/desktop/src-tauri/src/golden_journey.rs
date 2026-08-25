@@ -264,7 +264,10 @@ async fn nontechnical_person_publishes_reopens_diagnoses_and_republishes() {
         .await
         .expect("publish the project locally");
     assert!(
-        !matches!(published.reversibility, ide_lifecycle::Reversibility::Reversible),
+        !matches!(
+            published.reversibility,
+            ide_lifecycle::Reversibility::Reversible
+        ),
         "an external publication is never a plain reversible effect"
     );
 

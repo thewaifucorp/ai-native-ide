@@ -140,7 +140,9 @@ pub fn readiness_with_dispositions(
     for check in &pack.checks {
         if failed.contains(&check.id) {
             let accepted = matches!(
-                dispositions.get(&check.id).map(|record| &record.disposition),
+                dispositions
+                    .get(&check.id)
+                    .map(|record| &record.disposition),
                 Some(FindingDisposition::FalsePositive)
                     | Some(FindingDisposition::ScopedException { .. })
             );
@@ -396,7 +398,10 @@ mod tests {
         let verdict = readiness_with_dispositions(&pack, &passed, &failed, &map);
         assert!(verdict.ready);
         assert!(verdict.failed_checks.is_empty());
-        assert_eq!(verdict.dispositioned_checks, vec!["auction-privacy".to_owned()]);
+        assert_eq!(
+            verdict.dispositioned_checks,
+            vec!["auction-privacy".to_owned()]
+        );
     }
 
     #[test]
@@ -410,7 +415,10 @@ mod tests {
         });
         let verdict = readiness_with_dispositions(&pack, &passed, &failed, &map);
         assert!(verdict.ready);
-        assert_eq!(verdict.dispositioned_checks, vec!["auction-privacy".to_owned()]);
+        assert_eq!(
+            verdict.dispositioned_checks,
+            vec!["auction-privacy".to_owned()]
+        );
     }
 
     #[test]
@@ -432,7 +440,9 @@ mod tests {
         let map = dispo(FindingDisposition::FalsePositive);
         let verdict = readiness_with_dispositions(&pack, &[], &[], &map);
         assert!(!verdict.ready);
-        assert!(verdict.missing_checks.contains(&"auction-privacy".to_owned()));
+        assert!(verdict
+            .missing_checks
+            .contains(&"auction-privacy".to_owned()));
     }
 
     #[test]

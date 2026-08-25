@@ -129,11 +129,12 @@ impl LifecycleEffect {
     pub fn reversibility(&self) -> Reversibility {
         match self {
             LifecycleEffect::LocalExport { .. } => Reversibility::Reversible,
-            LifecycleEffect::Publish { target, .. }
-            | LifecycleEffect::Republish { target, .. } => match target {
-                PublishTarget::ExternalCompensable => Reversibility::CompensationOnly,
-                PublishTarget::ExternalImmutable => Reversibility::Irreversible,
-            },
+            LifecycleEffect::Publish { target, .. } | LifecycleEffect::Republish { target, .. } => {
+                match target {
+                    PublishTarget::ExternalCompensable => Reversibility::CompensationOnly,
+                    PublishTarget::ExternalImmutable => Reversibility::Irreversible,
+                }
+            }
         }
     }
 }
@@ -472,7 +473,9 @@ mod tests {
         let mut log = PublishLog::open(&root).unwrap();
         let record = log.publish("auction").unwrap();
         assert_eq!(record.reversibility, Reversibility::CompensationOnly);
-        let plan = record.compensation.expect("record carries a compensation plan");
+        let plan = record
+            .compensation
+            .expect("record carries a compensation plan");
         assert_eq!(plan.kind, CompensationKind::PublishCompensatingVersion);
         assert_eq!(plan.target, "auction@0.0.1");
         fs::remove_dir_all(&root).unwrap();

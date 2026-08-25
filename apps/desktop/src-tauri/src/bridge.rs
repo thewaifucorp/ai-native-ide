@@ -1108,10 +1108,7 @@ impl DesktopBridge {
             .capture_state(&AgentSessionId(session_id.to_owned()))
             .await?;
         let resumed = agent.resume(&state).await?;
-        self.agents
-            .lock()
-            .await
-            .insert(resumed.0.clone(), agent);
+        self.agents.lock().await.insert(resumed.0.clone(), agent);
         Ok(resumed.0)
     }
 

@@ -455,7 +455,10 @@ mod tests {
             broker.propose_asset_write(&write).await.expect("queue")["awaiting_approval"],
             json!(true)
         );
-        assert!(!temp.path().join("logo.png").exists(), "queuing writes nothing");
+        assert!(
+            !temp.path().join("logo.png").exists(),
+            "queuing writes nothing"
+        );
         broker.approve_next().await.expect("approve");
         assert_eq!(
             broker.propose_asset_write(&write).await.expect("write")["written"],
@@ -502,7 +505,10 @@ mod tests {
         broker.propose_asset_write(&write).await.expect("write");
         assert!(file.exists());
         broker.rollback("effect:asset-3").await.expect("rollback");
-        assert!(!file.exists(), "rollback removes a file that did not exist before");
+        assert!(
+            !file.exists(),
+            "rollback removes a file that did not exist before"
+        );
     }
 
     #[tokio::test]

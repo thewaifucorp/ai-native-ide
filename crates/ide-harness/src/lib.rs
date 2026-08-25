@@ -342,7 +342,11 @@ pub fn build_test_typecheck(inputs: &HarnessInputs) -> Vec<Finding> {
     vec![
         tool_finding("build", "Build", inputs.build.as_ref()),
         tool_finding("test", "Testes", inputs.test.as_ref()),
-        tool_finding("typecheck", "Verificação de tipos", inputs.typecheck.as_ref()),
+        tool_finding(
+            "typecheck",
+            "Verificação de tipos",
+            inputs.typecheck.as_ref(),
+        ),
     ]
 }
 
@@ -507,8 +511,7 @@ mod tests {
         assert_eq!(findings.len(), 3);
         assert!(findings
             .iter()
-            .all(|finding| finding.state == CheckState::NotRun
-                && finding.remediation.is_none()));
+            .all(|finding| finding.state == CheckState::NotRun && finding.remediation.is_none()));
     }
 
     #[test]

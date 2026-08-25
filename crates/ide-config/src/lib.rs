@@ -649,13 +649,17 @@ mod tests {
             .set_scoped_permission(tool_scope.clone(), Permissions::Yolo)
             .unwrap();
         assert_eq!(
-            store.config().resolve_permissions(None, None, Some("shell")),
+            store
+                .config()
+                .resolve_permissions(None, None, Some("shell")),
             Permissions::Yolo
         );
         let config = store.clear_scoped_permission(&tool_scope).unwrap();
         assert!(config.scoped_permissions.is_empty());
         assert_eq!(
-            store.config().resolve_permissions(None, None, Some("shell")),
+            store
+                .config()
+                .resolve_permissions(None, None, Some("shell")),
             Permissions::Balanced
         );
         fs::remove_dir_all(&root).unwrap();

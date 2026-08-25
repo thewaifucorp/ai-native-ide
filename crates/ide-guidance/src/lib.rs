@@ -666,11 +666,7 @@ impl TruthRegistry {
     ///
     /// This only produces a reviewable [`SyncProposal`]; it performs no sync and
     /// mutates nothing, so downstream consumers are never changed silently.
-    pub fn propose_sync(
-        &self,
-        id: &str,
-        up_to_date: &[String],
-    ) -> anyhow::Result<SyncProposal> {
+    pub fn propose_sync(&self, id: &str, up_to_date: &[String]) -> anyhow::Result<SyncProposal> {
         let declaration = self
             .entries
             .get(id)
@@ -939,7 +935,9 @@ mod tests {
                 "test",
             )
             .unwrap();
-        registry.add_consumer(&declaration.id, "cart-service").unwrap();
+        registry
+            .add_consumer(&declaration.id, "cart-service")
+            .unwrap();
         registry
             .add_consumer(&declaration.id, "orders-service")
             .unwrap();
