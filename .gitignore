@@ -11,3 +11,8 @@ dist/
 
 # Rebuildable planning research cache
 .planning/research/.cache/
+
+# Test-automation output + runtime artifacts
+.playwright-mcp/
+**/.instrument/
+apps/desktop/src-tauri/gen/

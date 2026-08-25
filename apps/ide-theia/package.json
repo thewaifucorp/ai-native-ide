@@ -64,6 +64,7 @@
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {
-    "mtxr.sqltools": "https://open-vsx.org/api/mtxr/sqltools/0.28.6/file/mtxr.sqltools-0.28.6.vsix"
+    "mtxr.sqltools": "https://open-vsx.org/api/mtxr/sqltools/0.28.6/file/mtxr.sqltools-0.28.6.vsix",
+    "vscode.git": "https://open-vsx.org/api/vscode/git/1.79.0/file/vscode.git-1.79.0.vsix"
   }
 }

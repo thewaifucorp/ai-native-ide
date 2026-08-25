@@ -15,7 +15,7 @@
     "@theia/editor": "1.74.1",
     "@theia/filesystem": "1.74.1",
     "@theia/workspace": "1.74.1",
-    "engine-extension": "0.0.1"
+    "engine-extension": "link:../engine-extension"
   },
   "devDependencies": {
     "typescript": "5.9.3"
