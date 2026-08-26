@@ -24,6 +24,7 @@ import URI from '@theia/core/lib/common/uri';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
+import { AgentSessionService } from '../common/agent-session-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
 import {
     CONFLICT_PROVIDER,
@@ -55,6 +56,12 @@ export const CMD_EXT_BASELINE = 'instrument.external.baseline';
 export const CMD_EXT_ACCEPT = 'instrument.external.accept';
 export const CMD_EXT_REVERT = 'instrument.external.revert';
 
+/** Hosted ACP session — the pre-disk path. */
+export const CMD_SESSION_START = 'instrument.session.start';
+export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
+export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
+export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
+
 /** Items the proof provider seeds, so slot lifecycle has state to preserve. */
 const SEED_ITEMS = ['prova/marco-1', 'prova/fase-1', 'prova/tarefa-1'];
 
@@ -74,6 +81,10 @@ export class InstrumentCapabilityContribution
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
     @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
+    @inject(AgentSessionService) protected readonly session!: AgentSessionService;
+
+    /** Polling handle while a task is running. */
+    protected pollTimer: number | undefined;
 
     /** Debounce handle for watcher-driven scans. */
     protected scanTimer: number | undefined;
@@ -162,6 +173,22 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_EXT_REVERT, label: 'Instrument: propor reverter uma escrita externa' },
             { execute: (relPath?: string) => (relPath ? this.revertExternal(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_START, label: 'Instrument: abrir sessão de agente' },
+            { execute: (agent?: string) => this.sessionStart(agent ?? 'claude') }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_SUBMIT, label: 'Instrument: enviar intenção ao agente' },
+            { execute: (prompt?: string, codeChange?: boolean) => this.sessionSubmit(prompt, codeChange) }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_HARVEST, label: 'Instrument: colher mudanças do agente (via broker)' },
+            { execute: () => this.sessionHarvest() }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
+            { execute: () => this.sessionCancel() }
         );
     }
 
@@ -289,6 +316,139 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Falha ao ler a trilha do broker: ${this.msg(err)}`);
         } finally {
             this.store.setBrokerActivityBusy(false);
+        }
+    }
+
+    // ── hosted agent session (pre-disk path) ────────────────────────────────
+
+    protected async sessionStart(agent: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            this.messages.warn('Abra um projeto para hospedar uma sessão de agente.');
+            return;
+        }
+        this.store.setSessionBusy(true);
+        try {
+            const snapshot = await this.session.start(root, agent);
+            this.store.setSession(snapshot);
+            if (snapshot.lastError) {
+                this.messages.error(snapshot.lastError);
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao abrir sessão: ${this.msg(err)}`);
+        } finally {
+            this.store.setSessionBusy(false);
+        }
+    }
+
+    protected async sessionSubmit(prompt?: string, codeChange?: boolean): Promise<void> {
+        const root = this.root;
+        if (!root || !prompt) {
+            return;
+        }
+        this.store.setSessionBusy(true);
+        try {
+            this.store.setSession(await this.session.submit(root, prompt, !!codeChange));
+            this.startPolling();
+        } catch (err) {
+            // A refused submit (agent busy, session gone) has to be visible; the
+            // panel must not keep the old state as if the prompt had landed.
+            const detail = this.msg(err);
+            this.messages.error(`Falha ao enviar: ${detail}`);
+            const current = this.store.session;
+            if (current) {
+                this.store.setSession({ ...current, lastError: detail });
+            }
+        } finally {
+            this.store.setSessionBusy(false);
+        }
+    }
+
+    /** Drain events while the agent works; stop when it goes idle.
+     *
+     *  Poll failures are NOT swallowed: swallowing them left the panel showing
+     *  `working` forever while nothing was arriving, which is the panel lying.
+     *  Three consecutive failures stop the loop and say why. */
+    protected startPolling(): void {
+        if (this.pollTimer !== undefined) {
+            return;
+        }
+        let failures = 0;
+        this.pollTimer = window.setInterval(async () => {
+            const root = this.root;
+            if (!root) {
+                return;
+            }
+            try {
+                const snapshot = await this.session.poll(root);
+                failures = 0;
+                this.store.setSession(snapshot);
+                if (snapshot.phase !== 'working') {
+                    this.stopPolling();
+                }
+            } catch (err) {
+                failures++;
+                if (failures >= 3) {
+                    this.stopPolling();
+                    this.messages.error(
+                        `A sessão parou de responder: ${this.msg(err)}. ` +
+                        'Encerre e abra de novo.'
+                    );
+                    const current = this.store.session;
+                    if (current) {
+                        this.store.setSession({
+                            ...current,
+                            phase: 'failed',
+                            lastError: this.msg(err)
+                        });
+                    }
+                }
+            }
+        }, 1200);
+    }
+
+    protected stopPolling(): void {
+        if (this.pollTimer !== undefined) {
+            window.clearInterval(this.pollTimer);
+            this.pollTimer = undefined;
+        }
+    }
+
+    protected async sessionHarvest(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setSessionBusy(true);
+        try {
+            const snapshot = await this.session.harvest(root);
+            this.store.setSession(snapshot);
+            const proposed = snapshot.changes.find(c => c.proposed);
+            if (proposed) {
+                await this.adoptPendingProposal();
+                this.messages.info(
+                    `${proposed.relPath} proposto ao broker — decida no dock. ` +
+                    `${snapshot.changes.length - 1} mudança(s) na fila.`
+                );
+            } else if (snapshot.changes.length === 0) {
+                this.messages.info('O agente não mudou nada na worktree.');
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao colher: ${this.msg(err)}`);
+        } finally {
+            this.store.setSessionBusy(false);
+        }
+    }
+
+    protected async sessionCancel(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        try {
+            this.store.setSession(await this.session.cancel(root));
+        } catch (err) {
+            this.messages.error(`Falha ao encerrar: ${this.msg(err)}`);
         }
     }
 

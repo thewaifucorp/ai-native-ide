@@ -32,6 +32,7 @@ import { ToolsWidget } from './widgets/tools-widget';
 import { CAPABILITY_SERVICE_PATH, CapabilityService } from '../common/capability-protocol';
 import { HARNESS_SERVICE_PATH, HarnessService } from '../common/harness-protocol';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
+import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent-session-protocol';
 import { InstrumentCapabilityContribution } from './instrument-capability-contribution';
 
 import '../../src/browser/style/instrument-shell.css';
@@ -42,7 +43,7 @@ import '../../src/browser/style/instrument-shell.css';
 // Bump LAYOUT_VERSION on any structural shell change to drop the stale layout
 // BEFORE Theia's ShellLayoutRestorer reads it. Runs at module-load, i.e. well
 // before `initializeLayout`. Preferences and other storage are untouched.
-const LAYOUT_VERSION = 'm12-observador';
+const LAYOUT_VERSION = 'm14-sessao-acp';
 try {
     if (typeof localStorage !== 'undefined' && localStorage.getItem('iws.layoutVersion') !== LAYOUT_VERSION) {
         Object.keys(localStorage)
@@ -131,6 +132,12 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
         .toDynamicValue(ctx => {
             const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
             return provider.createProxy<ObserverService>(OBSERVER_SERVICE_PATH);
+        })
+        .inSingletonScope();
+    bind(AgentSessionService)
+        .toDynamicValue(ctx => {
+            const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+            return provider.createProxy<AgentSessionService>(AGENT_SESSION_SERVICE_PATH);
         })
         .inSingletonScope();
     bind(InstrumentCapabilityContribution).toSelf().inSingletonScope();

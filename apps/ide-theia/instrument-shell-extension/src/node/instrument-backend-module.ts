@@ -24,6 +24,8 @@ import { HarnessRegistryService } from './harness-registry-service';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
 import { ObserverServiceImpl } from './observer-service';
 import { WriteSourceLedger } from './write-source-ledger';
+import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent-session-protocol';
+import { AgentSessionServiceImpl } from './agent-session-service';
 import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
@@ -44,6 +46,11 @@ export default new ContainerModule(bind => {
     // script, the terminal) — WORK-05.
     bind(ObserverServiceImpl).toSelf().inSingletonScope();
     bind(ObserverService).toService(ObserverServiceImpl);
+
+    // The hosted ACP session: the agent works in a git worktree and every change
+    // it makes crosses the broker before reaching the project.
+    bind(AgentSessionServiceImpl).toSelf().inSingletonScope();
+    bind(AgentSessionService).toService(AgentSessionServiceImpl);
 
     // Same-origin, per-project, allow-listed serving of capability artifacts
     // (today: `<root>/.aag/graph.html` for the Grafo capability).
@@ -84,6 +91,14 @@ export default new ContainerModule(bind => {
             ctx =>
                 new RpcConnectionHandler<object>(OBSERVER_SERVICE_PATH, () =>
                     ctx.container.get<ObserverService>(ObserverService)
+                )
+        )
+        .inSingletonScope();
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(AGENT_SESSION_SERVICE_PATH, () =>
+                    ctx.container.get<AgentSessionService>(AgentSessionService)
                 )
         )
         .inSingletonScope();

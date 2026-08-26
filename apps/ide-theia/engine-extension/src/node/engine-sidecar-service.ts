@@ -6,7 +6,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { AgentProbe, BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
+import { AgentEvent, AgentProbe, BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
 
 interface PendingRequest {
     resolve(value: unknown): void;
@@ -178,5 +178,49 @@ export class EngineSidecarService implements EngineService {
 
     agentProbe(agent: string): Promise<AgentProbe> {
         return this.call('agent_probe', { agent });
+    }
+
+    // ── Real ACP session ──────────────────────────────────────────────────────
+
+    agentStartSession(params: {
+        agent: string;
+        owner: string;
+        workspaceRoot: string;
+        homeDir?: string;
+        readOnly?: boolean;
+        deniedPaths?: string[];
+        sandbox?: 'isolated' | 'workspace-net' | 'trusted';
+    }): Promise<{ session_id: string }> {
+        return this.call('agent_start_session', {
+            agent: params.agent,
+            owner: params.owner,
+            workspace_root: params.workspaceRoot,
+            home_dir: params.homeDir,
+            read_only: params.readOnly,
+            denied_paths: params.deniedPaths,
+            sandbox: params.sandbox
+        });
+    }
+
+    agentSubmitTask(
+        agent: string,
+        sessionId: string,
+        prompt: string,
+        expectation?: 'conversation' | 'code-change'
+    ): Promise<{ task_id: number }> {
+        return this.call('agent_submit_task', {
+            agent,
+            session_id: sessionId,
+            prompt,
+            expectation
+        });
+    }
+
+    agentNextEvent(agent: string, sessionId: string): Promise<{ event: AgentEvent | null }> {
+        return this.call('agent_next_event', { agent, session_id: sessionId });
+    }
+
+    agentCancel(agent: string, sessionId: string, graceful = true): Promise<{ cancelled: boolean }> {
+        return this.call('agent_cancel', { agent, session_id: sessionId, graceful });
     }
 }

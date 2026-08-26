@@ -14,6 +14,7 @@ import { CapabilityState } from '../common/capability-protocol';
 import { BrokerActivity } from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
+import { AgentSessionSnapshot } from '../common/agent-session-protocol';
 import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build';
@@ -76,6 +77,11 @@ export class InstrumentStore {
     //    own agent, a script or the terminal. `undefined` = not scanned yet.
     observer: ObserverReport | undefined;
     observerBusy = false;
+
+    // ── REAL hosted ACP session: the agent works in a worktree and its changes
+    //    cross the broker before reaching the project.
+    session: AgentSessionSnapshot | undefined;
+    sessionBusy = false;
 
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
     collapsedSections: string[] = ['workbench', 'broker', 'harness'];
@@ -207,6 +213,16 @@ export class InstrumentStore {
         this.collapsedSections = this.collapsedSections.includes(id)
             ? this.collapsedSections.filter(s => s !== id)
             : [...this.collapsedSections, id];
+        this.emit();
+    }
+
+    setSession(snapshot: AgentSessionSnapshot | undefined): void {
+        this.session = snapshot;
+        this.emit();
+    }
+
+    setSessionBusy(busy: boolean): void {
+        this.sessionBusy = busy;
         this.emit();
     }
 

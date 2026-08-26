@@ -103,4 +103,49 @@ export interface EngineService {
 
     /** Real `ide-agent` probe: descriptor + honest health of an agent adapter. */
     agentProbe(agent: string): Promise<AgentProbe>;
+
+    // ── Real ACP session (ide-agent AcpxAgentFacade over acpx) ────────────────
+    // The facade lives in the sidecar and owns the ACPX session, so the id
+    // returned here is what later calls resolve against.
+
+    /** Open a session. `readOnly` defaults to true in the sidecar. */
+    agentStartSession(params: {
+        agent: string;
+        owner: string;
+        workspaceRoot: string;
+        homeDir?: string;
+        readOnly?: boolean;
+        deniedPaths?: string[];
+        sandbox?: 'isolated' | 'workspace-net' | 'trusted';
+    }): Promise<{ session_id: string }>;
+
+    /** Submit a task; returns the adapter's task id. */
+    agentSubmitTask(
+        agent: string,
+        sessionId: string,
+        prompt: string,
+        expectation?: 'conversation' | 'code-change'
+    ): Promise<{ task_id: number }>;
+
+    /** Drain one event, or null when the session has nothing pending. */
+    agentNextEvent(agent: string, sessionId: string): Promise<{ event: AgentEvent | null }>;
+
+    agentCancel(agent: string, sessionId: string, graceful?: boolean): Promise<{ cancelled: boolean }>;
 }
+
+/**
+ * One `ide_agent::IdeAgentEvent`, serde-tagged by variant name. Only the
+ * variants the IDE renders are typed; the rest arrive and are shown raw.
+ */
+export type AgentEvent =
+    | { Started: { session_id: string } }
+    | { MessageDelta: { task_id: number; text: string } }
+    | { Thinking: { task_id: number; summary: string } }
+    | { ToolCall: { task_id: number; name: string; input_digest: string } }
+    | { ToolResult: { task_id: number; name: string; output_digest: string; is_error: boolean } }
+    | { PermissionRequested: { task_id: number; action: string; detail: string } }
+    | { Diff: { task_id: number; path: string; added: number; removed: number } }
+    | { Artifact: { task_id: number; kind: string; path: string; digest: string } }
+    | { Usage: { task_id: number; input_tokens: number; output_tokens: number } }
+    | { Warning: { task_id: number; code: string; detail: string } }
+    | { Ended: { task_id: number; outcome: unknown } };

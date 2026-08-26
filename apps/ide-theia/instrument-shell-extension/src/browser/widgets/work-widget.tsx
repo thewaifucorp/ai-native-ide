@@ -19,7 +19,13 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandService } from '@theia/core/lib/common/command';
 import { AbstractInstrumentWidget } from './abstract-instrument-widget';
 import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
-import { CMD_BROKER_TRAIL } from '../instrument-capability-contribution';
+import {
+    CMD_BROKER_TRAIL,
+    CMD_SESSION_CANCEL,
+    CMD_SESSION_HARVEST,
+    CMD_SESSION_START,
+    CMD_SESSION_SUBMIT
+} from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
 
 /** Short label per broker event kind, for the recent-activity list. */
@@ -312,37 +318,117 @@ export class WorkWidget extends AbstractInstrumentWidget {
 
     // ── Build ───────────────────────────────────────────────────────────────
 
-    /** The agent-session surface. It has a real probe and no session wiring yet,
-     *  so it says exactly that instead of replaying an invented conversation. */
+    /** The agent-session surface: a REAL ACP session hosted by the IDE.
+     *
+     *  The agent works inside a git worktree, so nothing it writes is in the
+     *  project. `Colher` compares worktree against project and proposes each
+     *  change through the broker — the pre-disk path an external CLI agent cannot
+     *  give us. */
     protected renderBuild(on: boolean): React.ReactNode {
+        const session = this.store.session;
         const agent = this.store.agent;
+        const busy = this.store.sessionBusy;
+        const phase = session?.phase ?? 'none';
         return (
             <section className={`view${on ? ' on' : ''}`} id="view-build">
                 <div className="conv">
                     <div className="conv-scroll">
                         <h2 className="goal">Sessão de agente</h2>
-                        <div className="placeholder">
-                            <b>Adaptador detectado, sessão ainda não ligada</b>
-                            <p>
-                                {agent
-                                    ? `${agent.agent} · ${agent.availability}${agent.detectedVersion ? ` · ${agent.detectedVersion}` : ''}` +
-                                    `${agent.transport ? ` · transporte ${agent.transport}` : ''}.`
-                                    : 'Sondando o adaptador de agente…'}
-                            </p>
-                            <p>
-                                O IDE já sonda o adaptador de verdade e já governa toda escrita pelo
-                                broker. O que falta aqui é a sessão: mandar intenção, receber passos e
-                                ligar cada efeito ao seu recibo. Enquanto isso, este painel não simula
-                                conversa — use o modo Agentes na view Ferramentas para ver o estado real
-                                do adaptador.
-                            </p>
+                        <div className="cap-card">
+                            <div className="cap-head">
+                                <b>{session?.agent ?? agent?.agent ?? 'claude'}</b>
+                                <span className={`cap-pill ${phase === 'idle' || phase === 'working' ? 'ready' : phase === 'failed' ? 'unavailable' : 'not-installed'}`}>
+                                    {phase}
+                                </span>
+                            </div>
+                            {session?.worktree && (
+                                <small>worktree: {session.worktree.split('/').slice(-3).join('/')}</small>
+                            )}
+                            {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
+                            <small className="cap-hint">
+                                o agente escreve na worktree; nada entra no projeto sem passar pelo broker
+                            </small>
+                            <div className="cap-actions">
+                                {phase === 'none' || phase === 'failed' ? (
+                                    <button
+                                        className="cap-btn primary"
+                                        disabled={busy}
+                                        onClick={() => this.commands.executeCommand(CMD_SESSION_START, 'claude')}
+                                    >
+                                        {busy ? 'abrindo…' : 'Abrir sessão'}
+                                    </button>
+                                ) : (
+                                    <>
+                                        <button
+                                            className="cap-btn primary"
+                                            disabled={busy}
+                                            onClick={() => this.submitPrompt(true)}
+                                        >
+                                            Pedir mudança
+                                        </button>
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            onClick={() => this.submitPrompt(false)}
+                                        >
+                                            Perguntar
+                                        </button>
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title="Compara a worktree com o projeto e propõe pelo broker"
+                                            onClick={() => this.commands.executeCommand(CMD_SESSION_HARVEST)}
+                                        >
+                                            Colher mudanças
+                                        </button>
+                                        <button
+                                            className="cap-btn"
+                                            onClick={() => this.commands.executeCommand(CMD_SESSION_CANCEL)}
+                                        >
+                                            Encerrar
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                         </div>
-                        {agent && agent.degradations.length > 0 && (
+
+                        {session && session.changes.length > 0 && (
+                            <div className="cap-card">
+                                <div className="cap-head"><b>Mudanças na worktree</b></div>
+                                {session.changes.map(c => (
+                                    <div className="cap-receipt" key={c.relPath}>
+                                        <span className="cap-receipt-action">
+                                            {c.proposed ? 'proposto' : 'na fila'}
+                                        </span>
+                                        <span className="cap-receipt-detail">
+                                            {c.relPath} +{c.addedLines}/-{c.removedLines}
+                                        </span>
+                                        <small>{c.detail ?? c.proposalId ?? ''}</small>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {session && session.events.length > 0 && (
+                            <div className="cap-card">
+                                <div className="cap-head"><b>Sessão</b></div>
+                                {session.events.slice(-24).map((e, i) => (
+                                    <div className="cap-receipt" key={`${e.at}:${i}`}>
+                                        <span className="cap-receipt-action">{e.kind}</span>
+                                        <span className="cap-receipt-detail">{e.text}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {!session && (
                             <div className="placeholder">
-                                <b>Fora do gate do IDE</b>
-                                <ul className="cap-degr">
-                                    {agent.degradations.map(d => <li key={d}>{d}</li>)}
-                                </ul>
+                                <b>Nenhuma sessão aberta</b>
+                                <p>
+                                    O IDE hospeda uma sessão ACP real (ide-agent → acpx → agente). O
+                                    agente trabalha numa worktree git do projeto, e cada mudança dele
+                                    é proposta pelo broker antes de tocar o projeto.
+                                </p>
                             </div>
                         )}
                     </div>
@@ -357,13 +443,23 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             <b>Sem preview</b>
                             <p>
                                 Nenhum servidor de preview foi detectado ou iniciado para este projeto.
-                                Um preview falso já ocupou este espaço; agora o espaço fica vazio até
-                                existir um processo real para mostrar.
                             </p>
                         </div>
                     </div>
                 </div>
             </section>
         );
+    }
+
+    /** Ask for the prompt with the platform dialog — the composer is next. */
+    protected submitPrompt(codeChange: boolean): void {
+        const prompt = window.prompt(
+            codeChange
+                ? 'O que o agente deve mudar no projeto?'
+                : 'O que você quer perguntar ao agente?'
+        );
+        if (prompt) {
+            this.commands.executeCommand(CMD_SESSION_SUBMIT, prompt, codeChange);
+        }
     }
 }
