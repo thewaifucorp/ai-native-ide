@@ -152,6 +152,20 @@ export interface EngineService {
 }
 
 /**
+ * One edit a pending permission would perform, as the agent proposed it.
+ *
+ * `path` is relative to the workspace root when the edit stays inside it and
+ * ABSOLUTE when it aims outside — rendering must preserve that difference.
+ * `truncated` means the preview was shortened and has to be labelled as such.
+ */
+export interface AgentPermissionEdit {
+    path: string;
+    old_text?: string | null;
+    new_text: string;
+    truncated: boolean;
+}
+
+/**
  * One `ide_agent::IdeAgentEvent`, serde-tagged by variant name. Only the
  * variants the IDE renders are typed; the rest arrive and are shown raw.
  */
@@ -161,7 +175,16 @@ export type AgentEvent =
     | { Thinking: { task_id: number; summary: string } }
     | { ToolCall: { task_id: number; name: string; input_digest: string } }
     | { ToolResult: { task_id: number; name: string; output_digest: string; is_error: boolean } }
-    | { PermissionRequested: { task_id: number; request_id: number; action: string; detail: string } }
+    | {
+          PermissionRequested: {
+              task_id: number;
+              request_id: number;
+              action: string;
+              detail: string;
+              /** Edits this request would perform; empty when none was reported. */
+              edits: AgentPermissionEdit[];
+          };
+      }
     | { Diff: { task_id: number; path: string; added: number; removed: number } }
     | { Artifact: { task_id: number; kind: string; path: string; digest: string } }
     | { Usage: { task_id: number; input_tokens: number; output_tokens: number } }

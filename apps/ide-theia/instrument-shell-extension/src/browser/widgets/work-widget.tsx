@@ -411,6 +411,30 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                     <div className="cap-receipt" key={p.requestId}>
                                         <span className="cap-receipt-action">{p.action}</span>
                                         <span className="cap-receipt-detail">{p.detail}</span>
+                                        {p.edits.map((edit, i) => (
+                                            <div className="cap-diff" key={`${p.requestId}:${i}`}>
+                                                <div className="cap-diff-head">
+                                                    <span>{edit.path}</span>
+                                                    {edit.oldText === undefined && (
+                                                        <small title="O agente não informou o conteúdo anterior. Isso não quer dizer que o arquivo seja novo.">
+                                                            sem conteúdo anterior informado
+                                                        </small>
+                                                    )}
+                                                    {edit.truncated && (
+                                                        <small className="cap-diff-cut">
+                                                            preview cortado — você não está vendo o
+                                                            diff inteiro
+                                                        </small>
+                                                    )}
+                                                </div>
+                                                <pre className="cap-diff-body">{edit.newText}</pre>
+                                            </div>
+                                        ))}
+                                        {p.edits.length === 0 && (
+                                            <small className="cap-hint">
+                                                sem diff para mostrar — este pedido não é uma escrita
+                                            </small>
+                                        )}
                                         <div className="cap-actions">
                                             <button
                                                 className="cap-btn primary"

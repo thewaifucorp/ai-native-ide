@@ -90,13 +90,14 @@ function fixture(): Fixture {
     return { service, engine, rootUri: FileUri.create(root).toString() };
 }
 
-function permissionEvent(requestId: number): unknown {
+function permissionEvent(requestId: number, edits: unknown[] = []): unknown {
     return {
         PermissionRequested: {
             task_id: 1,
             request_id: requestId,
             action: 'write-file',
-            detail: 'Write src/main.rs — /tmp/p/src/main.rs'
+            detail: 'Write src/main.rs — /tmp/p/src/main.rs',
+            edits
         }
     };
 }
@@ -112,6 +113,52 @@ describe('AgentSessionServiceImpl — permissão é decisão, não aviso', () =>
         assert.strictEqual(snapshot.pending[0].requestId, 7);
         assert.strictEqual(snapshot.pending[0].action, 'write-file');
         assert.ok(snapshot.pending[0].detail.includes('Write src/main.rs'));
+    });
+
+    it('leva o diff proposto até o card, com o corte marcado', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [
+            permissionEvent(7, [
+                {
+                    path: 'src/main.rs',
+                    old_text: 'antes',
+                    new_text: 'depois',
+                    truncated: true
+                }
+            ])
+        ];
+
+        const snapshot = await service.poll(rootUri);
+
+        const edits = snapshot.pending[0].edits;
+        assert.strictEqual(edits.length, 1);
+        assert.strictEqual(edits[0].path, 'src/main.rs');
+        assert.strictEqual(edits[0].oldText, 'antes');
+        assert.strictEqual(edits[0].newText, 'depois');
+        assert.strictEqual(edits[0].truncated, true);
+    });
+
+    // `old_text: null` means the agent did not report the previous content.
+    // Turning it into '' would render as "the file was empty" — a different and
+    // false claim about what is being approved.
+    it('conteúdo anterior não informado vira undefined, nunca string vazia', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [
+            permissionEvent(7, [{ path: 'novo.txt', old_text: null, new_text: 'oi', truncated: false }])
+        ];
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.pending[0].edits[0].oldText, undefined);
+    });
+
+    it('pedido sem diff (um comando) chega com lista vazia, não inventada', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [permissionEvent(7)];
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.deepStrictEqual(snapshot.pending[0].edits, []);
     });
 
     it('não duplica o mesmo pedido se o evento chegar duas vezes', async () => {

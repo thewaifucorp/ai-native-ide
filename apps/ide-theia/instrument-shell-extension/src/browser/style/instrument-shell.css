@@ -664,3 +664,24 @@ body.game .iws .strip .lvl-strip { display: inline; }
 /* Pulse strip: the stats are real now, so a "not measured" state needs its own
    muted look — it must NOT read as a passing check. */
 .iws .stats .none { color: var(--faint); }
+
+/* ---- diff proposto dentro do card de permissão ----
+   O diff é a coisa sobre a qual se decide, então ganha superfície própria em vez
+   de virar mais uma linha cinza de detalhe. `cap-diff-cut` usa --need de
+   propósito: quem aprova um preview que não viu inteiro precisa reparar nisso. */
+.iws .cap-diff {
+  margin: 6px 0 2px; border: 1px solid var(--line); border-radius: var(--r1);
+  overflow: hidden; background: var(--panel-2);
+}
+.iws .cap-diff-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  padding: 4px 8px; background: var(--raise);
+  font: var(--mono-w) 10px var(--mono); color: var(--text);
+}
+.iws .cap-diff-head small { display: inline; font: 400 10px var(--mono); color: var(--faint); }
+.iws .cap-diff-cut { color: var(--need) !important; }
+.iws .cap-diff-body {
+  margin: 0; padding: 6px 8px; max-height: 220px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+  font: 400 11px var(--mono); color: var(--text); line-height: 1.45;
+}

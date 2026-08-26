@@ -21,7 +21,8 @@
 use bastion_agent_runtime::{
     acp::AcpAgentRuntime, AgentRuntime, ApprovalCoverage, ArtifactKind, AuthProfileRef,
     BudgetCoverage, CancelMode, DenyScope, EgressCoverage, EnvPolicy, PermissionAction,
-    PermissionDecision, PermissionProfile, PermissionRequestId, PolicyCoverage, ResumeSpec,
+    PermissionDecision, PermissionProfile, PermissionRequestId, PolicyCoverage, ProposedEdit,
+    ResumeSpec,
     RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth, RuntimeSession, SandboxCoverage,
     SandboxProfile, SessionHandle, SessionSpec, SessionStatus, TaskExpectation, TaskInput,
     TaskOutcome, ToolVisibility, WorkspacePolicy,
@@ -143,6 +144,24 @@ pub enum IdeTaskOutcome {
     TimedOut,
 }
 
+/// One file edit a pending permission would perform, ready to render as a diff.
+///
+/// Mirrors `bastion_agent_runtime::ProposedEdit` across the host boundary. It
+/// exists so the person deciding sees the bytes rather than a description of
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionEdit {
+    /// Relative to the workspace root when inside it; ABSOLUTE when the edit
+    /// aims outside — the UI must show that difference, not hide it.
+    pub path: PathBuf,
+    /// Previous content, when the agent reported it. `None` means "not
+    /// reported", which is not the same as "the file is new".
+    pub old_text: Option<String>,
+    pub new_text: String,
+    /// The preview was shortened. Whoever renders it must say so.
+    pub truncated: bool,
+}
+
 /// Typed, structured events suitable for a Tauri event bridge or an in-process subscriber.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IdeAgentEvent {
@@ -181,6 +200,9 @@ pub enum IdeAgentEvent {
         request_id: u64,
         action: String,
         detail: String,
+        /// The edits this request would perform. Empty when the agent reported
+        /// none (a command, a network call) — never a fabricated preview.
+        edits: Vec<PermissionEdit>,
     },
     Diff {
         task_id: u64,
@@ -878,11 +900,13 @@ fn event_to_ide(session_id: &AgentSessionId, event: RuntimeEvent) -> IdeAgentEve
             id,
             action,
             detail,
+            edits,
         } => IdeAgentEvent::PermissionRequested {
             task_id: task.0,
             request_id: id.0,
             action: permission_action_name(action),
             detail,
+            edits: edits.into_iter().map(permission_edit).collect(),
         },
         RuntimeEvent::Diff {
             task,
@@ -930,6 +954,15 @@ fn outcome_to_ide(outcome: TaskOutcome) -> IdeTaskOutcome {
         TaskOutcome::Failed { reason } => IdeTaskOutcome::Failed { reason },
         TaskOutcome::Cancelled => IdeTaskOutcome::Cancelled,
         TaskOutcome::TimedOut => IdeTaskOutcome::TimedOut,
+    }
+}
+
+fn permission_edit(edit: ProposedEdit) -> PermissionEdit {
+    PermissionEdit {
+        path: edit.path,
+        old_text: edit.old_text,
+        new_text: edit.new_text,
+        truncated: edit.truncated,
     }
 }
 
@@ -1193,6 +1226,12 @@ mod tests {
                 id: PermissionRequestId(42),
                 action: PermissionAction::WriteFile,
                 detail: "Write src/main.rs".to_string(),
+                edits: vec![ProposedEdit {
+                    path: PathBuf::from("src/main.rs"),
+                    old_text: Some("antes".to_string()),
+                    new_text: "depois".to_string(),
+                    truncated: false,
+                }],
             },
         );
         assert_eq!(
@@ -1202,8 +1241,41 @@ mod tests {
                 request_id: 42,
                 action: "write-file".to_string(),
                 detail: "Write src/main.rs".to_string(),
+                edits: vec![PermissionEdit {
+                    path: PathBuf::from("src/main.rs"),
+                    old_text: Some("antes".to_string()),
+                    new_text: "depois".to_string(),
+                    truncated: false,
+                }],
             }
         );
+    }
+
+    /// The truncation flag has to survive the boundary: the UI cannot warn about
+    /// a shortened diff it was never told about.
+    #[test]
+    fn a_truncated_preview_stays_marked_across_the_boundary() {
+        let event = event_to_ide(
+            &AgentSessionId("s-1".to_string()),
+            RuntimeEvent::PermissionRequest {
+                task: bastion_agent_runtime::TaskId(1),
+                id: PermissionRequestId(1),
+                action: PermissionAction::WriteFile,
+                detail: "Write big.txt".to_string(),
+                edits: vec![ProposedEdit {
+                    path: PathBuf::from("big.txt"),
+                    old_text: None,
+                    new_text: "x".to_string(),
+                    truncated: true,
+                }],
+            },
+        );
+        match event {
+            IdeAgentEvent::PermissionRequested { edits, .. } => {
+                assert!(edits[0].truncated);
+            }
+            other => panic!("expected PermissionRequested, got {other:?}"),
+        }
     }
 
     #[tokio::test]

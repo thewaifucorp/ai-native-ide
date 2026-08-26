@@ -212,8 +212,9 @@ o IDE só via o aviso. Foi construído um adapter ACP direto em `bastion-core`
 `7df709f`) que faz o sidecar ser o cliente ACP, e o `ide-agent` passou a usá-lo.
 
 **Provado no Theia rodando**, não em teste: o pedido do agente vira card no
-painel Build com `Permitir` / `Negar` / `Negar e encerrar`; aprovar libera e o
-`ToolResult` chega; `Negar e encerrar` derruba o turno (`fim "Cancelled"`) e o
+painel Build com `Permitir` / `Negar` / `Negar e encerrar` **e o diff proposto**
+(o card mostrou `linha um / linha dois`, e foi exatamente isso que o arquivo
+recebeu ao aprovar); aprovar libera e o `ToolResult` chega; `Negar e encerrar` derruba o turno (`fim "Cancelled"`) e o
 arquivo que o agente ia escrever nunca existiu. Antes disso, `conformance.rs` ao
 vivo contra `claude-agent-acp@0.70.0`: 11 passam, incluindo
 `permission_bridge_allow` e `permission_bridge_deny`; 3 pulam por falta de

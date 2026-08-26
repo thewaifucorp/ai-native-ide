@@ -67,12 +67,30 @@ export interface SessionEventView {
 export interface PendingPermission {
     /** Handle that answers it; unique within the session. */
     requestId: number;
+    /**
+     * The edits this request would perform, so the decision is taken over the
+     * bytes and not over a description of them. Empty when the agent reported
+     * none — a command or a network call has nothing to preview.
+     */
+    edits: PermissionEditView[];
     /** Action class, e.g. `write-file`, `run-command`, `network`, `use-tool`. */
     action: string;
     /** Human-readable target — tool title plus the paths it would touch. */
     detail: string;
     /** When the IDE saw the request. */
     at: string;
+}
+
+/** One proposed edit, ready to render as a diff. */
+export interface PermissionEditView {
+    /** Relative to the root when inside it; ABSOLUTE when the edit aims out. */
+    path: string;
+    /** Previous content when reported. `undefined` is "not reported", which is
+     *  NOT the same as "new file", and must not be rendered as if it were. */
+    oldText?: string;
+    newText: string;
+    /** The preview was shortened; say so wherever it is shown. */
+    truncated: boolean;
 }
 
 /** A change the agent made inside the worktree, not yet in the project. */

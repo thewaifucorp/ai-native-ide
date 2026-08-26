@@ -156,7 +156,20 @@ O sidecar agora é o cliente ACP. Antes, o `acpx` respondia
 sido decidido (`approvals = HarnessOwned`, `respond_permission` sempre erro).
 
 Agora o pedido **para no IDE** e o agente fica bloqueado até alguém responder.
-Cada pedido vira um card no painel Build com três saídas: `Permitir`,
+Cada pedido vira um card no painel Build **com o diff proposto**, quando é uma
+escrita: o `claude-agent-acp` manda os bytes junto do pedido, então a decisão é
+tomada sobre o conteúdo, não sobre "o agente quer escrever um arquivo". Provado:
+o card mostrou `linha um / linha dois` e foi exatamente isso que o arquivo
+recebeu ao aprovar.
+
+Duas honestidades no preview: conteúdo anterior não informado aparece como
+**"sem conteúdo anterior informado"**, nunca como arquivo vazio; e preview
+cortado (acima de 64KB por lado) é **marcado como cortado**, porque aprovar um
+diff que não se viu inteiro sem saber disso é pior que não ver nada. Pedido que
+não é escrita (um comando) diz que não há diff, em vez de mostrar nada e parecer
+vazio.
+
+O card tem três saídas: `Permitir`,
 `Negar` (só aquele pedido) e `Negar e encerrar` (nega e derruba o turno, para o
 agente não tentar o mesmo objetivo por outra ferramenta não vigiada). Sem
 resposta, o pedido morre no timeout da tarefa — e **não respondido conta como

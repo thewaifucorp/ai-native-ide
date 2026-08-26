@@ -16,6 +16,7 @@ import {
     AgentSessionSnapshot,
     HarvestedChange,
     PendingPermission,
+    PermissionEditView,
     SessionEventView,
     SessionPhase
 } from '../common/agent-session-protocol';
@@ -448,6 +449,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
                         requestId,
                         action,
                         detail,
+                        edits: this.editsOf(payload.edits),
                         at: new Date().toISOString()
                     });
                 }
@@ -480,6 +482,29 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             default:
                 this.push(state, kind.toLowerCase(), JSON.stringify(payload).slice(0, 200));
         }
+    }
+
+    /**
+     * Normalizes the adapter's proposed edits for rendering.
+     *
+     * `old_text: null` (the agent did not report the previous content) becomes
+     * `undefined` rather than an empty string: an empty string would render as
+     * "this file was empty", which is a different and false claim.
+     */
+    protected editsOf(raw: unknown): PermissionEditView[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        return raw.map(entry => {
+            const e = entry as Record<string, unknown>;
+            const oldText = e.old_text;
+            return {
+                path: String(e.path ?? ''),
+                oldText: typeof oldText === 'string' ? oldText : undefined,
+                newText: String(e.new_text ?? ''),
+                truncated: e.truncated === true
+            };
+        });
     }
 
     protected push(state: SessionState, kind: string, text: string): void {

@@ -363,9 +363,8 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "bastion-agent-runtime"
 version = "0.1.1"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=7df709f8c7b2b9c7ad7a8239a01358b991a8c767#7df709f8c7b2b9c7ad7a8239a01358b991a8c767"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
 dependencies = [
- "agent-client-protocol",
  "anyhow",
  "async-trait",
  "semver",
@@ -380,8 +379,9 @@ dependencies = [
 [[package]]
 name = "bastion-agent-runtime"
 version = "0.1.1"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=f8b701e5b317af3c1e21e7251edf499bf2d28aae#f8b701e5b317af3c1e21e7251edf499bf2d28aae"
 dependencies = [
+ "agent-client-protocol",
  "anyhow",
  "async-trait",
  "semver",
@@ -2026,7 +2026,7 @@ name = "ide-agent"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bastion-agent-runtime 0.1.1 (git+https://github.com/thewaifucorp/bastion-core?rev=7df709f8c7b2b9c7ad7a8239a01358b991a8c767)",
+ "bastion-agent-runtime 0.1.1 (git+https://github.com/thewaifucorp/bastion-core?rev=f8b701e5b317af3c1e21e7251edf499bf2d28aae)",
  "serde",
  "thiserror 2.0.20",
  "tokio",
