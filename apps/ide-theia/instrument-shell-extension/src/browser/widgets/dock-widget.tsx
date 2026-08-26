@@ -1,7 +1,10 @@
-// 001 CONTEXT DOCK — 288px right column: active-agent card (scope, effects,
-// context %, budget), the decision card (pending → executing → verified), and the
-// Game Mode progression (level with receipt). The decision card is the canonical
-// surface of the pending decision; "Permitir" runs the shared approve flow.
+// 001 CONTEXT DOCK — 288px right column: active-agent card (real ide-agent
+// probe), the decision card, and the Game Mode progression.
+//
+// The decision card is the canonical surface of the REAL governed write: awaiting
+// → approved → rolled back, driven by the broker. There is no mock decision any
+// more — with nothing proposed it says so, instead of showing an invented
+// migration whose "verified" state used to mask the real state.
 
 import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
@@ -122,7 +125,7 @@ export class DockWidget extends AbstractInstrumentWidget {
         if (this.store.proposal) {
             return this.renderGovernedDecision();
         }
-        return this.renderMockDecision();
+        return this.renderNoProposal();
     }
 
     /** The REAL governed-write decision card: path + real ide-diff summary +
@@ -179,36 +182,25 @@ export class DockWidget extends AbstractInstrumentWidget {
         );
     }
 
-    /** The original bespoke (mock) migration decision — shown until the user
-     *  proposes a real governed write. Kept as atmosphere; not wired to disk. */
-    protected renderMockDecision(): React.ReactNode {
-        const { decision } = this.store;
-        if (decision === 'executing') {
-            return (
-                <div className="decision resolved" id="iws-decision-card">
-                    <div className="st-row" style={{ color: 'var(--step)' }}>EXECUTANDO</div>
-                    <h4>Aplicando migration local</h4>
-                    <p>Checkpoint 14:45 criado. O progresso só será concedido depois dos checks e do preview saudável.</p>
-                </div>
-            );
-        }
-        if (decision === 'verified') {
-            return (
-                <div className="decision resolved" id="iws-decision-card">
-                    <div className="st-row">VERIFICADA</div>
-                    <h4>Migration aplicada com segurança</h4>
-                    <p>Checks passaram e o preview voltou saudável. Checkpoint 14:45 permanece restaurável.</p>
-                </div>
-            );
-        }
+    /** No governed write proposed yet. The dock says exactly that and offers the
+     *  real action — it does NOT invent a pending migration to look busy. */
+    protected renderNoProposal(): React.ReactNode {
         return (
-            <div className="decision" id="iws-decision-card">
-                <div className="st-row">AGUARDANDO VOCÊ</div>
-                <h4>Executar migration no banco local?</h4>
-                <p>Altera dados de desenvolvimento. Um checkpoint reversível é criado antes — dá para desfazer em um clique.</p>
+            <div className="decision resolved" id="iws-decision-card">
+                <div className="st-row" style={{ color: 'var(--faint)' }}>NADA AGUARDANDO</div>
+                <h4>Nenhuma escrita proposta</h4>
+                <p>
+                    Toda escrita de agente ou provider passa pelo broker e aparece aqui antes
+                    de tocar o disco. Proponha uma para ver o ciclo: diff, aprovação, snapshot
+                    e rollback.
+                </p>
                 <div className="acts">
-                    <button className="btn" onClick={() => this.store.toast('Diff da migration aberto na Work Surface')}>Ver o que muda</button>
-                    <button className="btn pri" onClick={() => this.store.approve()}>Permitir<span className="kbd">⏎</span></button>
+                    <button
+                        className="btn pri"
+                        onClick={() => this.commands.executeCommand(CMD_GOVERNED_PROPOSE)}
+                    >
+                        Propor mudança (governed)
+                    </button>
                 </div>
             </div>
         );

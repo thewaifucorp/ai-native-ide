@@ -29,9 +29,31 @@ import { InstrumentStore, NavMode } from './instrument-store';
 import { WorkWidget } from './widgets/work-widget';
 import { DockWidget } from './widgets/dock-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
-import { GraphWidget } from './widgets/graph-widget';
+import { CapabilitySurfaceWidget, DEFAULT_SURFACE_CAPABILITY } from './widgets/capability-surface-widget';
+import { ToolsWidget } from './widgets/tools-widget';
 
 const EXPLORER_CONTAINER_ID = 'explorer-view-container';
+
+/** Opens the generic capability-surface tab on a given capability id. */
+export const CMD_SHOW_SURFACE = 'instrument.capability.showSurface';
+
+/** Opens one of the real external surfaces the shell hides native chrome for. */
+export const CMD_EXTERNAL_SURFACE = 'instrument.external';
+
+/** External surfaces reachable from the Ferramentas view, and their real commands.
+ *  The instrument shell hides the native menu bar and activity bar, so these have
+ *  to be reachable somewhere explicit — otherwise the terminal, the raw output and
+ *  the Open VSX marketplace would exist but be unopenable. */
+export type ExternalSurface = 'terminal' | 'output' | 'extensions' | 'sqltools';
+
+const EXTERNAL_COMMAND: Record<ExternalSurface, string> = {
+    // Real PTY-backed terminal in the bottom area (@theia/terminal + node-pty).
+    terminal: 'terminal:new',
+    // Raw output channels (adapters, plugins, tasks) — the unfiltered stream.
+    output: 'output:toggle',
+    extensions: 'vsxExtensions.toggle',
+    sqltools: 'plugin.view-container.workbench.view.extension.sqltoolsActivityBarContainer.toggle'
+};
 
 // Real view-container reveal for each navigator mode. Explorer/search/scm/vsx
 // each expose an AbstractViewContribution toggle command (opens + activates when
@@ -40,7 +62,10 @@ const EXPLORER_CONTAINER_ID = 'explorer-view-container';
 const MODE_TOGGLE_COMMAND: Partial<Record<NavMode, string>> = {
     arquivos: 'fileNavigator:toggle',
     busca: 'search-in-workspace.toggle',
-    git: 'scmView:toggle'
+    git: 'scmView:toggle',
+    // REAL @theia/debug view container: configurations, threads, call stack,
+    // variables, watch and breakpoints, driven by a real DAP adapter.
+    depuracao: 'debug:toggle'
 };
 
 @injectable()
@@ -54,7 +79,8 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
     @inject(WorkWidget) protected readonly work!: WorkWidget;
     @inject(DockWidget) protected readonly dock!: DockWidget;
     @inject(ProdutoWidget) protected readonly produto!: ProdutoWidget;
-    @inject(GraphWidget) protected readonly graph!: GraphWidget;
+    @inject(CapabilitySurfaceWidget) protected readonly surface!: CapabilitySurfaceWidget;
+    @inject(ToolsWidget) protected readonly tools!: ToolsWidget;
 
     onStart(_app: FrontendApplication): void {
         // The ported 001 CSS keys Game-Mode rules off a `game` class on <body>,
@@ -63,13 +89,23 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
         document.body.classList.add('iws-shell');
 
         this.registerModeCommands();
+        this.commandRegistry.registerCommand(
+            { id: CMD_SHOW_SURFACE, label: 'Instrument: abrir superfície de capability' },
+            { execute: (id?: string) => this.showSurface(id ?? DEFAULT_SURFACE_CAPABILITY) }
+        );
+        this.commandRegistry.registerCommand(
+            { id: CMD_EXTERNAL_SURFACE, label: 'Instrument: abrir superfície externa' },
+            { execute: (surface?: ExternalSurface) => this.openExternal(surface ?? 'terminal') }
+        );
 
         // Do all area placement once the workbench has fully settled.
         this.stateService.reachedState('ready').then(() => this.arrangeAreas());
     }
 
     protected registerModeCommands(): void {
-        const modes: NavMode[] = ['produto', 'arquivos', 'busca', 'git', 'grafo', 'ferramentas'];
+        const modes: NavMode[] = [
+            'produto', 'arquivos', 'busca', 'git', 'depuracao', 'grafo', 'ferramentas'
+        ];
         for (const mode of modes) {
             this.commandRegistry.registerCommand(
                 { id: `instrument.mode.${mode}`, label: `Instrument: mostrar ${mode}` },
@@ -86,11 +122,11 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
             return;
         }
         if (mode === 'grafo') {
-            await this.revealGraph();
+            await this.showSurface(DEFAULT_SURFACE_CAPABILITY);
             return;
         }
         if (mode === 'ferramentas') {
-            await this.revealTools();
+            await this.shell.revealWidget(ToolsWidget.ID);
             return;
         }
         const command = MODE_TOGGLE_COMMAND[mode];
@@ -99,39 +135,37 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
         }
     }
 
-    /** Grafo mode: the aag knowledge graph opens as a MAIN-area tab (it is a big
-     *  interactive surface, not a sidebar list). Mounted lazily on first select so
-     *  the heavy iframe isn't created until asked for, then just re-activated. */
-    protected async revealGraph(): Promise<void> {
-        const already = this.shell.getWidgets('main').some(w => w.id === GraphWidget.ID);
+    /** Open (or re-focus) the GENERIC capability-surface tab on one capability.
+     *  Mounted lazily on first use so the heavy iframe is not created until asked
+     *  for, then just re-pointed and re-activated. The Grafo nav mode is one
+     *  caller of this; the Ferramentas cards are another. */
+    protected async showSurface(capabilityId: string): Promise<void> {
+        this.store.setSurfaceCapability(capabilityId);
+        const already = this.shell.getWidgets('main').some(w => w.id === CapabilitySurfaceWidget.ID);
         if (!already) {
-            await this.shell.addWidget(this.graph, { area: 'main', rank: 150 });
+            await this.shell.addWidget(this.surface, { area: 'main', rank: 150 });
         }
-        await this.shell.activateWidget(GraphWidget.ID);
+        await this.shell.activateWidget(CapabilitySurfaceWidget.ID);
     }
 
-    /** Ferramentas mode: prefer the SQLTools view-container; fall back to the
-     *  Open VSX Extensions view if SQLTools is not deployed/activated.
-     *
-     *  The plugin (SQLTools) view-container widget is created lazily on first
-     *  open, so on the first switch we invoke the plugin-view toggle command that
-     *  Theia registers for it (`plugin.view-container.<containerId>.toggle`, which
-     *  OPENS it when not yet attached). On later switches the widget already
-     *  exists, so we reveal it directly — never the toggle, which would DISPOSE an
-     *  already-attached container. */
-    protected async revealTools(): Promise<void> {
-        const existing = this.shell.widgets.find(w => /sqltools/i.test(w.id));
-        if (existing) {
-            await this.shell.revealWidget(existing.id);
+    /** Open a real external surface, honestly: a plugin-backed one (SQLTools) may
+     *  simply not be deployed, and then we say so instead of silently opening
+     *  something else. An already-attached plugin container is revealed, never
+     *  toggled (toggling would DISPOSE it). */
+    protected async openExternal(surface: ExternalSurface): Promise<void> {
+        if (surface === 'sqltools') {
+            const existing = this.shell.widgets.find(w => /sqltools/i.test(w.id));
+            if (existing) {
+                await this.shell.revealWidget(existing.id);
+                return;
+            }
+        }
+        const command = EXTERNAL_COMMAND[surface];
+        if (!this.commandRegistry.getCommand(command)) {
+            this.store.toast(`'${surface}' não está disponível nesta instalação (${command})`);
             return;
         }
-        const sqltoolsToggle = 'plugin.view-container.workbench.view.extension.sqltoolsActivityBarContainer.toggle';
-        if (this.commandRegistry.getCommand(sqltoolsToggle)) {
-            await this.commandService.executeCommand(sqltoolsToggle);
-            return;
-        }
-        // SQLTools not deployed/activated — fall back to the Extensions marketplace.
-        await this.commandService.executeCommand('vsxExtensions.toggle');
+        await this.commandService.executeCommand(command);
     }
 
     protected async arrangeAreas(): Promise<void> {
@@ -148,6 +182,11 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
         // default mode is Arquivos (the real file explorer).
         if (!this.shell.getWidgets('left').some(w => w.id === ProdutoWidget.ID)) {
             await this.shell.addWidget(this.produto, { area: 'left', rank: 0 });
+        }
+        // LEFT: the Ferramentas view — the project's capability platform + harness.
+        // Added, not revealed; the default mode is Arquivos.
+        if (!this.shell.getWidgets('left').some(w => w.id === ToolsWidget.ID)) {
+            await this.shell.addWidget(this.tools, { area: 'left', rank: 10 });
         }
 
         await this.shell.revealWidget(DockWidget.ID);

@@ -27,7 +27,11 @@ import { CrumbWidget } from './widgets/crumb-widget';
 import { PulseWidget } from './widgets/pulse-widget';
 import { NavModesWidget } from './widgets/nav-modes-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
-import { GraphWidget } from './widgets/graph-widget';
+import { CapabilitySurfaceWidget } from './widgets/capability-surface-widget';
+import { ToolsWidget } from './widgets/tools-widget';
+import { CAPABILITY_SERVICE_PATH, CapabilityService } from '../common/capability-protocol';
+import { HARNESS_SERVICE_PATH, HarnessService } from '../common/harness-protocol';
+import { InstrumentCapabilityContribution } from './instrument-capability-contribution';
 
 import '../../src/browser/style/instrument-shell.css';
 
@@ -37,7 +41,7 @@ import '../../src/browser/style/instrument-shell.css';
 // Bump LAYOUT_VERSION on any structural shell change to drop the stale layout
 // BEFORE Theia's ShellLayoutRestorer reads it. Runs at module-load, i.e. well
 // before `initializeLayout`. Preferences and other storage are untouched.
-const LAYOUT_VERSION = 'm2-instrument-grid-2-grafo';
+const LAYOUT_VERSION = 'm9-workspace-tecnico';
 try {
     if (typeof localStorage !== 'undefined' && localStorage.getItem('iws.layoutVersion') !== LAYOUT_VERSION) {
         Object.keys(localStorage)
@@ -57,7 +61,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(PulseWidget).toSelf().inSingletonScope();
     bind(NavModesWidget).toSelf().inSingletonScope();
     bind(ProdutoWidget).toSelf().inSingletonScope();
-    bind(GraphWidget).toSelf().inSingletonScope();
+    bind(CapabilitySurfaceWidget).toSelf().inSingletonScope();
+    bind(ToolsWidget).toSelf().inSingletonScope();
 
     // Widget factories so the two tracked area widgets (Overview in MAIN, dock in
     // RIGHT) are recreated when Theia restores a persisted layout on reload.
@@ -75,11 +80,16 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
         id: ProdutoWidget.ID,
         createWidget: () => container.get(ProdutoWidget)
     })).inSingletonScope();
-    // Grafo (aag knowledge graph) is a MAIN-area tab; a factory recreates it when
-    // a persisted layout is restored on reload.
+    // The generic capability surface is a MAIN-area tab; a factory recreates it
+    // when a persisted layout is restored on reload.
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
-        id: GraphWidget.ID,
-        createWidget: () => container.get(GraphWidget)
+        id: CapabilitySurfaceWidget.ID,
+        createWidget: () => container.get(CapabilitySurfaceWidget)
+    })).inSingletonScope();
+    // "Ferramentas" (capability platform + harness) lives in the LEFT area.
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: ToolsWidget.ID,
+        createWidget: () => container.get(ToolsWidget)
     })).inSingletonScope();
 
     // Reshape the workbench: the 001 four-column instrument is the actual shell.
@@ -100,4 +110,23 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(InstrumentDataContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(InstrumentDataContribution);
     bind(CommandContribution).toService(InstrumentDataContribution);
+
+    // Capability platform + harness provider: typed JSON-RPC proxies to the
+    // backend registries, plus the contribution that drives them and keeps the
+    // store as the single truth every widget renders from.
+    bind(CapabilityService)
+        .toDynamicValue(ctx => {
+            const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+            return provider.createProxy<CapabilityService>(CAPABILITY_SERVICE_PATH);
+        })
+        .inSingletonScope();
+    bind(HarnessService)
+        .toDynamicValue(ctx => {
+            const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+            return provider.createProxy<HarnessService>(HARNESS_SERVICE_PATH);
+        })
+        .inSingletonScope();
+    bind(InstrumentCapabilityContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(InstrumentCapabilityContribution);
+    bind(CommandContribution).toService(InstrumentCapabilityContribution);
 });

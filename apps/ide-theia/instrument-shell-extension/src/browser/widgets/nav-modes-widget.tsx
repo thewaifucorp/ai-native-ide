@@ -1,6 +1,6 @@
 // 001/003 NAVIGATOR MODES ROW — a compact strip pinned at the TOP of the left
 // panel. It replaces stock Theia's vertical activity bar: the five buttons
-// (Produto · Arquivos · Busca · Git · Ferramentas) each switch which Theia
+// (Produto · Arquivos · Busca · Git · Depuração · Grafo · Ferramentas) each switch which Theia
 // view-container is revealed in the SAME native left panel below it.
 //
 // Wiring is decoupled from the shell to avoid an Inversify construction cycle
@@ -42,11 +42,15 @@ const MODES: ModeDef[] = [
         icon: <><circle cx="4" cy="4" r="1.8" /><circle cx="4" cy="12" r="1.8" /><circle cx="12" cy="6.5" r="1.8" /><path d="M4 5.8v4.4M4 10.2C4 7 12 9 12 6.5" /></>
     },
     {
+        mode: 'depuracao', title: 'Depuração — breakpoints, pilha e variáveis (DAP real)',
+        icon: <><circle cx="8" cy="8" r="4.2" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5 5 5M12.5 3.5 11 5M3.5 12.5 5 11M12.5 12.5 11 11" /></>
+    },
+    {
         mode: 'grafo', title: 'Grafo — code intelligence (aag)',
         icon: <><circle cx="8" cy="3.5" r="1.7" /><circle cx="3.5" cy="12" r="1.7" /><circle cx="12.5" cy="12" r="1.7" /><path d="M8 5.2 4.2 10.4M8 5.2l3.8 5.2M5 12h6" /></>
     },
     {
-        mode: 'ferramentas', title: 'Ferramentas / extensões',
+        mode: 'ferramentas', title: 'Ferramentas — capabilities e harness do projeto',
         icon: <path d="M6 2h4v2.2a1.6 1.6 0 0 0 3.2 0V2M6 14h8V8.5h-2.4a1.6 1.6 0 0 0 0-3.2H14" />
     }
 ];
@@ -74,7 +78,7 @@ export class NavModesWidget extends AbstractInstrumentWidget {
     protected render(): React.ReactNode {
         const active = this.store.navMode;
         return (
-            <div className="nav-modes" title="Produto · Arquivos · Busca · Git · Ferramentas">
+            <div className="nav-modes" title="Produto · Arquivos · Busca · Git · Depuração · Grafo · Ferramentas">
                 {MODES.map(m => (
                     <button
                         key={m.mode}

@@ -76,17 +76,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     <div className="h-sec">
                         <span className="tag">Precisa de você</span>
                         <div className="need">
-                            {!this.store.needMigrationDismissed &&
-                                <div className="need-item">
-                                    <div className="txt">
-                                        <b>Executar migration no banco local?</b>
-                                        <small>Altera dados de desenvolvimento. Um checkpoint reversível é criado antes.</small>
-                                    </div>
-                                    <div className="acts">
-                                        <button className="btn" onClick={() => this.store.toast('Diff da migration aberto na Work Surface')}>Ver o que muda</button>
-                                        <button className="btn pri" onClick={() => this.store.focusDecision()}>Revisar no contexto</button>
-                                    </div>
-                                </div>}
+
                             <div className="need-item">
                                 <div className="txt">
                                     <b>Empate entre lances usa ordem de criação</b>

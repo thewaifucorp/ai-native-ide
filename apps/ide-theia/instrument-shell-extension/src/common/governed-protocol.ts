@@ -11,6 +11,8 @@
 // it reads the pre-image for the diff preview and maps this protocol onto the
 // broker's propose → approve → propose-executes → rollback lifecycle.
 
+import { BrokerActivity } from 'engine-extension';
+
 /** JSON-RPC path the governed-write backend service is exposed on. */
 export const GOVERNED_SERVICE_PATH = '/services/governed-write';
 
@@ -62,4 +64,12 @@ export interface GovernedWriteService {
 
     /** Restore the snapshot taken at propose time. */
     rollback(id: string): Promise<WriteProposal>;
+
+    /**
+     * The broker's own raw audit trail for this project: every propose,
+     * awaiting-approval, snapshot, execute and rollback it recorded. Read on
+     * demand — this is the evidence that a governed write is inspectable, not a
+     * claim the UI makes on the broker's behalf.
+     */
+    activity(rootUri: string): Promise<BrokerActivity[]>;
 }

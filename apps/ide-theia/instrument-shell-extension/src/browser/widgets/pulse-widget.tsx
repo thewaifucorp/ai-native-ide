@@ -38,7 +38,7 @@ export class PulseWidget extends AbstractInstrumentWidget {
                         <span className="notch ed" style={{ left: '19%' }} />
                         <span className="notch ck" style={{ left: '30%' }} title="Checkpoint 14:41" />
                         <span className="notch ed" style={{ left: '41%' }} />
-                        <span className={`notch dc${(this.store.decision !== 'pending' || (this.store.proposal && this.store.proposal.state !== 'awaiting')) ? ' done' : ''}`} style={{ left: '54%' }} title="Decisão / escrita governada" />
+                        <span className={`notch dc${this.store.proposal && this.store.proposal.state !== 'awaiting' ? ' done' : ''}`} style={{ left: '54%' }} title="Decisão / escrita governada" />
                         <span className="head" />
                         <div className="buddy"><span className="stage">{this.store.stageText}</span><div className="bod" /></div>
                     </div>

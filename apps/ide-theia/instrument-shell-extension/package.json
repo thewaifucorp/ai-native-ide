@@ -18,11 +18,14 @@
     "engine-extension": "link:../engine-extension"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "mocha": "11.8.0",
+    "@types/mocha": "10.0.10"
   },
   "scripts": {
     "build": "tsc -p .",
-    "clean": "rimraf lib"
+    "clean": "rimraf lib",
+    "test": "mocha \"lib/node/*.spec.js\""
   },
   "theiaExtensions": [
     {

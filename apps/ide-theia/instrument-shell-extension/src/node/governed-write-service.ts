@@ -30,7 +30,7 @@ import URI from '@theia/core/lib/common/uri';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import * as fs from 'fs';
 import * as path from 'path';
-import { EngineService } from 'engine-extension';
+import { BrokerActivity, EngineService } from 'engine-extension';
 import {
     GovernedWriteService,
     WriteProposal,
@@ -157,6 +157,13 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         }
         rec.proposal.state = 'approved';
         return rec.proposal;
+    }
+
+    /** Straight passthrough of the broker's audit trail — no reinterpretation. */
+    async activity(rootUri: string): Promise<BrokerActivity[]> {
+        const rootFsPath = FileUri.fsPath(new URI(rootUri));
+        const result = await this.engine.brokerActivity(rootFsPath, OWNER);
+        return result.activity;
     }
 
     async rollback(id: string): Promise<WriteProposal> {

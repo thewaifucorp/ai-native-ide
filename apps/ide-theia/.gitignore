@@ -2,7 +2,7 @@ node_modules/
 lib/
 src-gen/
 gen-webpack*.js
-.theia/
+/.theia/
 */target/
 engine-sidecar/target/
 plugins/

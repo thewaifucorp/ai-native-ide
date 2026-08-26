@@ -136,11 +136,16 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
 
     // ── Governed loop (real) ────────────────────────────────────────────────
 
-    /** Pick the real file to act on: the active editor if it is inside the
-     *  workspace, otherwise the default product-intent doc. */
+    /** Pick the real file to act on: the active editor when it is a workspace
+     *  MARKDOWN file, otherwise the default product-intent doc.
+     *
+     *  The demo write is a markdown comment block, so targeting whatever happened
+     *  to be focused (a .ts file, say) produced syntactically invalid content —
+     *  reversible, but a bad demo. The governed loop itself is content-agnostic;
+     *  this restriction is only about what the demo proposes. */
     protected pickTarget(rootUri: URI): { fileUri: URI; relPath: string } {
         const active = this.editors.currentEditor?.editor.uri;
-        if (active) {
+        if (active && active.path.ext.toLowerCase() === '.md') {
             const rel = rootUri.relative(active);
             if (rel && !rel.toString().startsWith('..') && rel.toString() !== '') {
                 return { fileUri: active, relPath: rel.toString() };

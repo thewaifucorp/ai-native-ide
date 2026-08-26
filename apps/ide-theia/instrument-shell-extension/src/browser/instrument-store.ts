@@ -10,13 +10,15 @@
 import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { WriteProposal } from '../common/governed-protocol';
+import { CapabilityState } from '../common/capability-protocol';
+import { BrokerActivity } from 'engine-extension';
+import { HarnessSnapshot } from '../common/harness-protocol';
 import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build';
-export type DecisionState = 'pending' | 'executing' | 'verified';
 
 /** Which real (or bespoke) view-container the navigator "modes" row is showing. */
-export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'grafo' | 'ferramentas';
+export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'depuracao' | 'grafo' | 'ferramentas';
 
 /** A real top-level workspace resource (file or folder), from FileService. */
 export interface WorkspaceResource {
@@ -35,8 +37,6 @@ export class InstrumentStore {
     navMode: NavMode = 'arquivos';
     gameMode = true;
     drawerOpen = false;
-    decision: DecisionState = 'pending';
-    needMigrationDismissed = false;
     toastText = '';
 
     // ── REAL workspace model (M3): populated by InstrumentDataContribution from
@@ -54,12 +54,37 @@ export class InstrumentStore {
     //    Drives the dock's "Contexto ativo" identity + availability badge.
     agent: AgentProbe | undefined;
 
+    // ── REAL capability platform (M8): the states the backend registry detected
+    //    for the OPEN project. `undefined` entries never exist — a capability the
+    //    registry could not evaluate arrives with status 'unknown'. Empty array =
+    //    detection has not run yet (rendered as "detectando", never as healthy).
+    capabilities: CapabilityState[] = [];
+    capabilitiesDetected = false;
+    /** Capability ids with a long-running action in flight (install/detect). */
+    busyCapabilities: string[] = [];
+
+    // ── REAL harness provider registry (M8): providers, slot bindings, composed
+    //    extensions and the receipt trail for the open project.
+    harness: HarnessSnapshot | undefined;
+    harnessBusy = false;
+
+    /** Which capability the (generic) surface tab is currently showing. */
+    surfaceCapabilityId: string | undefined;
+
+    // ── REAL broker trail (M9): the raw audit the Rust broker recorded for this
+    //    project — propose / awaiting / snapshot / execute / rollback. Fetched on
+    //    demand, so "inspecionável" does not mean "always polling".
+    brokerActivity: BrokerActivity[] | undefined;
+    brokerActivityBusy = false;
+
     protected toastTimer: number | undefined;
-    protected pulseNow = 'codex · testando concorrência';
-    protected stage = 'VERIFICANDO';
+    // Honest defaults: with no proposal there is nothing pending and nothing
+    // running. These only ever move when a REAL governed write does.
+    protected pulseNow = 'nenhuma escrita proposta';
+    protected stage = 'OCIOSO';
     protected lvlBar = 64;
     protected lvlNext = '3 marcos verificados para o nível 8';
-    protected pendingCount = '1 decisão';
+    protected pendingCount = '0 decisões';
 
     get nowText(): string { return this.pulseNow; }
     get stageText(): string { return this.stage; }
@@ -108,6 +133,80 @@ export class InstrumentStore {
         const words = n.split(/[\s._-]+/).filter(Boolean);
         const initials = words.length >= 2 ? words[0][0] + words[1][0] : n.slice(0, 2);
         return (initials || 'ws').toUpperCase();
+    }
+
+    // ── REAL capability platform ────────────────────────────────────────────
+
+    /** Replace the full detected set for the open project. */
+    setCapabilities(states: CapabilityState[]): void {
+        this.capabilities = states;
+        this.capabilitiesDetected = true;
+        this.emit();
+    }
+
+    /** Replace one capability's state after a targeted detect/install. */
+    setCapability(state: CapabilityState): void {
+        const index = this.capabilities.findIndex(c => c.id === state.id);
+        if (index >= 0) {
+            this.capabilities = [
+                ...this.capabilities.slice(0, index),
+                state,
+                ...this.capabilities.slice(index + 1)
+            ];
+        } else {
+            this.capabilities = [...this.capabilities, state];
+        }
+        this.emit();
+    }
+
+    capability(id: string): CapabilityState | undefined {
+        return this.capabilities.find(c => c.id === id);
+    }
+
+    setCapabilityBusy(id: string, busy: boolean): void {
+        const has = this.busyCapabilities.includes(id);
+        if (busy && !has) {
+            this.busyCapabilities = [...this.busyCapabilities, id];
+        } else if (!busy && has) {
+            this.busyCapabilities = this.busyCapabilities.filter(c => c !== id);
+        } else {
+            return;
+        }
+        this.emit();
+    }
+
+    isCapabilityBusy(id: string): boolean {
+        return this.busyCapabilities.includes(id);
+    }
+
+    // ── REAL harness provider registry ──────────────────────────────────────
+
+    setHarness(snapshot: HarnessSnapshot | undefined): void {
+        this.harness = snapshot;
+        this.emit();
+    }
+
+    /** Point the generic capability-surface tab at one capability. */
+    setSurfaceCapability(id: string): void {
+        if (this.surfaceCapabilityId !== id) {
+            this.surfaceCapabilityId = id;
+            this.emit();
+        }
+    }
+
+    setBrokerActivity(activity: BrokerActivity[] | undefined): void {
+        this.brokerActivity = activity;
+        this.emit();
+    }
+
+    setBrokerActivityBusy(busy: boolean): void {
+        this.brokerActivityBusy = busy;
+        this.emit();
+    }
+
+    setHarnessBusy(busy: boolean): void {
+        this.harnessBusy = busy;
+        this.emit();
     }
 
     // ── REAL governed-write loop ────────────────────────────────────────────
@@ -177,24 +276,4 @@ export class InstrumentStore {
         }
     }
 
-    // The 001 "approve" flow: the decision resolves everywhere at once, then
-    // verifies after the checks + preview come back healthy.
-    approve(): void {
-        this.decision = 'executing';
-        this.needMigrationDismissed = true;
-        this.pulseNow = 'codex · aplicando migration';
-        this.stage = 'CONSTRUINDO';
-        this.pendingCount = '0 decisões';
-        this.toast('Permissão registrada · executando migration após checkpoint');
-        this.emit();
-        window.setTimeout(() => {
-            this.decision = 'verified';
-            this.pulseNow = 'codex · migration verificada';
-            this.stage = 'VERIFICADO';
-            this.lvlBar = 72;
-            this.lvlNext = '2 outcomes verificados para o nível 8';
-            this.toast('Outcome verificado · progresso +1');
-            this.emit();
-        }, 1400);
-    }
 }
