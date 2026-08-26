@@ -62,6 +62,7 @@ export const CMD_SESSION_START = 'instrument.session.start';
 export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
+export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 
 /** Projeto semântico (§3). */
 export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
@@ -197,6 +198,15 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
             { execute: () => this.sessionCancel() }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_PERMISSION, label: 'Instrument: decidir permissão do agente' },
+            {
+                execute: (requestId?: number, allow?: boolean, denyEndsTurn?: boolean) =>
+                    typeof requestId === 'number' && typeof allow === 'boolean'
+                        ? this.sessionPermission(requestId, allow, denyEndsTurn ?? true)
+                        : undefined
+            }
         );
         commands.registerCommand(
             { id: CMD_PRODUCT_REFRESH, label: 'Instrument: reler o projeto semântico' },
@@ -494,6 +504,47 @@ export class InstrumentCapabilityContribution
         if (this.pollTimer !== undefined) {
             window.clearInterval(this.pollTimer);
             this.pollTimer = undefined;
+        }
+    }
+
+    /**
+     * Answers one parked permission. The agent's turn is blocked until this
+     * lands, so the result is reported plainly instead of optimistically: a
+     * failure leaves the card on screen because the agent is still waiting.
+     */
+    protected async sessionPermission(
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn: boolean
+    ): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setSessionBusy(true);
+        try {
+            const before = this.store.session?.pending.find(p => p.requestId === requestId);
+            const snapshot = await this.session.respondPermission(root, requestId, allow, denyEndsTurn);
+            this.store.setSession(snapshot);
+            const stillPending = snapshot.pending.some(p => p.requestId === requestId);
+            if (stillPending) {
+                this.messages.error(
+                    `A decisão não chegou ao agente: ${snapshot.lastError ?? 'motivo desconhecido'}`
+                );
+                return;
+            }
+            const what = before ? `${before.action}: ${before.detail}` : `pedido ${requestId}`;
+            this.messages.info(
+                allow
+                    ? `${what} — aprovado, o agente seguiu.`
+                    : denyEndsTurn
+                        ? `${what} — negado e turno encerrado.`
+                        : `${what} — negado; o turno continua.`
+            );
+        } catch (err) {
+            this.messages.error(`Falha ao decidir permissão: ${this.msg(err)}`);
+        } finally {
+            this.store.setSessionBusy(false);
         }
     }
 

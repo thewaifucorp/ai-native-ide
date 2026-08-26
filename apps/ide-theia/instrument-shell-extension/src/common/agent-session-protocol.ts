@@ -1,9 +1,9 @@
 // AGENT SESSION — the pre-disk path (the third write path, closed).
 //
 // The observer covers writes that already happened. This covers the agent the IDE
-// hosts itself: it runs the real ACP session (ide-agent → acpx → the agent), and
-// the agent's changes are proposed through the broker BEFORE they touch the
-// project. That is what Cursor/Copilot get from writing through the editor's edit
+// hosts itself: it runs the real ACP session (ide-agent → the direct-ACP adapter
+// → the agent bridge), and the agent's changes are proposed through the broker
+// BEFORE they touch the project. That is what Cursor/Copilot get from writing through the editor's edit
 // API instead of the filesystem, and what an external CLI agent cannot give us.
 //
 // ── HOW THE PRE-DISK GUARANTEE IS OBTAINED ────────────────────────────────
@@ -15,13 +15,24 @@
 // broker. Nothing reaches the project without a decision.
 //
 // ── O QUE O ISOLAMENTO NÃO É ──────────────────────────────────────────────
-// A worktree NÃO é jaula. `bastion-agent-runtime`'s acpx adapter documenta
-// `policy_coverage.sandbox = None`: o `--cwd` é dica, não confinamento, e nada
-// impede o agente de escrever fora da raiz por caminho absoluto. Então a worktree
-// evita escrita ACIDENTAL no projeto; não evita escrita deliberada. O que cobre
-// esse caso é o OBSERVADOR (vê qualquer escrita externa) mais o broker — não este
-// isolamento. Enforcement de sandbox virá de um adapter que o declare, e o
-// `harvest` continua sendo o único caminho que traz mudança para o projeto.
+// A worktree NÃO é jaula, e o adapter direto de ACP não mudou isso: ele também
+// declara `policy_coverage.sandbox = None`. O `cwd` do `session/new` é dica, e
+// foi MEDIDO que os bridges escrevem com ferramenta nativa, não pelo
+// `fs/write_text_file` do cliente — então nada impede escrita fora da raiz por
+// caminho absoluto. A worktree evita escrita ACIDENTAL no projeto; não evita
+// deliberada. Quem cobre esse caso é o OBSERVADOR mais o broker.
+//
+// ── O QUE O ADAPTER DIRETO MUDOU ──────────────────────────────────────────
+// A permissão. Antes, o `acpx` respondia `session/request_permission` sozinho e
+// o IDE só recebia o aviso do que já tinha sido decidido (`approvals =
+// HarnessOwned`). Agora o sidecar É o cliente ACP: o pedido PARA aqui e o agente
+// fica bloqueado até `respondPermission` responder. Sem resposta, o pedido morre
+// no timeout da própria tarefa — e timeout conta como negação, nunca aprovação.
+//
+// Isso vale para os agentes que PERGUNTAM. Foi medido: o `claude-agent-acp`
+// pergunta antes de editar; `codex-acp` e `opencode` resolvem internamente e não
+// perguntam. O `descriptor()` do adapter declara isso por bridge, e a UI mostra
+// a declaração em vez de prometer um portão que aquele agente não usa.
 //
 // Consequences, stated rather than hidden:
 //  • the project must be a git repository (otherwise the session is refused);
@@ -45,6 +56,23 @@ export interface SessionEventView {
     at: string;
     kind: string;
     text: string;
+}
+
+/**
+ * A permission the agent asked for and that nothing has answered yet.
+ *
+ * The agent's turn is BLOCKED while this is pending. It is the one snapshot
+ * field that represents an open question rather than a record of the past.
+ */
+export interface PendingPermission {
+    /** Handle that answers it; unique within the session. */
+    requestId: number;
+    /** Action class, e.g. `write-file`, `run-command`, `network`, `use-tool`. */
+    action: string;
+    /** Human-readable target — tool title plus the paths it would touch. */
+    detail: string;
+    /** When the IDE saw the request. */
+    at: string;
 }
 
 /** A change the agent made inside the worktree, not yet in the project. */
@@ -71,6 +99,8 @@ export interface AgentSessionSnapshot {
     lastError?: string;
     /** Changes seen in the worktree at the last harvest. */
     changes: HarvestedChange[];
+    /** Permissions awaiting a decision. Non-empty means the agent is blocked. */
+    pending: PendingPermission[];
 }
 
 export interface AgentSessionService {
@@ -91,6 +121,18 @@ export interface AgentSessionService {
      * still queued.
      */
     harvest(rootUri: string): Promise<AgentSessionSnapshot>;
+
+    /**
+     * Answer a pending permission. `allow: false` denies; `denyEndsTurn` (the
+     * default) also ends the agent's turn, so a refused write cannot be retried
+     * through another ungated tool in the same turn.
+     */
+    respondPermission(
+        rootUri: string,
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn?: boolean
+    ): Promise<AgentSessionSnapshot>;
 
     /** End the session. The worktree is left in place for inspection. */
     cancel(rootUri: string): Promise<AgentSessionSnapshot>;

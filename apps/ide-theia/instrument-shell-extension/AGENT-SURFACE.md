@@ -137,10 +137,42 @@ Por construção, não por configuração:
 
 E o que ele **consegue**, e não deve ser confundido com o de cima:
 
-- **Escrever fora da worktree por caminho absoluto.** O adapter `acpx` do
-  `bastion-agent-runtime` declara `policy_coverage.sandbox = None` — `--cwd` é
-  dica, não jaula. A worktree evita o acidente, não a intenção. Quem cobre esse
-  caso é o observador de escritas externas, não o "isolamento" da sessão.
+- **Escrever fora da worktree por caminho absoluto.** O adapter direto de ACP
+  (`bastion_agent_runtime::acp`) declara `policy_coverage.sandbox = None`, igual
+  ao `acpx`: o `cwd` do `session/new` é dica, não jaula. A worktree evita o
+  acidente, não a intenção. Quem cobre esse caso é o observador de escritas
+  externas, não o "isolamento" da sessão.
+
+  Isso foi **visto acontecer** na prova do adapter novo: o agente rodou
+  `cd "<raiz do repo>" && wc -l <arquivo>` — saiu da worktree por caminho
+  absoluto no primeiro turno, sem esforço. O que segurou não foi isolamento, foi
+  o portão de permissão: o comando parou num card e só rodou porque foi
+  aprovado.
+
+## O que MUDOU com o adapter direto de ACP
+
+O sidecar agora é o cliente ACP. Antes, o `acpx` respondia
+`session/request_permission` sozinho e o IDE recebia um aviso do que já tinha
+sido decidido (`approvals = HarnessOwned`, `respond_permission` sempre erro).
+
+Agora o pedido **para no IDE** e o agente fica bloqueado até alguém responder.
+Cada pedido vira um card no painel Build com três saídas: `Permitir`,
+`Negar` (só aquele pedido) e `Negar e encerrar` (nega e derruba o turno, para o
+agente não tentar o mesmo objetivo por outra ferramenta não vigiada). Sem
+resposta, o pedido morre no timeout da tarefa — e **não respondido conta como
+negado**, nunca como aprovado.
+
+Duas ressalvas honestas, ambas medidas e não supostas:
+
+- **Vale para os agentes que perguntam.** Ser o cliente ACP garante que todo
+  pedido chegue; não obriga o agente a pedir. Medido: `claude-agent-acp` pergunta
+  antes de editar; `codex-acp` e `opencode` resolveram a mesma escrita
+  internamente e não perguntaram. O `descriptor()` declara isso por bridge.
+- **A escrita continua sendo nativa do agente.** O IDE anuncia
+  `clientCapabilities.fs.{read,write}TextFile = true` e implementa os dois
+  métodos com a raiz imposta, mas nenhum bridge testado os usou. Então a worktree
+  e o `harvest` continuam sendo o caminho governado para o projeto — não dá para
+  trocá-los por escrita mediada pelo broker.
 
 ## Dívida conhecida (precisa mudar no sidecar Rust)
 

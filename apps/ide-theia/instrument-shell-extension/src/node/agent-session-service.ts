@@ -15,6 +15,7 @@ import {
     AgentSessionService,
     AgentSessionSnapshot,
     HarvestedChange,
+    PendingPermission,
     SessionEventView,
     SessionPhase
 } from '../common/agent-session-protocol';
@@ -40,6 +41,8 @@ interface SessionState {
     events: SessionEventView[];
     lastError?: string;
     changes: HarvestedChange[];
+    /** Permissions the agent is currently blocked on. */
+    pending: PendingPermission[];
 }
 
 /** Run a command to completion; never throws. */
@@ -84,6 +87,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         state.phase = 'starting';
         state.lastError = undefined;
         state.changes = [];
+        state.pending = [];
 
         const worktree = await this.ensureWorktree(root);
         if (typeof worktree !== 'string') {
@@ -205,6 +209,50 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         return this.view(state);
     }
 
+    async respondPermission(
+        rootUri: string,
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn = true
+    ): Promise<AgentSessionSnapshot> {
+        const root = this.rootPath(rootUri);
+        const state = this.state(root);
+        if (!state.sessionId) {
+            state.lastError = 'não há sessão aberta para responder permissão';
+            return this.view(state);
+        }
+        const index = state.pending.findIndex(p => p.requestId === requestId);
+        if (index < 0) {
+            // Never report a decision the adapter never received. A stale button
+            // click must say so, not look like it worked.
+            state.lastError = `pedido de permissão ${requestId} não está pendente`;
+            return this.view(state);
+        }
+        const request = state.pending[index];
+        try {
+            await this.engine.agentRespondPermission(
+                state.agent,
+                state.sessionId,
+                requestId,
+                allow,
+                denyEndsTurn
+            );
+        } catch (err) {
+            // The request stays pending: the agent is still blocked on it, so the
+            // card must stay on screen.
+            state.lastError = this.msg(err);
+            return this.view(state);
+        }
+        state.pending.splice(index, 1);
+        const verdict = allow
+            ? 'aprovado'
+            : denyEndsTurn
+                ? 'negado (turno encerrado)'
+                : 'negado (só este pedido)';
+        this.push(state, 'permissão', `${request.action}: ${request.detail} — ${verdict}`);
+        return this.view(state);
+    }
+
     async cancel(rootUri: string): Promise<AgentSessionSnapshot> {
         const root = this.rootPath(rootUri);
         const state = this.state(root);
@@ -217,6 +265,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         }
         state.sessionId = undefined;
         state.phase = 'none';
+        state.pending = [];
         this.push(state, 'session', 'sessão encerrada');
         return this.view(state);
     }
@@ -389,9 +438,22 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             case 'ToolCall':
                 this.push(state, 'ferramenta', String(payload.name ?? ''));
                 break;
-            case 'PermissionRequested':
-                this.push(state, 'permissão', `${payload.action}: ${payload.detail}`);
+            case 'PermissionRequested': {
+                // Not observability: the agent is blocked until this is answered.
+                const requestId = Number(payload.request_id ?? 0);
+                const action = String(payload.action ?? '');
+                const detail = String(payload.detail ?? '');
+                if (!state.pending.some(p => p.requestId === requestId)) {
+                    state.pending.push({
+                        requestId,
+                        action,
+                        detail,
+                        at: new Date().toISOString()
+                    });
+                }
+                this.push(state, 'permissão', `${action}: ${detail} — aguardando decisão`);
                 break;
+            }
             case 'Diff':
                 this.push(state, 'diff', `${payload.path} +${payload.added}/-${payload.removed}`);
                 break;
@@ -400,6 +462,17 @@ export class AgentSessionServiceImpl implements AgentSessionService {
                 break;
             case 'Ended':
                 state.phase = 'idle';
+                // A turn that ended took its unanswered questions with it. Leaving
+                // them on screen would offer a button that answers nothing.
+                if (state.pending.length > 0) {
+                    this.push(
+                        state,
+                        'permissão',
+                        `${state.pending.length} pedido(s) sem resposta caíram com o fim do turno — ` +
+                        'não respondido conta como negado'
+                    );
+                    state.pending = [];
+                }
                 this.push(state, 'fim', JSON.stringify(payload.outcome));
                 break;
             case 'Started':
@@ -419,7 +492,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
     protected state(root: string): SessionState {
         let state = this.states.get(root);
         if (!state) {
-            state = { agent: 'claude', phase: 'none', events: [], changes: [] };
+            state = { agent: 'claude', phase: 'none', events: [], changes: [], pending: [] };
             this.states.set(root, state);
         }
         return state;
@@ -433,7 +506,8 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             worktree: state.worktree,
             events: state.events.slice(-60),
             lastError: state.lastError,
-            changes: state.changes
+            changes: state.changes,
+            pending: state.pending
         };
     }
 

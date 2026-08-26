@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.89"
-bastion-agent-runtime = { git = "https://github.com/thewaifucorp/bastion-core", rev = "aece48b55981a1c64b04eaf1f8c9eae3404f9503" }
+bastion-agent-runtime = { git = "https://github.com/thewaifucorp/bastion-core", rev = "7df709f8c7b2b9c7ad7a8239a01358b991a8c767" }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["macros", "rt", "sync"] }

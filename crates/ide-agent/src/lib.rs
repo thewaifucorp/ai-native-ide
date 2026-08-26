@@ -4,13 +4,27 @@
 //! of making the UI parse a CLI's stdout. The desktop host owns persistence and
 //! event delivery; this facade owns no secrets and reports external-harness
 //! policy gaps explicitly.
+//!
+//! # Why the direct-ACP adapter, not `acpx`
+//!
+//! This facade used to sit on `bastion_agent_runtime::acpx`, which supervises a
+//! third-party headless ACP *client*. That client answered the agent's
+//! `session/request_permission` calls itself, so what reached the IDE was a
+//! notification about a decision already taken — `approvals = HarnessOwned`, and
+//! `respond_permission` was always an error. The Build panel could show that a
+//! write had been blocked; it could not be the thing that blocked it.
+//!
+//! `bastion_agent_runtime::acp` makes Bastion the ACP client, so the permission
+//! request parks in the IDE until someone answers it. That is the entire reason
+//! for the swap, and it is what [`AgentFacade::respond_permission`] exposes.
 
 use bastion_agent_runtime::{
-    acpx::AcpxAgentRuntime, AgentRuntime, ApprovalCoverage, ArtifactKind, AuthProfileRef,
-    BudgetCoverage, CancelMode, EgressCoverage, EnvPolicy, PermissionAction, PermissionProfile,
-    PolicyCoverage, ResumeSpec, RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth,
-    RuntimeSession, SandboxCoverage, SandboxProfile, SessionHandle, SessionSpec, SessionStatus,
-    TaskExpectation, TaskInput, TaskOutcome, ToolVisibility, WorkspacePolicy,
+    acp::AcpAgentRuntime, AgentRuntime, ApprovalCoverage, ArtifactKind, AuthProfileRef,
+    BudgetCoverage, CancelMode, DenyScope, EgressCoverage, EnvPolicy, PermissionAction,
+    PermissionDecision, PermissionProfile, PermissionRequestId, PolicyCoverage, ResumeSpec,
+    RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth, RuntimeSession, SandboxCoverage,
+    SandboxProfile, SessionHandle, SessionSpec, SessionStatus, TaskExpectation, TaskInput,
+    TaskOutcome, ToolVisibility, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,7 +35,14 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-/// Stable IDE-owned identity. The ACPX session reference never crosses the UI boundary.
+/// How long [`AgentFacade::next_event`] waits before reporting "nothing pending".
+///
+/// Short on purpose: the session lock is held for this long, so it bounds how
+/// long any other call on the same session (notably
+/// [`AgentFacade::respond_permission`]) can be delayed.
+const NEXT_EVENT_WAIT: Duration = Duration::from_millis(250);
+
+/// Stable IDE-owned identity. The harness session reference never crosses the UI boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentSessionId(pub String);
 
@@ -147,8 +168,17 @@ pub enum IdeAgentEvent {
         output_digest: String,
         is_error: bool,
     },
+    /// A permission request parked in the adapter, waiting for a decision.
+    ///
+    /// Unlike every other variant this one is not observability: nothing
+    /// proceeds until [`AgentFacade::respond_permission`] is called with
+    /// `request_id`. An unanswered request blocks until the task's own timeout
+    /// fires, and a timed-out request is treated as a denial — the IDE never
+    /// approves by falling silent.
     PermissionRequested {
         task_id: u64,
+        /// Answer handle for [`AgentFacade::respond_permission`].
+        request_id: u64,
         action: String,
         detail: String,
     },
@@ -253,18 +283,30 @@ struct ManagedSession {
     usage: AgentUsageTotals,
 }
 
-/// An ACPX-backed, host-neutral facade. It does no credential discovery and never logs input.
-pub struct AcpxAgentFacade {
+/// A host-neutral facade over a direct-ACP agent session. It does no credential
+/// discovery and never logs input.
+pub struct AgentFacade {
     runtime: Arc<dyn AgentRuntime>,
     sessions: Mutex<HashMap<AgentSessionId, ManagedSession>>,
     next_session_id: AtomicU64,
 }
 
-impl AcpxAgentFacade {
-    /// Resolves the `acpx` executable using the runtime's own validated resolver.
+impl AgentFacade {
+    /// Opens a facade for a known agent name (`"claude"`, `"codex"`,
+    /// `"opencode"`, `"gemini"`), resolved to its ACP bridge command by
+    /// [`bridge_command_for`].
     pub fn new(agent: impl Into<String>) -> Result<Self, AgentFacadeError> {
-        let runtime = AcpxAgentRuntime::new(agent).map_err(map_runtime_error)?;
-        Ok(Self::from_runtime(runtime))
+        let agent = agent.into();
+        let command = bridge_command_for(&agent).ok_or_else(|| AgentFacadeError::Unavailable {
+            detail: format!("no ACP bridge is known for agent {agent:?}"),
+        })?;
+        Ok(Self::from_runtime(AcpAgentRuntime::new(command)))
+    }
+
+    /// Opens a facade for an arbitrary ACP bridge command, for an agent this
+    /// build has no entry for.
+    pub fn from_bridge_command(command: impl Into<String>) -> Self {
+        Self::from_runtime(AcpAgentRuntime::new(command.into()))
     }
 
     fn from_runtime(runtime: impl AgentRuntime + 'static) -> Self {
@@ -294,7 +336,7 @@ impl AcpxAgentFacade {
         }
     }
 
-    /// Opens a real ACPX session only after its health probe says it is ready.
+    /// Opens a real agent session only after its health probe says it is ready.
     pub async fn start_session(
         &self,
         request: StartAgentSession,
@@ -343,8 +385,8 @@ impl AcpxAgentFacade {
 
     /// Captures a host-persistable snapshot of a live session's transferable state:
     /// the adapter handle, the opening request, and the usage accumulated so far.
-    /// This is what a host stores for a later [`AcpxAgentFacade::resume`] or hands to
-    /// another facade's [`AcpxAgentFacade::adopt_state`] for an agent swap.
+    /// This is what a host stores for a later [`AgentFacade::resume`] or hands to
+    /// another facade's [`AgentFacade::adopt_state`] for an agent swap.
     pub async fn capture_state(
         &self,
         session_id: &AgentSessionId,
@@ -489,7 +531,25 @@ impl AcpxAgentFacade {
         Ok(task_id.0)
     }
 
-    /// Pulls one structured event. The desktop host may relay this through its own bounded stream.
+    /// Pulls one structured event, or `None` when nothing is pending right now.
+    ///
+    /// The wait is BOUNDED, and that bound is load-bearing rather than a tuning
+    /// knob. `RuntimeSession::next_event` parks until an event exists, and this
+    /// method holds the session lock while it waits — so an unbounded wait means
+    /// no other call on this session can run, `respond_permission` included.
+    ///
+    /// That deadlocks exactly when the product matters most: the agent stops to
+    /// ask permission, which means it emits nothing until answered, which means
+    /// `next_event` never returns, which means the lock is never released and the
+    /// answer can never be delivered. The agent waits for a decision that is
+    /// waiting for the agent. (Found by running it, not by reasoning about it —
+    /// the Build panel sat on `working` forever with the bridge alive and idle.)
+    ///
+    /// It could not happen under the previous `acpx` adapter, which answered
+    /// permission requests itself and therefore always had something to emit.
+    ///
+    /// Returning `None` on expiry is not a workaround: the host polls, and "no
+    /// event right now" is the honest answer to a poll.
     pub async fn next_event(
         &self,
         session_id: &AgentSessionId,
@@ -498,7 +558,17 @@ impl AcpxAgentFacade {
         let managed = sessions
             .get_mut(session_id)
             .ok_or(AgentFacadeError::SessionNotFound)?;
-        let event = managed.runtime_session.next_event().await;
+        let event = match tokio::time::timeout(
+            NEXT_EVENT_WAIT,
+            managed.runtime_session.next_event(),
+        )
+        .await
+        {
+            Ok(event) => event,
+            // Nothing arrived in the window. The session is untouched and the
+            // lock is about to be released, which is the entire point.
+            Err(_) => return Ok(None),
+        };
         if let Some(RuntimeEvent::Usage { delta, .. }) = &event {
             let usage = &mut managed.usage;
             usage.input_tokens = usage.input_tokens.saturating_add(delta.input_tokens);
@@ -507,7 +577,7 @@ impl AcpxAgentFacade {
         Ok(event.map(|event| event_to_ide(session_id, event)))
     }
 
-    /// Cancellation delegates to ACPX and preserves the adapter's idempotent semantics.
+    /// Cancellation delegates to the adapter and preserves its idempotent semantics.
     pub async fn cancel(
         &self,
         session_id: &AgentSessionId,
@@ -531,6 +601,45 @@ impl AcpxAgentFacade {
             .map_err(map_runtime_error)
     }
 
+    /// Answers a parked [`IdeAgentEvent::PermissionRequested`].
+    ///
+    /// `deny_ends_turn` picks the denial's blast radius, mirroring the runtime's
+    /// `DenyScope`: `true` (the product default) also cancels the delegated task,
+    /// so a refused write cannot be retried through some other ungated tool in
+    /// the same turn; `false` refuses only this one request and lets the turn
+    /// continue.
+    ///
+    /// Answering an id that is not parked is an error, never a silent no-op: the
+    /// UI must not believe it approved something the agent never asked.
+    pub async fn respond_permission(
+        &self,
+        session_id: &AgentSessionId,
+        request_id: u64,
+        allow: bool,
+        deny_ends_turn: bool,
+    ) -> Result<(), AgentFacadeError> {
+        let mut sessions = self.sessions.lock().await;
+        let managed = sessions
+            .get_mut(session_id)
+            .ok_or(AgentFacadeError::SessionNotFound)?;
+        let decision = if allow {
+            PermissionDecision::Allow
+        } else {
+            PermissionDecision::Deny {
+                scope: if deny_ends_turn {
+                    DenyScope::Turn
+                } else {
+                    DenyScope::Instance
+                },
+            }
+        };
+        managed
+            .runtime_session
+            .respond_permission(PermissionRequestId(request_id), decision)
+            .await
+            .map_err(map_runtime_error)
+    }
+
     pub async fn session_status(
         &self,
         session_id: &AgentSessionId,
@@ -544,6 +653,22 @@ impl AcpxAgentFacade {
             .status()
             .await
             .map_err(map_runtime_error)
+    }
+}
+
+/// Maps a host-facing agent name onto the command that speaks ACP for it.
+///
+/// Kept as a table rather than a free-form command from the UI: the host picks
+/// an agent, it does not get to name an arbitrary process for the IDE to spawn.
+/// Callers that genuinely need another bridge use
+/// [`AgentFacade::from_bridge_command`] explicitly.
+pub fn bridge_command_for(agent: &str) -> Option<&'static str> {
+    match agent {
+        "claude" => Some("claude-agent-acp"),
+        "codex" => Some("npx -y @agentclientprotocol/codex-acp@^0.0.44"),
+        "opencode" => Some("npx -y opencode-ai acp"),
+        "gemini" => Some("gemini --acp"),
+        _ => None,
     }
 }
 
@@ -569,9 +694,10 @@ fn session_spec_from(request: StartAgentSession) -> SessionSpec {
             per_task: Duration::from_millis(request.task_timeout_ms),
             idle: Duration::from_millis(request.idle_timeout_ms),
         },
-        // ACPX needs HOME to find the CLI's existing authenticated session. The host supplies
-        // this one path explicitly; no ambient environment, API key, or arbitrary variables are
-        // inherited by the subprocess.
+        // The wrapped agent CLI needs HOME to find its existing authenticated
+        // session. The host supplies this one path explicitly; no ambient
+        // environment, API key, or arbitrary variables are inherited by the
+        // subprocess.
         env: EnvPolicy {
             allow: [(
                 "HOME".to_string(),
@@ -749,11 +875,12 @@ fn event_to_ide(session_id: &AgentSessionId, event: RuntimeEvent) -> IdeAgentEve
         },
         RuntimeEvent::PermissionRequest {
             task,
+            id,
             action,
             detail,
-            ..
         } => IdeAgentEvent::PermissionRequested {
             task_id: task.0,
+            request_id: id.0,
             action: permission_action_name(action),
             detail,
         },
@@ -853,6 +980,9 @@ mod tests {
         submissions: Arc<Mutex<Vec<TaskInput>>>,
         cancellations: Arc<Mutex<Vec<CancelMode>>>,
         resumes: Arc<Mutex<Vec<SessionHandle>>>,
+        /// Decisions the facade forwarded, in order. Models a runtime whose
+        /// `approvals` is `Bridged` — the whole point of the direct-ACP swap.
+        permissions: Arc<Mutex<Vec<(u64, PermissionDecision)>>>,
     }
 
     #[derive(Default)]
@@ -960,12 +1090,11 @@ mod tests {
 
         async fn respond_permission(
             &mut self,
-            _id: bastion_agent_runtime::PermissionRequestId,
-            _decision: bastion_agent_runtime::PermissionDecision,
+            id: bastion_agent_runtime::PermissionRequestId,
+            decision: bastion_agent_runtime::PermissionDecision,
         ) -> Result<(), RuntimeError> {
-            Err(RuntimeError::Protocol(
-                "permission bridge unavailable in test runtime".to_string(),
-            ))
+            self.probe.permissions.lock().await.push((id.0, decision));
+            Ok(())
         }
 
         async fn status(&self) -> Result<SessionStatus, RuntimeError> {
@@ -1052,6 +1181,124 @@ mod tests {
         assert_eq!(spec.timeout.per_task, Duration::from_secs(5));
     }
 
+    /// The permission event has to carry the handle that answers it. Without
+    /// `request_id` the UI can render a decision card it has no way to submit —
+    /// which is precisely the state the `acpx` adapter left the Build panel in.
+    #[test]
+    fn permission_request_carries_the_id_that_answers_it() {
+        let event = event_to_ide(
+            &AgentSessionId("s-1".to_string()),
+            RuntimeEvent::PermissionRequest {
+                task: bastion_agent_runtime::TaskId(7),
+                id: PermissionRequestId(42),
+                action: PermissionAction::WriteFile,
+                detail: "Write src/main.rs".to_string(),
+            },
+        );
+        assert_eq!(
+            event,
+            IdeAgentEvent::PermissionRequested {
+                task_id: 7,
+                request_id: 42,
+                action: "write-file".to_string(),
+                detail: "Write src/main.rs".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn respond_permission_forwards_the_decision_and_its_scope() {
+        let probe = TestProbe::default();
+        let facade = AgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: true,
+            ..Default::default()
+        });
+        let session_id = facade.start_session(session_request()).await.unwrap();
+
+        facade
+            .respond_permission(&session_id, 1, true, true)
+            .await
+            .unwrap();
+        // Denying without ending the turn refuses one request only.
+        facade
+            .respond_permission(&session_id, 2, false, false)
+            .await
+            .unwrap();
+        // The product default: a denial also ends the turn, so the agent cannot
+        // reroute the same goal through another ungated tool.
+        facade
+            .respond_permission(&session_id, 3, false, true)
+            .await
+            .unwrap();
+
+        let decisions = probe.permissions.lock().await.clone();
+        assert_eq!(
+            decisions,
+            vec![
+                (1, PermissionDecision::Allow),
+                (
+                    2,
+                    PermissionDecision::Deny {
+                        scope: DenyScope::Instance
+                    }
+                ),
+                (
+                    3,
+                    PermissionDecision::Deny {
+                        scope: DenyScope::Turn
+                    }
+                ),
+            ]
+        );
+    }
+
+    /// Answering a session that does not exist must fail loudly: a UI that
+    /// believes it approved something is worse than one that shows an error.
+    /// The deadlock this bound exists to prevent, in miniature: a session that
+    /// emits nothing (the agent is blocked on a permission) must not stop
+    /// `respond_permission` from running. Before the bound, this test hung.
+    #[tokio::test]
+    async fn a_silent_session_does_not_block_answering_its_permission() {
+        let probe = TestProbe::default();
+        let facade = AgentFacade::from_runtime(TestRuntime {
+            probe: probe.clone(),
+            ready: true,
+            // No scripted events: `next_event` has nothing to hand back, exactly
+            // like an agent parked on an unanswered permission request.
+            ..Default::default()
+        });
+        let session_id = facade.start_session(session_request()).await.unwrap();
+
+        assert_eq!(facade.next_event(&session_id).await.unwrap(), None);
+        facade
+            .respond_permission(&session_id, 1, true, true)
+            .await
+            .unwrap();
+
+        assert_eq!(probe.permissions.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn respond_permission_on_an_unknown_session_is_an_error() {
+        let facade = AgentFacade::from_runtime(TestRuntime::default());
+        let result = facade
+            .respond_permission(&AgentSessionId("nope".to_string()), 1, true, true)
+            .await;
+        assert_eq!(result, Err(AgentFacadeError::SessionNotFound));
+    }
+
+    /// The host picks an agent; it never names a process for the IDE to spawn.
+    #[test]
+    fn unknown_agent_names_do_not_resolve_to_a_bridge_command() {
+        assert_eq!(bridge_command_for("claude"), Some("claude-agent-acp"));
+        assert_eq!(bridge_command_for("rm -rf /"), None);
+        assert!(matches!(
+            AgentFacade::new("definitely-not-an-agent"),
+            Err(AgentFacadeError::Unavailable { .. })
+        ));
+    }
+
     #[test]
     fn maps_terminal_events_without_exposing_external_session_reference() {
         let event = event_to_ide(
@@ -1073,7 +1320,7 @@ mod tests {
     #[tokio::test]
     async fn routes_start_submit_cancel_and_status_without_a_provider_call() {
         let probe = TestProbe::default();
-        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+        let facade = AgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: true,
             ..Default::default()
@@ -1124,7 +1371,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_runtime_never_starts_a_session() {
         let probe = TestProbe::default();
-        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+        let facade = AgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: false,
             ..Default::default()
@@ -1138,7 +1385,7 @@ mod tests {
     #[tokio::test]
     async fn resume_reattaches_the_original_handle_when_capability_is_present() {
         let probe = TestProbe::default();
-        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+        let facade = AgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: true,
             resumable: true,
@@ -1159,7 +1406,7 @@ mod tests {
     #[tokio::test]
     async fn resume_degrades_honestly_when_capability_is_absent() {
         let probe = TestProbe::default();
-        let facade = AcpxAgentFacade::from_runtime(TestRuntime {
+        let facade = AgentFacade::from_runtime(TestRuntime {
             probe: probe.clone(),
             ready: true,
             resumable: false,
@@ -1178,7 +1425,7 @@ mod tests {
     #[tokio::test]
     async fn swap_to_resumable_agent_preserves_context_and_usage() {
         // Source agent accrues usage, then a same-adapter resumable target adopts it.
-        let source = AcpxAgentFacade::from_runtime(TestRuntime {
+        let source = AgentFacade::from_runtime(TestRuntime {
             probe: TestProbe::default(),
             ready: true,
             resumable: true,
@@ -1198,7 +1445,7 @@ mod tests {
         assert_eq!(state.usage.output_tokens, 45);
 
         let target_probe = TestProbe::default();
-        let target = AcpxAgentFacade::from_runtime(TestRuntime {
+        let target = AgentFacade::from_runtime(TestRuntime {
             probe: target_probe.clone(),
             ready: true,
             resumable: true,
@@ -1217,7 +1464,7 @@ mod tests {
 
     #[tokio::test]
     async fn swap_to_non_resumable_agent_starts_fresh_and_reports_dropped_conversation() {
-        let source = AcpxAgentFacade::from_runtime(TestRuntime {
+        let source = AgentFacade::from_runtime(TestRuntime {
             probe: TestProbe::default(),
             ready: true,
             resumable: true,
@@ -1228,7 +1475,7 @@ mod tests {
         let owner = state.origin.owner.clone();
 
         let target_probe = TestProbe::default();
-        let target = AcpxAgentFacade::from_runtime(TestRuntime {
+        let target = AgentFacade::from_runtime(TestRuntime {
             probe: target_probe.clone(),
             ready: true,
             resumable: false,

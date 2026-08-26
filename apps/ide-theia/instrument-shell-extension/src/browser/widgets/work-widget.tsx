@@ -22,6 +22,7 @@ import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
     CMD_BROKER_TRAIL,
     CMD_SESSION_CANCEL,
+    CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
     CMD_SESSION_START,
     CMD_SESSION_SUBMIT
@@ -347,7 +348,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
                             <small className="cap-hint">
                                 o agente trabalha na worktree e só o broker traz mudança para o projeto ·
-                                não é jaula: o adapter atual não aplica sandbox
+                                não é jaula: o adapter não aplica sandbox · permissão do agente é
+                                decidida aqui, e o agente fica parado até a decisão
                             </small>
                             <div className="cap-actions">
                                 {phase === 'none' || phase === 'failed' ? (
@@ -393,6 +395,72 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             </div>
                         </div>
 
+                        {session && session.pending.length > 0 && (
+                            <div className="cap-card">
+                                <div className="cap-head">
+                                    <b>Decisão pendente</b>
+                                    <span className="cap-pill not-installed">
+                                        agente parado
+                                    </span>
+                                </div>
+                                <small className="cap-hint">
+                                    o agente pediu autorização e está bloqueado até você responder ·
+                                    sem resposta, o pedido morre no timeout da tarefa e conta como negado
+                                </small>
+                                {session.pending.map(p => (
+                                    <div className="cap-receipt" key={p.requestId}>
+                                        <span className="cap-receipt-action">{p.action}</span>
+                                        <span className="cap-receipt-detail">{p.detail}</span>
+                                        <div className="cap-actions">
+                                            <button
+                                                className="cap-btn primary"
+                                                disabled={busy}
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        CMD_SESSION_PERMISSION,
+                                                        p.requestId,
+                                                        true
+                                                    )
+                                                }
+                                            >
+                                                Permitir
+                                            </button>
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                title="Nega e encerra o turno, para o agente não tentar o mesmo por outro caminho"
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        CMD_SESSION_PERMISSION,
+                                                        p.requestId,
+                                                        false,
+                                                        true
+                                                    )
+                                                }
+                                            >
+                                                Negar e encerrar
+                                            </button>
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                title="Nega só este pedido; o turno continua"
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        CMD_SESSION_PERMISSION,
+                                                        p.requestId,
+                                                        false,
+                                                        false
+                                                    )
+                                                }
+                                            >
+                                                Negar
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
                         {session && session.changes.length > 0 && (
                             <div className="cap-card">
                                 <div className="cap-head"><b>Mudanças na worktree</b></div>
@@ -426,7 +494,9 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             <div className="placeholder">
                                 <b>Nenhuma sessão aberta</b>
                                 <p>
-                                    O IDE hospeda uma sessão ACP real (ide-agent → acpx → agente). O
+                                    O IDE hospeda uma sessão ACP real e é o cliente ACP (ide-agent →
+                                    adapter direto → bridge do agente), então a permissão do agente
+                                    é decidida aqui. O
                                     agente trabalha numa worktree git do projeto, e cada mudança dele
                                     é proposta pelo broker antes de tocar o projeto.
                                 </p>

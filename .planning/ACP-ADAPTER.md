@@ -1,4 +1,66 @@
-# Adapter ACP direto — achados e ponto de partida
+# Adapter ACP direto — construído, provado, e o que a medição derrubou
+
+> **Estado em 2026-08-26, depois de construir:** o adapter existe
+> (`bastion-core`, branch `feat/acp-direct-adapter`, commit `7df709f`), o IDE
+> usa ele, e a ponte de permissão foi provada no Theia rodando. O plano abaixo
+> foi escrito ANTES da medição e estava errado num ponto central — a seção
+> "Correção pela medição" marca o quê. O resto continua valendo.
+>
+> ## Correção pela medição
+>
+> **O item 4 ("o broker é quem escreve", via `fs/write_text_file`) não existe.**
+> Foi medido com `examples/acp_fs_probe.rs`, anunciando
+> `clientCapabilities.fs.{read,write}TextFile = true`:
+>
+> | bridge | `fs/write` | `fs/read` | `request_permission` |
+> |---|---|---|---|
+> | `claude-agent-acp@0.70.0` | 0 | 0 | 1 |
+> | `codex-acp@0.0.44` | 0 | 0 | 0 |
+> | `opencode acp` | 0 | 0 | 0 |
+>
+> Todos escreveram com ferramenta nativa. O bundle do `claude-agent-acp` expõe
+> `writeTextFile` e nunca o chama. Consequência direta: **a worktree e o
+> `harvest` ficam**, `sandbox` continua `None`, e o texto "não é jaula" continua
+> correto. A etapa 1 da "sequência depois do adapter", abaixo, foi escrita em
+> cima dessa premissa falsa — só a parte de permissão dela valia, e foi feita.
+>
+> **`approvals` é por bridge, não por adapter.** Ser o cliente ACP garante que
+> todo pedido chegue; não faz o agente perguntar. Só o `claude-agent-acp`
+> perguntou.
+>
+> **As opções de permissão vêm com deny primeiro.** `options.first()` — o
+> "auto-approve" do exemplo oficial do SDK — é uma negação contra esse bridge.
+> Mapeamento é por `PermissionOptionKind`.
+>
+> ## O que ficou provado, e onde
+>
+> - `conformance.rs` ao vivo contra `claude-agent-acp`: 11 passam (incluindo
+>   `permission_bridge_allow` e `permission_bridge_deny`), 3 pulam por falta de
+>   `FaultInjection`. Reproduzir:
+>   `nice -n 19 cargo run -j 2 --example acp_conformance -- claude-agent-acp all`
+> - No Theia rodando: pedido de permissão vira card, `Permitir` libera e o
+>   `ToolResult` chega, `Negar e encerrar` derruba o turno (`fim "Cancelled"`) e
+>   o arquivo que o agente ia escrever nunca existiu.
+> - Visto ao vivo, e é o que a UI avisa: o agente saiu da worktree por caminho
+>   absoluto no primeiro turno. Quem segurou foi o portão, não o isolamento.
+>
+> ## Bugs que só apareceram rodando
+>
+> 1. `SessionSpec.permissions` ignorado pelo adapter (achado pelo sweep de
+>    conformance).
+> 2. Frames `tool_call_update` do ACP são patches incrementais, não snapshots: o
+>    frame `completed` não traz `title` nem `locations`.
+> 3. **Deadlock no IDE.** O sidecar processa uma requisição por vez e o
+>    `next_event` do facade segurava o lock da sessão esperando evento — com o
+>    agente parado num pedido de permissão, não vinha evento, então a resposta
+>    nunca conseguia entrar. O agente esperava a decisão que esperava o agente.
+>    Corrigido com espera limitada em `NEXT_EVENT_WAIT`.
+>
+> Os três com teste de regressão.
+
+---
+
+## Anotação original (2026-08-26, antes de construir)
 
 Anotação para a próxima sessão. Escrita em 2026-08-26, depois de investigar por
 que o caminho de escrita do agente hospedado não fecha.

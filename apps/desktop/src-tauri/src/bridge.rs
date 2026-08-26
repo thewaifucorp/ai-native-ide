@@ -1,7 +1,7 @@
 //! Typed application-service boundary for the desktop host.
 //!
 //! The WebView does not receive `SemanticProjectStore`, `WorkspaceEffectBroker`,
-//! `AcpxAgentFacade`, filesystem roots, executable names, or ambient credentials.
+//! `AgentFacade`, filesystem roots, executable names, or ambient credentials.
 //! Tauri commands translate their small renderer DTOs into these methods only after
 //! the host has selected a project resource through a native picker/registered
 //! workspace flow.
@@ -19,7 +19,7 @@
 
 use anyhow::{anyhow, bail, Context};
 use ide_agent::{
-    AcpxAgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
+    AgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
     AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession, SwapReport,
 };
 use ide_config::{
@@ -202,7 +202,7 @@ pub struct DesktopBridge {
     owner: String,
     workspaces: Mutex<BTreeMap<String, AttachedWorkspace>>,
     effect_links: Mutex<BTreeMap<String, CausalLinks>>,
-    agents: Mutex<BTreeMap<String, Arc<AcpxAgentFacade>>>,
+    agents: Mutex<BTreeMap<String, Arc<AgentFacade>>>,
     guidance: Mutex<GuidanceRegistry>,
     truth: Mutex<TruthRegistry>,
     config: Mutex<ConfigStore>,
@@ -981,7 +981,7 @@ impl DesktopBridge {
     /// A version probe only. Session creation remains a later command because it
     /// requires host-managed home/auth references and a project-scoped policy.
     pub async fn agent_capability_card(&self, target: AcpxTarget) -> AgentCapabilityCard {
-        match AcpxAgentFacade::new(target.as_acpx_agent()) {
+        match AgentFacade::new(target.as_acpx_agent()) {
             Ok(agent) => AgentCapabilityCard {
                 target,
                 descriptor: Some(agent.descriptor()),
@@ -1020,7 +1020,7 @@ impl DesktopBridge {
         let workspace_root = workspace.root.clone();
         drop(workspaces);
 
-        let facade = Arc::new(AcpxAgentFacade::new(target.as_acpx_agent())?);
+        let facade = Arc::new(AgentFacade::new(target.as_acpx_agent())?);
         let session = facade
             .start_session(StartAgentSession {
                 owner: self.owner.clone(),
@@ -1124,7 +1124,7 @@ impl DesktopBridge {
         let state = current
             .capture_state(&AgentSessionId(session_id.to_owned()))
             .await?;
-        let new_facade = Arc::new(AcpxAgentFacade::new(new_target.as_acpx_agent())?);
+        let new_facade = Arc::new(AgentFacade::new(new_target.as_acpx_agent())?);
         let (new_id, report) = new_facade.adopt_state(state).await?;
         self.agents
             .lock()
@@ -1224,7 +1224,7 @@ impl DesktopBridge {
             .len())
     }
 
-    async fn agent_for(&self, session_id: &str) -> anyhow::Result<Arc<AcpxAgentFacade>> {
+    async fn agent_for(&self, session_id: &str) -> anyhow::Result<Arc<AgentFacade>> {
         self.agents
             .lock()
             .await

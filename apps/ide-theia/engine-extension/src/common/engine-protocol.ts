@@ -104,9 +104,12 @@ export interface EngineService {
     /** Real `ide-agent` probe: descriptor + honest health of an agent adapter. */
     agentProbe(agent: string): Promise<AgentProbe>;
 
-    // ── Real ACP session (ide-agent AcpxAgentFacade over acpx) ────────────────
-    // The facade lives in the sidecar and owns the ACPX session, so the id
-    // returned here is what later calls resolve against.
+    // ── Real ACP session (ide-agent AgentFacade over the direct-ACP adapter) ──
+    // The facade lives in the sidecar and owns the session, so the id returned
+    // here is what later calls resolve against. Because the sidecar is now the
+    // ACP client itself, `PermissionRequested` is a question that blocks the
+    // agent until `agentRespondPermission` answers it — not a notice about a
+    // decision someone else already took.
 
     /** Open a session. `readOnly` defaults to true in the sidecar. */
     agentStartSession(params: {
@@ -131,6 +134,21 @@ export interface EngineService {
     agentNextEvent(agent: string, sessionId: string): Promise<{ event: AgentEvent | null }>;
 
     agentCancel(agent: string, sessionId: string, graceful?: boolean): Promise<{ cancelled: boolean }>;
+
+    /**
+     * Answer a parked `PermissionRequested`. The agent is blocked on this until
+     * it arrives (or until the task's own timeout fires, which counts as a
+     * denial). `denyEndsTurn` defaults to the product default: a refusal also
+     * ends the turn, so the same goal cannot be retried through another ungated
+     * tool.
+     */
+    agentRespondPermission(
+        agent: string,
+        sessionId: string,
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn?: boolean
+    ): Promise<{ answered: boolean }>;
 }
 
 /**
@@ -143,7 +161,7 @@ export type AgentEvent =
     | { Thinking: { task_id: number; summary: string } }
     | { ToolCall: { task_id: number; name: string; input_digest: string } }
     | { ToolResult: { task_id: number; name: string; output_digest: string; is_error: boolean } }
-    | { PermissionRequested: { task_id: number; action: string; detail: string } }
+    | { PermissionRequested: { task_id: number; request_id: number; action: string; detail: string } }
     | { Diff: { task_id: number; path: string; added: number; removed: number } }
     | { Artifact: { task_id: number; kind: string; path: string; digest: string } }
     | { Usage: { task_id: number; input_tokens: number; output_tokens: number } }

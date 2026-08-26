@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use ide_agent::{
-    AcpxAgentFacade, AgentAvailability, AgentExpectation, AgentSandbox, AgentSessionId, AgentTask,
+    AgentFacade, AgentAvailability, AgentExpectation, AgentSandbox, AgentSessionId, AgentTask,
     StartAgentSession,
 };
 use ide_diff::{diff, merge_selected, Hunk};
@@ -141,17 +141,17 @@ async fn broker_for(root: &str, owner: &str) -> Result<Arc<WorkspaceEffectBroker
 /// way the brokers do: `agent_start_session` returns an id that later
 /// `agent_submit_task` / `agent_next_event` / `agent_cancel` calls resolve against
 /// the SAME facade instance.
-fn agent_facades() -> &'static Mutex<HashMap<String, Arc<AcpxAgentFacade>>> {
-    static FACADES: OnceLock<Mutex<HashMap<String, Arc<AcpxAgentFacade>>>> = OnceLock::new();
+fn agent_facades() -> &'static Mutex<HashMap<String, Arc<AgentFacade>>> {
+    static FACADES: OnceLock<Mutex<HashMap<String, Arc<AgentFacade>>>> = OnceLock::new();
     FACADES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn facade_for(agent: &str) -> Result<Arc<AcpxAgentFacade>, String> {
+async fn facade_for(agent: &str) -> Result<Arc<AgentFacade>, String> {
     let mut facades = agent_facades().lock().await;
     if let Some(existing) = facades.get(agent) {
         return Ok(existing.clone());
     }
-    let facade = Arc::new(AcpxAgentFacade::new(agent.to_string()).map_err(|e| e.to_string())?);
+    let facade = Arc::new(AgentFacade::new(agent.to_string()).map_err(|e| e.to_string())?);
     facades.insert(agent.to_string(), facade.clone());
     Ok(facade)
 }
@@ -218,6 +218,21 @@ struct AgentCancelParams {
     session_id: String,
     #[serde(default = "default_true")]
     graceful: bool,
+}
+
+/// Answer to a parked `PermissionRequested` event.
+///
+/// `allow` has no default on purpose: a malformed call must fail to deserialize
+/// rather than fall through to some assumed answer. `deny_ends_turn` defaults to
+/// the product default — a refusal also ends the turn.
+#[derive(Deserialize)]
+struct AgentPermissionParams {
+    agent: String,
+    session_id: String,
+    request_id: u64,
+    allow: bool,
+    #[serde(default = "default_true")]
+    deny_ends_turn: bool,
 }
 
 async fn handle(method: &str, params: Value) -> Result<Value, String> {
@@ -334,6 +349,21 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "cancelled": true }))
         }
+        "agent_respond_permission" => {
+            let p: AgentPermissionParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            facade
+                .respond_permission(
+                    &AgentSessionId(p.session_id),
+                    p.request_id,
+                    p.allow,
+                    p.deny_ends_turn,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "answered": true }))
+        }
         "agent_session_status" => {
             let p: AgentSessionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let facade = facade_for(&p.agent).await?;
@@ -352,7 +382,7 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             // Build the REAL ide-agent facade and run its non-authenticated health
             // probe. A missing `acpx`/agent binary surfaces as an honest
             // `unavailable` with a reason — never a fabricated "ready".
-            match AcpxAgentFacade::new(p.agent.clone()) {
+            match AgentFacade::new(p.agent.clone()) {
                 Ok(facade) => {
                     let d = facade.descriptor();
                     let h = facade.health().await;
@@ -493,6 +523,24 @@ mod tests {
         ] {
             let out = handle(method, json!({ "agent": "codex", "session_id": "nao-existe" })).await;
             assert!(out.is_err(), "{method} must not invent a session");
+        }
+        // Same rule for the permission answer, which carries extra fields: an
+        // approval aimed at a session nobody opened must never report success.
+        let out = handle(
+            "agent_respond_permission",
+            json!({
+                "agent": "codex",
+                "session_id": "nao-existe",
+                "request_id": 1,
+                "allow": true
+            }),
+        )
+        .await;
+        assert!(
+            out.is_err(),
+            "agent_respond_permission must not invent a session"
+        );
+        {
         }
     }
 

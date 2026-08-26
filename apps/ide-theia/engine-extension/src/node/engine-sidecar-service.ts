@@ -223,4 +223,20 @@ export class EngineSidecarService implements EngineService {
     agentCancel(agent: string, sessionId: string, graceful = true): Promise<{ cancelled: boolean }> {
         return this.call('agent_cancel', { agent, session_id: sessionId, graceful });
     }
+
+    agentRespondPermission(
+        agent: string,
+        sessionId: string,
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn = true
+    ): Promise<{ answered: boolean }> {
+        return this.call('agent_respond_permission', {
+            agent,
+            session_id: sessionId,
+            request_id: requestId,
+            allow,
+            deny_ends_turn: denyEndsTurn
+        });
+    }
 }
