@@ -28,7 +28,10 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use ide_agent::{AcpxAgentFacade, AgentAvailability};
+use ide_agent::{
+    AcpxAgentFacade, AgentAvailability, AgentExpectation, AgentSandbox, AgentSessionId, AgentTask,
+    StartAgentSession,
+};
 use ide_diff::{diff, merge_selected, Hunk};
 use ide_domain::{WorkspaceEffectBroker, WorkspaceWrite};
 use serde::{Deserialize, Serialize};
@@ -132,6 +135,91 @@ async fn broker_for(root: &str, owner: &str) -> Result<Arc<WorkspaceEffectBroker
 
 /// Dispatches one request to the real engine, returning a JSON result or an
 /// error string. Never panics: every fallible step maps into `Err`.
+/// Process-wide registry of live agent facades, keyed by adapter id.
+///
+/// A facade owns its ACPX sessions, so it has to outlive a single request the same
+/// way the brokers do: `agent_start_session` returns an id that later
+/// `agent_submit_task` / `agent_next_event` / `agent_cancel` calls resolve against
+/// the SAME facade instance.
+fn agent_facades() -> &'static Mutex<HashMap<String, Arc<AcpxAgentFacade>>> {
+    static FACADES: OnceLock<Mutex<HashMap<String, Arc<AcpxAgentFacade>>>> = OnceLock::new();
+    FACADES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn facade_for(agent: &str) -> Result<Arc<AcpxAgentFacade>, String> {
+    let mut facades = agent_facades().lock().await;
+    if let Some(existing) = facades.get(agent) {
+        return Ok(existing.clone());
+    }
+    let facade = Arc::new(AcpxAgentFacade::new(agent.to_string()).map_err(|e| e.to_string())?);
+    facades.insert(agent.to_string(), facade.clone());
+    Ok(facade)
+}
+
+/// Parameters shared by every session call: which adapter, which session.
+#[derive(Deserialize)]
+struct AgentSessionParams {
+    agent: String,
+    session_id: String,
+}
+
+/// Opening a session. Everything the IDE does not send has a conservative
+/// default: read-only, isolated sandbox, no extra allowed actions.
+#[derive(Deserialize)]
+struct AgentStartParams {
+    agent: String,
+    owner: String,
+    workspace_root: String,
+    #[serde(default)]
+    home_dir: Option<String>,
+    /// Defaults to TRUE: a session the IDE has not been told to trust with writes
+    /// must not be able to write. The caller opts out explicitly.
+    #[serde(default = "default_true")]
+    read_only: bool,
+    #[serde(default)]
+    denied_paths: Vec<String>,
+    #[serde(default)]
+    sandbox: Option<String>,
+    #[serde(default)]
+    auth_profile_ref: Option<String>,
+    #[serde(default)]
+    allowed_actions: Vec<String>,
+    #[serde(default = "default_task_timeout")]
+    task_timeout_ms: u64,
+    #[serde(default = "default_idle_timeout")]
+    idle_timeout_ms: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_task_timeout() -> u64 {
+    600_000
+}
+fn default_idle_timeout() -> u64 {
+    900_000
+}
+
+#[derive(Deserialize)]
+struct AgentTaskParams {
+    agent: String,
+    session_id: String,
+    prompt: String,
+    /// "conversation" (default) or "code-change".
+    #[serde(default)]
+    expectation: Option<String>,
+    #[serde(default)]
+    model_hint: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AgentCancelParams {
+    agent: String,
+    session_id: String,
+    #[serde(default = "default_true")]
+    graceful: bool,
+}
+
 async fn handle(method: &str, params: Value) -> Result<Value, String> {
     match method {
         "ping" => Ok(json!({ "pong": true, "engine": "ide-diff+ide-domain" })),
@@ -177,6 +265,83 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let broker = broker_for(&p.root, &p.owner).await?;
             let activity = broker.activity().await;
             Ok(json!({ "activity": activity }))
+        }
+        "agent_start_session" => {
+            let p: AgentStartParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            let sandbox = match p.sandbox.as_deref() {
+                Some("workspace-net") => AgentSandbox::WorkspaceNet,
+                Some("trusted") => AgentSandbox::Trusted,
+                _ => AgentSandbox::Isolated,
+            };
+            let home_dir = p
+                .home_dir
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                .ok_or_else(|| "home_dir is required (no HOME in env)".to_string())?;
+            let request = StartAgentSession {
+                owner: p.owner,
+                workspace_root: PathBuf::from(p.workspace_root),
+                home_dir,
+                read_only: p.read_only,
+                denied_paths: p.denied_paths.into_iter().map(PathBuf::from).collect(),
+                sandbox,
+                auth_profile_ref: p.auth_profile_ref.unwrap_or_default(),
+                runtime_id: p.agent.clone(),
+                allowed_actions: p.allowed_actions,
+                task_timeout_ms: p.task_timeout_ms,
+                idle_timeout_ms: p.idle_timeout_ms,
+            };
+            let id = facade
+                .start_session(request)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "session_id": id.0 }))
+        }
+        "agent_submit_task" => {
+            let p: AgentTaskParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            let expectation = match p.expectation.as_deref() {
+                Some("code-change") => AgentExpectation::CodeChange,
+                _ => AgentExpectation::Conversation,
+            };
+            let task = AgentTask {
+                prompt: p.prompt,
+                expectation,
+                model_hint: p.model_hint,
+            };
+            let task_id = facade
+                .submit_task(&AgentSessionId(p.session_id), task)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "task_id": task_id }))
+        }
+        "agent_next_event" => {
+            let p: AgentSessionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            let event = facade
+                .next_event(&AgentSessionId(p.session_id))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "event": event }))
+        }
+        "agent_cancel" => {
+            let p: AgentCancelParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            facade
+                .cancel(&AgentSessionId(p.session_id), p.graceful)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "cancelled": true }))
+        }
+        "agent_session_status" => {
+            let p: AgentSessionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            let status = facade
+                .session_status(&AgentSessionId(p.session_id))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "status": status }))
         }
         "agent_probe" => {
             #[derive(Deserialize)]
@@ -316,6 +481,48 @@ mod tests {
         assert!(v["availability"].is_string(), "availability must be a string");
         assert!(v["available"].is_boolean(), "available must be a boolean");
         assert_eq!(v["agent"], json!("codex"));
+    }
+
+    /// A session call for an id nobody opened must fail honestly, not panic and
+    /// not invent a session. Runs in CI without any agent binary present.
+    #[tokio::test]
+    async fn session_calls_reject_unknown_sessions() {
+        for method in [
+            "agent_next_event",
+            "agent_session_status",
+        ] {
+            let out = handle(method, json!({ "agent": "codex", "session_id": "nao-existe" })).await;
+            assert!(out.is_err(), "{method} must not invent a session");
+        }
+    }
+
+    /// Opening a session defaults to READ-ONLY: the caller has to opt in to writes.
+    /// Without an agent binary the call fails with the runtime's reason — which is
+    /// the honest answer — but it must never succeed silently.
+    #[tokio::test]
+    async fn start_session_is_read_only_by_default_and_fails_honestly() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let params = json!({
+            "agent": "codex",
+            "owner": "owner:test",
+            "workspace_root": temp.path().to_str().unwrap(),
+            "home_dir": temp.path().to_str().unwrap()
+        });
+        // `read_only` is absent on purpose: the default must be the safe one.
+        let parsed: AgentStartParams =
+            serde_json::from_value(params.clone()).expect("params parse");
+        assert!(parsed.read_only, "sessão sem read_only explícito tem de ser somente leitura");
+
+        match handle("agent_start_session", params).await {
+            Ok(v) => assert!(
+                v["session_id"].is_string(),
+                "uma sessão aberta precisa devolver um id"
+            ),
+            Err(detail) => assert!(
+                !detail.is_empty(),
+                "a falha precisa dizer por quê (adapter ausente, auth, etc.)"
+            ),
+        }
     }
 
     /// End-to-end proof over the sidecar protocol that the REAL broker governs:
