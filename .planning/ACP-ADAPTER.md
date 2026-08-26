@@ -106,3 +106,47 @@ ler antes de escrever o adapter.
   painel Build, onde a permissão apareceria como decisão.
 - `instrument-shell-extension/AGENT-SURFACE.md` — o que o agente consegue e não
   consegue, para atualizar quando o adapter entrar.
+
+## Sequência depois do adapter
+
+A ordem importa: §4 mede efeito, e efeito de agente só existe direito depois de 1.
+
+**1. Colher no IDE o que o adapter destrava** (pequeno)
+
+- apagar a worktree e o `harvest` de `agent-session-service.ts`: com
+  `fs/write_text_file` delegado, a escrita nasce no broker, sem cópia intermediária;
+- `PermissionRequested` deixa de ser observabilidade e passa a ser o card de
+  decisão no dock;
+- refletir `approvals = Bridged` na UI e atualizar `AGENT-SURFACE.md` — a seção
+  "o que o agente consegue" muda de significado;
+- se o adapter declarar sandbox real (`Honored`/`Partial`), corrigir o texto que
+  hoje diz "não é jaula".
+
+**2. `broker_approve` por effect id** (sai da dívida, vira pré-requisito)
+
+Hoje a aprovação do broker é posicional e eu contornei serializando: uma decisão
+por projeto de cada vez (ver `governed-write-service.ts`, `APPROVE_DRAIN_LIMIT` e a
+recusa de propostas empilhadas). Com o adapter respondendo permissão POR ESCRITA,
+um turno que toca cinco arquivos vira cinco decisões em fila — o gargalo deixa de
+ser teórico. Mudança em `crates/ide-domain`, pequena e bem delimitada. Depois dela,
+remover as duas guardas do adaptador Node e os testes que as pinam.
+
+**3. §4 — Overview e evidência** (próximo item da fila)
+
+Hoje está honesto e vazio: a faixa diz `checks não executados` e o Overview tem
+placeholder marcado `na fila` (ver `work-widget.tsx`, `renderQueuedSurfaces`).
+É o motor de checks determinísticos, findings, preview e reconciliação. Regra que
+já vale no resto do app: `unknown`/`not-run` nunca aparece como aprovação.
+
+**4. §5 — Analisar projeto e materiais**
+
+Já tem embrião: `product_candidates` detecta recursos e SoT sem gravar nada. §5 é
+isso inteiro — stack, comandos, Git, serviços, integrações, com provenance, e
+candidates revisáveis em vez de ativação silenciosa.
+
+## Pendências que não bloqueiam
+
+- **Canal de push** em vez do poll de 5s para proposta criada fora da janela
+  (`adoptPendingProposal` em `instrument-capability-contribution.ts`).
+- **Poll do observador** já usa watcher real; o que falta é atribuição de escrita
+  vinda do terminal do próprio IDE (hoje cai em `unknown`, honesto mas pobre).
