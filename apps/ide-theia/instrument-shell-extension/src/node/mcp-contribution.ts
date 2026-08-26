@@ -41,6 +41,7 @@ import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { HarnessManifest, HarnessService } from '../common/harness-protocol';
 import { ObserverService } from '../common/observer-protocol';
+import { ProductService } from '../common/product-protocol';
 import { WriteSourceLedger } from './write-source-ledger';
 
 /** MCP protocol revision this server implements the tool subset of. */
@@ -105,6 +106,7 @@ export class McpContribution implements BackendApplicationContribution {
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(HarnessService) protected readonly harness!: HarnessService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
+    @inject(ProductService) protected readonly product!: ProductService;
     @inject(WriteSourceLedger) protected readonly ledger!: WriteSourceLedger;
 
     protected token = '';
@@ -356,6 +358,77 @@ export class McpContribution implements BackendApplicationContribution {
                     'snapshot, executado e revertido. É a evidência de o que realmente aconteceu.',
                 inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
                 run: async a => this.governed.activity(str(a, 'root'))
+            },
+            {
+                name: 'product_model',
+                description:
+                    'Modelo semântico do projeto: recursos, autoridades, consumidores, e o ' +
+                    'resultado de cada afirmação dos SoTs contra os arquivos reais. Divergência é ' +
+                    'calculada; `unknown` nunca é conformidade.',
+                inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
+                run: async a => this.product.model(str(a, 'root'))
+            },
+            {
+                name: 'product_candidates',
+                description:
+                    'Candidatos de recurso e SoT detectados do que existe no projeto. ' +
+                    'Candidato não é ativação: nada é gravado.',
+                inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
+                run: async a => this.product.candidates(str(a, 'root'))
+            },
+            {
+                name: 'product_declare_sot',
+                description:
+                    'Grava um artefato de fonte da verdade em .product/sot/<id>.json. Escrever o ' +
+                    'mesmo JSON à mão tem efeito idêntico. Afirmação sem check verificável é recusada.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { ...ROOT_PROP, sot: { type: 'object' } },
+                    required: ['root', 'sot']
+                },
+                run: async a => this.product.declareSot(str(a, 'root'), a.sot as never)
+            },
+            {
+                name: 'product_declare_resource',
+                description: 'Grava um artefato de recurso em .product/resources/<id>.json.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { ...ROOT_PROP, resource: { type: 'object' } },
+                    required: ['root', 'resource']
+                },
+                run: async a => this.product.declareResource(str(a, 'root'), a.resource as never)
+            },
+            {
+                name: 'product_resolve',
+                description:
+                    'Propõe a resolução de uma divergência PELO BROKER: mudar a implementação ou ' +
+                    'registrar exceção escopada no SoT. Volta como proposta aguardando decisão.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        ...ROOT_PROP,
+                        sotId: { type: 'string' },
+                        claimId: { type: 'string' },
+                        optionId: {
+                            type: 'string',
+                            description: 'de `product_resolve_options`: remove-offending-line | accept-exception'
+                        }
+                    },
+                    required: ['root', 'sotId', 'claimId', 'optionId']
+                },
+                run: async a => this.product.resolve(
+                    str(a, 'root'), str(a, 'sotId'), str(a, 'claimId'), str(a, 'optionId')
+                )
+            },
+            {
+                name: 'product_resolve_options',
+                description: 'Caminhos de resolução disponíveis para uma divergência.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { ...ROOT_PROP, sotId: { type: 'string' }, claimId: { type: 'string' } },
+                    required: ['root', 'sotId', 'claimId']
+                },
+                run: async a => this.product.options(str(a, 'root'), str(a, 'sotId'), str(a, 'claimId'))
             },
             {
                 name: 'external_scan',

@@ -1,0 +1,7 @@
+{
+  "id": "ranking",
+  "label": "Ranking de lances",
+  "paths": ["src/auction.ts", "src/bids.schema.ts"],
+  "authority": "intent",
+  "consumers": ["main"]
+}

@@ -26,6 +26,8 @@ import { ObserverServiceImpl } from './observer-service';
 import { WriteSourceLedger } from './write-source-ledger';
 import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent-session-protocol';
 import { AgentSessionServiceImpl } from './agent-session-service';
+import { PRODUCT_SERVICE_PATH, ProductService } from '../common/product-protocol';
+import { ProductServiceImpl } from './product-service';
 import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
@@ -51,6 +53,11 @@ export default new ContainerModule(bind => {
     // it makes crosses the broker before reaching the project.
     bind(AgentSessionServiceImpl).toSelf().inSingletonScope();
     bind(AgentSessionService).toService(AgentSessionServiceImpl);
+
+    // Projeto semântico: recursos, autoridades, consumidores e divergências
+    // calculadas a partir dos artefatos em `.product/`.
+    bind(ProductServiceImpl).toSelf().inSingletonScope();
+    bind(ProductService).toService(ProductServiceImpl);
 
     // Same-origin, per-project, allow-listed serving of capability artifacts
     // (today: `<root>/.aag/graph.html` for the Grafo capability).
@@ -99,6 +106,14 @@ export default new ContainerModule(bind => {
             ctx =>
                 new RpcConnectionHandler<object>(AGENT_SESSION_SERVICE_PATH, () =>
                     ctx.container.get<AgentSessionService>(AgentSessionService)
+                )
+        )
+        .inSingletonScope();
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(PRODUCT_SERVICE_PATH, () =>
+                    ctx.container.get<ProductService>(ProductService)
                 )
         )
         .inSingletonScope();

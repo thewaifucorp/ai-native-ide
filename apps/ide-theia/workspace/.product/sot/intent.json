@@ -1,0 +1,27 @@
+{
+  "id": "intent",
+  "label": "Intencao do produto",
+  "kind": "intent",
+  "path": "docs/product-intent.md",
+  "authorityOver": ["ranking"],
+  "claims": [
+    {
+      "id": "desempate-nao-por-criacao",
+      "statement": "Um empate entre lances nao pode ser resolvido por ordem de criacao.",
+      "check": {
+        "kind": "absent-in-file",
+        "path": "src/auction.ts",
+        "pattern": "a.createdAt - b.createdAt"
+      }
+    },
+    {
+      "id": "valor-selado",
+      "statement": "O valor de cada lance fica reservado no modelo de dados.",
+      "check": {
+        "kind": "present-in-file",
+        "path": "src/auction.ts",
+        "pattern": "sealedAmount"
+      }
+    }
+  ]
+}

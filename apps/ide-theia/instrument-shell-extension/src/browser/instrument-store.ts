@@ -15,6 +15,7 @@ import { BrokerActivity } from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
 import { AgentSessionSnapshot } from '../common/agent-session-protocol';
+import { ProductModel } from '../common/product-protocol';
 import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build';
@@ -82,6 +83,11 @@ export class InstrumentStore {
     //    cross the broker before reaching the project.
     session: AgentSessionSnapshot | undefined;
     sessionBusy = false;
+
+    // ── REAL modelo semântico (§3): recursos, autoridades e divergências
+    //    calculadas a partir dos artefatos em `.product/`.
+    product: ProductModel | undefined;
+    productBusy = false;
 
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
     collapsedSections: string[] = ['workbench', 'broker', 'harness'];
@@ -214,6 +220,21 @@ export class InstrumentStore {
             ? this.collapsedSections.filter(s => s !== id)
             : [...this.collapsedSections, id];
         this.emit();
+    }
+
+    setProduct(model: ProductModel | undefined): void {
+        this.product = model;
+        this.emit();
+    }
+
+    setProductBusy(busy: boolean): void {
+        this.productBusy = busy;
+        this.emit();
+    }
+
+    /** Divergências reais (exceção registrada não conta como divergência aberta). */
+    get divergenceCount(): number {
+        return this.product ? this.product.claims.filter(c => c.status === 'divergent').length : 0;
     }
 
     setSession(snapshot: AgentSessionSnapshot | undefined): void {

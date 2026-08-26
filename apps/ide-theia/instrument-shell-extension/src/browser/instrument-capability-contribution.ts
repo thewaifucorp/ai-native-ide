@@ -25,6 +25,7 @@ import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
 import { AgentSessionService } from '../common/agent-session-protocol';
+import { ProductService } from '../common/product-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
 import {
     CONFLICT_PROVIDER,
@@ -62,6 +63,11 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 
+/** Projeto semântico (§3). */
+export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
+export const CMD_PRODUCT_RESOLVE = 'instrument.product.resolve';
+export const CMD_PRODUCT_ANALYZE = 'instrument.product.analyze';
+
 /** Items the proof provider seeds, so slot lifecycle has state to preserve. */
 const SEED_ITEMS = ['prova/marco-1', 'prova/fase-1', 'prova/tarefa-1'];
 
@@ -82,6 +88,7 @@ export class InstrumentCapabilityContribution
     @inject(ObserverService) protected readonly observer!: ObserverService;
     @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
     @inject(AgentSessionService) protected readonly session!: AgentSessionService;
+    @inject(ProductService) protected readonly product!: ProductService;
 
     /** Polling handle while a task is running. */
     protected pollTimer: number | undefined;
@@ -98,6 +105,7 @@ export class InstrumentCapabilityContribution
             this.adoptPendingProposal();
             this.scanExternal();
             this.watchForExternalWrites();
+            this.refreshProduct();
             // Agent proposals arrive out of band; ask periodically. A push channel
             // over the RPC connection would be better and is not built yet.
             window.setInterval(() => this.adoptPendingProposal(), 5000);
@@ -189,6 +197,23 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
             { execute: () => this.sessionCancel() }
+        );
+        commands.registerCommand(
+            { id: CMD_PRODUCT_REFRESH, label: 'Instrument: reler o projeto semântico' },
+            { execute: () => this.refreshProduct(true) }
+        );
+        commands.registerCommand(
+            { id: CMD_PRODUCT_RESOLVE, label: 'Instrument: resolver divergência (via broker)' },
+            {
+                execute: (sotId?: string, claimId?: string, optionId?: string) =>
+                    sotId && claimId && optionId
+                        ? this.resolveDivergence(sotId, claimId, optionId)
+                        : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_PRODUCT_ANALYZE, label: 'Instrument: analisar projeto (candidatos)' },
+            { execute: () => this.analyzeProject() }
         );
     }
 
@@ -316,6 +341,64 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Falha ao ler a trilha do broker: ${this.msg(err)}`);
         } finally {
             this.store.setBrokerActivityBusy(false);
+        }
+    }
+
+    // ── projeto semântico (§3) ──────────────────────────────────────────────
+
+    async refreshProduct(loud = false): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            this.store.setProduct(undefined);
+            return;
+        }
+        this.store.setProductBusy(true);
+        try {
+            this.store.setProduct(await this.product.model(root));
+        } catch (err) {
+            if (loud) {
+                this.messages.error(`Falha ao ler o projeto semântico: ${this.msg(err)}`);
+            }
+        } finally {
+            this.store.setProductBusy(false);
+        }
+    }
+
+    /** Resolver é sempre uma proposta: cai no dock, com diff, para você decidir. */
+    protected async resolveDivergence(sotId: string, claimId: string, optionId: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setProductBusy(true);
+        try {
+            const result = await this.product.resolve(root, sotId, claimId, optionId);
+            await this.adoptPendingProposal();
+            this.messages.info(
+                `Resolução proposta em ${result.relPath} — decida no dock. Nada foi escrito ainda.`
+            );
+        } catch (err) {
+            this.messages.error(`Falha ao resolver: ${this.msg(err)}`);
+        } finally {
+            this.store.setProductBusy(false);
+        }
+    }
+
+    /** Candidatos revisáveis; nenhuma ativação silenciosa. */
+    protected async analyzeProject(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        try {
+            const found = await this.product.candidates(root);
+            this.messages.info(
+                `Análise: ${found.resources.length} recurso(s) e ${found.sots.length} fonte(s) da ` +
+                'verdade candidatas. Nada foi declarado — escreva os artefatos em `.product/` ' +
+                'para adotá-los.'
+            );
+        } catch (err) {
+            this.messages.error(`Falha ao analisar: ${this.msg(err)}`);
         }
     }
 
@@ -466,6 +549,8 @@ export class InstrumentCapabilityContribution
             const relevant = event.changes.some(change => !this.isIdeState(change.resource));
             if (relevant) {
                 this.scheduleScan();
+                // Uma mudança em arquivo pode criar ou resolver divergência.
+                this.refreshProduct();
             }
         });
         // Editor saves are the person's own writes: report them so they are not
