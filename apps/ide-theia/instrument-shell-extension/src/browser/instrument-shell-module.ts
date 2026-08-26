@@ -33,6 +33,7 @@ import { CAPABILITY_SERVICE_PATH, CapabilityService } from '../common/capability
 import { HARNESS_SERVICE_PATH, HarnessService } from '../common/harness-protocol';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
 import { CHECKS_SERVICE_PATH, ChecksService } from '../common/checks-protocol';
+import { ANALYSIS_SERVICE_PATH, AnalysisService } from '../common/analysis-protocol';
 import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent-session-protocol';
 import { PRODUCT_SERVICE_PATH, ProductService } from '../common/product-protocol';
 import { InstrumentCapabilityContribution } from './instrument-capability-contribution';
@@ -140,6 +141,12 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
         .toDynamicValue(ctx => {
             const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
             return provider.createProxy<ChecksService>(CHECKS_SERVICE_PATH);
+        })
+        .inSingletonScope();
+    bind(AnalysisService)
+        .toDynamicValue(ctx => {
+            const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+            return provider.createProxy<AnalysisService>(ANALYSIS_SERVICE_PATH);
         })
         .inSingletonScope();
     bind(AgentSessionService)

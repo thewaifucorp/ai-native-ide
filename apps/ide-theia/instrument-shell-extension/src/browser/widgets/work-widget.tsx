@@ -21,7 +21,9 @@ import { AbstractInstrumentWidget } from './abstract-instrument-widget';
 import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
     CMD_BROKER_TRAIL,
+    CMD_ADOPT_COMMAND,
     CMD_CHECKS_RUN,
+    CMD_MATERIALS_ANALYZE,
     CMD_SESSION_CANCEL,
     CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
@@ -326,6 +328,161 @@ export class WorkWidget extends AbstractInstrumentWidget {
         );
     }
 
+    /**
+     * Materiais do projeto (§5): stack, comandos, Git, serviços, integrações.
+     *
+     * Toda linha mostra a evidência junto da afirmação — arquivo, linha quando
+     * há, e o trecho lido. Sem isso a análise seria indistinguível de um palpite,
+     * e um palpite de detector é a mesma confiança inventada que o resto do
+     * painel recusa.
+     *
+     * Nada aqui liga nada. Adotar um comando é um clique próprio, por comando.
+     */
+    protected renderMaterials(): React.ReactNode {
+        const analysis = this.store.analysis;
+        const busy = this.store.analysisBusy;
+
+        if (!analysis) {
+            return (
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Materiais do projeto</b>
+                        <span className="cap-pill not-installed">não analisado</span>
+                    </div>
+                    <small className="cap-hint">
+                        stack, comandos, Git, serviços e integrações · candidato não é ativação:
+                        ler não grava nem liga nada
+                    </small>
+                    <div className="cap-actions">
+                        <button
+                            className="cap-btn primary"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_MATERIALS_ANALYZE)}
+                        >
+                            {busy ? 'lendo…' : 'Analisar'}
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const evidence = (p: { path: string; line?: number; excerpt: string }) => (
+            <small className="cap-evidence">
+                {p.path}
+                {typeof p.line === 'number' ? `:${p.line}` : ''} — {p.excerpt}
+            </small>
+        );
+
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Materiais do projeto</b>
+                    <span className="cap-pill ready">analisado</span>
+                </div>
+                <small className="cap-hint">
+                    cada afirmação mostra de onde veio · nada foi gravado nem ativado
+                    {analysis.skipped.length > 0 &&
+                        ` · não abertos: ${analysis.skipped.join(', ')}`}
+                </small>
+
+                {analysis.stack.length > 0 && (
+                    <>
+                        <div className="cap-head"><b>Stack</b></div>
+                        {analysis.stack.map(s => (
+                            <div className="cap-receipt" key={s.id}>
+                                <span className="cap-receipt-action">stack</span>
+                                <span className="cap-receipt-detail">{s.label}</span>
+                                {s.provenance.map((p, i) => (
+                                    <React.Fragment key={i}>{evidence(p)}</React.Fragment>
+                                ))}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.commands.length > 0 && (
+                    <>
+                        <div className="cap-head"><b>Comandos declarados pelo projeto</b></div>
+                        {analysis.commands.map((c, i) => (
+                            <div className="cap-receipt" key={`${c.slug}:${i}`}>
+                                <span className="cap-receipt-action">{c.slug}</span>
+                                <span className="cap-receipt-detail">{c.command}</span>
+                                {evidence(c.provenance)}
+                                {!c.runnableByChecks ? (
+                                    // Detectado porque descreve o projeto, mas os
+                                    // checks não executam este papel — então não
+                                    // se oferece uma adoção que seria recusada.
+                                    <small>os checks não executam este papel</small>
+                                ) : c.alreadyDeclared ? (
+                                    <small>já declarado em .instrument/checks.json</small>
+                                ) : (
+                                    <div className="cap-actions">
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title="Escreve este comando em .instrument/checks.json para os checks usarem"
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_ADOPT_COMMAND, c.slug)
+                                            }
+                                        >
+                                            Adotar para os checks
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                <div className="cap-head"><b>Git</b></div>
+                {analysis.git.isRepo ? (
+                    <div className="cap-receipt">
+                        <span className="cap-receipt-action">git</span>
+                        <span className="cap-receipt-detail">
+                            {analysis.git.branch ?? 'branch não identificado'}
+                            {analysis.git.remotes.length > 0 &&
+                                ` · ${analysis.git.remotes.map(r => r.name).join(', ')}`}
+                        </span>
+                        {analysis.git.provenance.map((p, i) => (
+                            <React.Fragment key={i}>{evidence(p)}</React.Fragment>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="cap-receipt">
+                        <span className="cap-receipt-action">git</span>
+                        <span className="cap-receipt-detail">não é um repositório Git</span>
+                    </div>
+                )}
+
+                {analysis.services.map(s => (
+                    <div className="cap-receipt" key={s.id}>
+                        <span className="cap-receipt-action">{s.kind}</span>
+                        <span className="cap-receipt-detail">{s.label}</span>
+                        {evidence(s.provenance)}
+                    </div>
+                ))}
+
+                {analysis.integrations.map(i => (
+                    <div className="cap-receipt" key={i.id}>
+                        <span className="cap-receipt-action">{i.kind}</span>
+                        <span className="cap-receipt-detail">{i.label}</span>
+                        {evidence(i.provenance)}
+                    </div>
+                ))}
+
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_MATERIALS_ANALYZE)}
+                    >
+                        {busy ? 'lendo…' : 'Analisar de novo'}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     protected renderAgentRow(): React.ReactNode {
         const agent = this.store.agent;
         return (
@@ -342,6 +499,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
         return (
             <div className="h-sec">
                 {this.renderChecks()}
+                {this.renderMaterials()}
                 <div className="placeholder">
                     <b>Produto semântico e divergências</b>
                     <p>

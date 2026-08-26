@@ -23,6 +23,8 @@ import { CapabilitySiteContribution } from './capability-site-contribution';
 import { HarnessRegistryService } from './harness-registry-service';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
 import { CHECKS_SERVICE_PATH, ChecksService } from '../common/checks-protocol';
+import { ANALYSIS_SERVICE_PATH, AnalysisService } from '../common/analysis-protocol';
+import { AnalysisServiceImpl } from './analysis-service';
 import { ChecksServiceImpl } from './checks-service';
 import { ObserverServiceImpl } from './observer-service';
 import { WriteSourceLedger } from './write-source-ledger';
@@ -104,6 +106,15 @@ export default new ContainerModule(bind => {
         )
         .inSingletonScope();
     bind(ChecksService).to(ChecksServiceImpl).inSingletonScope();
+    bind(AnalysisService).to(AnalysisServiceImpl).inSingletonScope();
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(ANALYSIS_SERVICE_PATH, () =>
+                    ctx.container.get<AnalysisService>(AnalysisService)
+                )
+        )
+        .inSingletonScope();
     bind(ConnectionHandler)
         .toDynamicValue(
             ctx =>

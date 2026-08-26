@@ -694,3 +694,7 @@ body.game .iws .strip .lvl-strip { display: inline; }
 .iws .check-unknown { color: var(--need); }
 .iws .check-not_run { color: var(--faint); }
 .iws .cap-remediation { color: var(--need); }
+
+/* Evidência de uma afirmação da análise (§5). Monospace porque é texto lido do
+   arquivo, não prosa — a diferença importa para quem confere. */
+.iws .cap-evidence { display: block; font: 400 10px var(--mono); color: var(--faint); word-break: break-all; }

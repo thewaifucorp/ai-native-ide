@@ -277,6 +277,43 @@ colidindo no mesmo id (o motor chaveia por manifesto — agora é um lock por
 manifesto), e a costura camelCase entre `ide_harness` e o wrapper do sidecar,
 que fazia o contador de "não executado" sumir da tela.
 
+### §5 — Analisar projeto e materiais
+
+**Pronto e provado no app.** Stack, comandos, Git, serviços e integrações lidos
+do projeto e apresentados como CANDIDATOS: nada é gravado, nada é ligado, e
+chamar a análise duas vezes não tem efeito colateral nenhum.
+
+O embrião (`ProductService.candidates`, PROJ-06) já detectava sem gravar; o que
+faltava, e é o coração do §5, é **provenance**. Toda afirmação carrega o
+arquivo, a linha quando existe, e o trecho realmente lido. Sem isso, "este
+projeto usa Rust" é indistinguível de palpite — e palpite de detector é a mesma
+confiança inventada que o resto do IDE recusa. O formato impõe o corolário: sem
+evidência apontável, o candidato não é emitido. Não há campo "inferido".
+
+**Liga no §4:** candidatos de comando têm destino concreto, o
+`.instrument/checks.json` que os checks leem. O §4 decidiu de propósito não
+detectar comando nenhum; a detecção acontece aqui, uma vez, com evidência, e a
+adoção é um clique por comando.
+
+Duas recusas deliberadas, ambas com teste: valor de variável de `.env` **nunca**
+entra na evidência (é onde a credencial mora — só o nome da variável aparece), e
+script que sobe servidor não vira candidato de check (nunca termina, o §4
+esperaria até o watchdog).
+
+Medido na tela do workspace de demonstração: stack Node com evidência
+`package.json — "name": "demo-auction",`, comando `start` com
+`package.json:8 — "start": "node src/main.ts"`, e a marca honesta **"os checks
+não executam este papel"** em vez de um botão de adoção que seria recusado.
+
+Dois defeitos meus achados só rodando: evidência que era só `{` (pontuação
+estrutural não sustenta afirmação nenhuma) e o botão de adoção oferecido para um
+papel que o motor ignora. A lista de papéis executáveis virou fonte única no
+serviço, marcada em cada candidato, para a tela não poder discordar dele.
+
+Adoção coberta por teste (grava só os slugs pedidos, preserva o que foi escrito
+à mão, recusa papel não executável) — não por prova na tela, porque o workspace
+de demonstração não declara build nem test.
+
 ### 2. Workspace técnico
 
 Debug/DAP real com breakpoints, launch/attach, step, stack e variáveis. Terminal/PTy real. Diff/checkpoint/rollback pelo broker. Git, Open VSX e saída raw acessíveis.

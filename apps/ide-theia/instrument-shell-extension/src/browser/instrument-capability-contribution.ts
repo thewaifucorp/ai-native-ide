@@ -25,6 +25,7 @@ import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
 import { ChecksService } from '../common/checks-protocol';
+import { AnalysisService } from '../common/analysis-protocol';
 import { AgentSessionService } from '../common/agent-session-protocol';
 import { ProductService } from '../common/product-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
@@ -65,6 +66,8 @@ export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
+export const CMD_MATERIALS_ANALYZE = 'instrument.project.materials';
+export const CMD_ADOPT_COMMAND = 'instrument.project.adoptCommand';
 
 /** Projeto semântico (§3). */
 export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
@@ -90,6 +93,7 @@ export class InstrumentCapabilityContribution
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
     @inject(ChecksService) protected readonly checks!: ChecksService;
+    @inject(AnalysisService) protected readonly analysis!: AnalysisService;
     @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
     @inject(AgentSessionService) protected readonly session!: AgentSessionService;
     @inject(ProductService) protected readonly product!: ProductService;
@@ -201,6 +205,14 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
             { execute: () => this.sessionCancel() }
+        );
+        commands.registerCommand(
+            { id: CMD_MATERIALS_ANALYZE, label: 'Instrument: analisar materiais do projeto (§5)' },
+            { execute: () => this.analyzeMaterials() }
+        );
+        commands.registerCommand(
+            { id: CMD_ADOPT_COMMAND, label: 'Instrument: adotar comando detectado' },
+            { execute: (slug?: string) => (slug ? this.adoptCommand(slug) : undefined) }
         );
         commands.registerCommand(
             {
@@ -555,6 +567,62 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Falha ao decidir permissão: ${this.msg(err)}`);
         } finally {
             this.store.setSessionBusy(false);
+        }
+    }
+
+    /**
+     * Lê os MATERIAIS do projeto — stack, comandos, Git, serviços, integrações —
+     * e mostra candidatos com evidência. Não grava e não ativa nada.
+     *
+     * Nome distinto de `analyzeProject`, que é a análise de RECURSOS e SoT
+     * (o embrião PROJ-06). São dois eixos diferentes do mesmo projeto, e
+     * confundi-los na chamada seria confundi-los na tela.
+     */
+    protected async analyzeMaterials(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setAnalysisBusy(true);
+        try {
+            this.store.setAnalysis(await this.analysis.analyze(root));
+        } catch (err) {
+            this.messages.error(`Falha ao analisar: ${this.msg(err)}`);
+            this.store.setAnalysis(undefined);
+        } finally {
+            this.store.setAnalysisBusy(false);
+        }
+    }
+
+    /**
+     * Adota um comando detectado para `.instrument/checks.json`.
+     *
+     * Ato explícito, um slug por vez: a análise nunca liga nada sozinha.
+     */
+    protected async adoptCommand(slug: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setAnalysisBusy(true);
+        try {
+            const after = await this.analysis.adoptCommands(root, [slug]);
+            this.store.setAnalysis(after);
+            const adopted = after.commands.find(c => c.slug === slug && c.alreadyDeclared);
+            if (adopted) {
+                this.messages.info(
+                    `${slug} adotado: ${adopted.command}. Rode os checks para medir com ele.`
+                );
+            } else {
+                // Nunca reportar adoção que não teve efeito.
+                this.messages.error(
+                    `${slug} não foi adotado — os checks executam apenas build, test e typecheck.`
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao adotar: ${this.msg(err)}`);
+        } finally {
+            this.store.setAnalysisBusy(false);
         }
     }
 

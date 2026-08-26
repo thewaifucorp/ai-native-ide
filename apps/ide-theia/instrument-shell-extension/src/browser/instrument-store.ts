@@ -14,6 +14,7 @@ import { CapabilityState } from '../common/capability-protocol';
 import { BrokerActivity, HarnessRun } from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
+import { ProjectAnalysis } from '../common/analysis-protocol';
 import { AgentSessionSnapshot } from '../common/agent-session-protocol';
 import { ProductModel } from '../common/product-protocol';
 import { AgentProbe } from 'engine-extension';
@@ -88,6 +89,11 @@ export class InstrumentStore {
     //    já tem `harness`, que é o MANIFESTO de provider do projeto — outro eixo.
     checks: HarnessRun | undefined;
     checksBusy = false;
+
+    // ── REAL análise do projeto (§5): stack, comandos, Git, serviços e
+    //    integrações, cada afirmação com a evidência que a sustenta.
+    analysis: ProjectAnalysis | undefined;
+    analysisBusy = false;
 
     // ── REAL modelo semântico (§3): recursos, autoridades e divergências
     //    calculadas a partir dos artefatos em `.product/`.
@@ -249,6 +255,16 @@ export class InstrumentStore {
 
     setSessionBusy(busy: boolean): void {
         this.sessionBusy = busy;
+        this.emit();
+    }
+
+    setAnalysis(analysis: ProjectAnalysis | undefined): void {
+        this.analysis = analysis;
+        this.emit();
+    }
+
+    setAnalysisBusy(busy: boolean): void {
+        this.analysisBusy = busy;
         this.emit();
     }
 
