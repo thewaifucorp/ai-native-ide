@@ -160,8 +160,8 @@ export class EngineSidecarService implements EngineService {
         });
     }
 
-    brokerApprove(root: string, owner: string): Promise<{ approved_id: number }> {
-        return this.call('broker_approve', { root, owner });
+    brokerApprove(root: string, owner: string, effectId: string): Promise<{ approved_id: number }> {
+        return this.call('broker_approve', { root, owner, effect_id: effectId });
     }
 
     brokerRollback(

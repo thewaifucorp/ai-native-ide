@@ -726,8 +726,8 @@ interface HostCommandMap {
     };
     result: WorkspaceEffectResult;
   };
-  approve_next_workspace_write: {
-    args: { projectId: string; resourceId: string };
+  approve_workspace_write: {
+    args: { projectId: string; resourceId: string; effectId: string };
     result: number;
   };
   rollback_workspace_write: {
@@ -953,9 +953,10 @@ export interface HostClient {
     request: WorkspaceWriteRequest,
     selectedHunks: number[],
   ): Promise<HostCall<WorkspaceEffectResult>>;
-  approveNextWorkspaceWrite(
+  approveWorkspaceWrite(
     projectId: string,
     resourceId: string,
+    effectId: string,
   ): Promise<HostCall<number>>;
   rollbackWorkspaceWrite(
     projectId: string,
@@ -1187,8 +1188,8 @@ export function createHostClient(options: HostClientOptions = {}): HostClient {
         request,
         selectedHunks,
       }),
-    approveNextWorkspaceWrite: (projectId, resourceId) =>
-      call("approve_next_workspace_write", { projectId, resourceId }),
+    approveWorkspaceWrite: (projectId, resourceId, effectId) =>
+      call("approve_workspace_write", { projectId, resourceId, effectId }),
     rollbackWorkspaceWrite: (projectId, resourceId, effectId) =>
       call("rollback_workspace_write", { projectId, resourceId, effectId }),
     agentCapabilityCard: (target) => call("agent_capability_card", { target }),

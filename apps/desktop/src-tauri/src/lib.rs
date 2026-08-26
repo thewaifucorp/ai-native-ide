@@ -813,13 +813,14 @@ async fn propose_partial_workspace_write(
 }
 
 #[tauri::command]
-async fn approve_next_workspace_write(
+async fn approve_workspace_write(
     bridge: State<'_, Arc<DesktopBridge>>,
     project_id: String,
     resource_id: String,
+    effect_id: String,
 ) -> Result<i64, String> {
     bridge
-        .approve_next_write(&project_id, &resource_id)
+        .approve_write(&project_id, &resource_id, &effect_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1671,7 +1672,7 @@ pub fn run() {
             clear_scoped_permission,
             apply_workspace_write_yolo,
             run_model_loop,
-            approve_next_workspace_write,
+            approve_workspace_write,
             rollback_workspace_write,
             start_benchmark_preview,
             poll_benchmark_preview,

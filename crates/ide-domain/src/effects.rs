@@ -181,14 +181,45 @@ impl WorkspaceEffectBroker {
         Ok(self.approvals.pending_for_owner(&self.owner).await?.len())
     }
 
-    pub async fn approve_next(&self) -> anyhow::Result<i64> {
+    /// Approves the pending effect with this id, and no other.
+    ///
+    /// This used to be `approve_next()`, which took no id and approved the
+    /// OLDEST pending row for the owner. That is fine while only one decision
+    /// can ever be open, and wrong the moment two are: the person decides on
+    /// effect B in the dock and effect A is what gets authorized. It caused two
+    /// real incidents (see `governed-write-service.ts`), worked around in the
+    /// Node adapter by refusing to stack proposals and by draining stale grants
+    /// until the intended effect ran.
+    ///
+    /// Approving by id removes the ambiguity at its source. The gate underneath
+    /// always took a row id — this is the id being carried the rest of the way
+    /// rather than thrown away and guessed back.
+    ///
+    /// A pending row is matched by the `effect_id` inside its recorded args,
+    /// which is what [`WorkspaceWrite`] and [`WorkspaceAssetWrite`] serialize.
+    /// An id that is not pending is an error naming what IS pending — never a
+    /// silent approval of something else.
+    pub async fn approve_effect(&self, effect_id: &str) -> anyhow::Result<i64> {
         let pending = self.approvals.pending_for_owner(&self.owner).await?;
-        let pending = pending
-            .into_iter()
-            .next()
-            .context("no effect is awaiting approval")?;
-        self.approvals.approve(&self.owner, pending.id).await?;
-        Ok(pending.id)
+        let mut waiting = Vec::new();
+        for row in &pending {
+            match effect_id_of(&row.args_json) {
+                Some(id) if id == effect_id => {
+                    self.approvals.approve(&self.owner, row.id).await?;
+                    return Ok(row.id);
+                }
+                Some(id) => waiting.push(id),
+                None => {}
+            }
+        }
+        anyhow::bail!(
+            "effect {effect_id} is not awaiting approval (pending: {})",
+            if waiting.is_empty() {
+                "none".to_string()
+            } else {
+                waiting.join(", ")
+            }
+        )
     }
 
     pub async fn rollback(&self, effect_id: &str) -> anyhow::Result<()> {
@@ -214,6 +245,19 @@ impl WorkspaceEffectBroker {
     pub async fn activity(&self) -> Vec<BrokerActivity> {
         self.activity.lock().await.clone()
     }
+}
+
+/// Reads the `effect_id` out of an approval row's recorded args.
+///
+/// Returns `None` for a row this broker did not enqueue (different capability,
+/// different shape) rather than failing the whole lookup: a foreign pending row
+/// must not make a legitimate approval impossible.
+fn effect_id_of(args_json: &str) -> Option<String> {
+    serde_json::from_str::<Value>(args_json)
+        .ok()?
+        .get("effect_id")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 struct WorkspaceWriteCapability {
@@ -459,7 +503,7 @@ mod tests {
             !temp.path().join("logo.png").exists(),
             "queuing writes nothing"
         );
-        broker.approve_next().await.expect("approve");
+        broker.approve_effect("effect:asset-1").await.expect("approve");
         assert_eq!(
             broker.propose_asset_write(&write).await.expect("write")["written"],
             json!(true)
@@ -483,7 +527,7 @@ mod tests {
             bytes: vec![9u8, 8, 7],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_next().await.expect("approve");
+        broker.approve_effect("effect:asset-2").await.expect("approve");
         broker.propose_asset_write(&write).await.expect("write");
         assert_eq!(fs::read(&file).expect("read new"), vec![9u8, 8, 7]);
         broker.rollback("effect:asset-2").await.expect("rollback");
@@ -501,7 +545,7 @@ mod tests {
             bytes: vec![0u8, 255, 128],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_next().await.expect("approve");
+        broker.approve_effect("effect:asset-3").await.expect("approve");
         broker.propose_asset_write(&write).await.expect("write");
         assert!(file.exists());
         broker.rollback("effect:asset-3").await.expect("rollback");
@@ -521,7 +565,7 @@ mod tests {
             bytes: vec![1u8, 2, 3],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_next().await.expect("approve");
+        broker.approve_effect("effect:asset-4").await.expect("approve");
         assert!(
             broker.propose_asset_write(&write).await.is_err(),
             "traversal path must be rejected for assets just as for text"

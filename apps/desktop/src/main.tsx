@@ -493,7 +493,13 @@ function App() {
   const approveFile = useCallback(
     async (file: OpenFile) => {
       if (!project || !resource || !file.effectId) return;
-      const approval = await hostClient.approveNextWorkspaceWrite(project.id, resource.id);
+      // Approve THIS file's effect by id: with more than one decision open,
+      // approving "the next one" authorizes the wrong write.
+      const approval = await hostClient.approveWorkspaceWrite(
+        project.id,
+        resource.id,
+        file.effectId,
+      );
       if (approval.state !== "available") {
         flash("O host não confirmou a aprovação.");
         return;

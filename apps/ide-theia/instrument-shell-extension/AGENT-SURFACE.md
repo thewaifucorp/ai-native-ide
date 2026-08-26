@@ -187,19 +187,27 @@ Duas ressalvas honestas, ambas medidas e não supostas:
   e o `harvest` continuam sendo o caminho governado para o projeto — não dá para
   trocá-los por escrita mediada pelo broker.
 
-## Dívida conhecida (precisa mudar no sidecar Rust)
+## Dívida fechada: `broker_approve` aprova por effect id
 
-`broker_approve(root, owner)` autoriza **o efeito pendente mais antigo** daquele
-escopo, não um effect id. Isso já causou dois incidentes reais, ambos corrigidos
-no adaptador:
+`broker_approve(root, owner)` autorizava **o efeito pendente mais antigo** daquele
+escopo, não o efeito decidido. Isso causou dois incidentes reais:
 
 1. Effect ids reiniciavam em `w1` a cada boot, então uma aprovação não consumida
    de uma sessão anterior casava com a primeira proposta da sessão seguinte e o
    broker gravava sem ninguém decidir. Corrigido com id único por processo.
 2. Com mais de um efeito pendente, aprovar a proposta B autorizava a proposta A.
-   Corrigido serializando decisões por projeto e drenando autorizações antigas
-   até a decisão cair no efeito certo (reportando quantas foram drenadas).
 
-A correção definitiva é `broker_approve` receber o effect id. Enquanto o sidecar
-não mudar, as duas guardas acima mantêm a invariante: **nenhuma escrita é aplicada
-sem que uma pessoa tenha decidido exatamente aquele diff.**
+O contorno eram duas guardas no adaptador Node: recusar propostas empilhadas, e
+drenar autorizações antigas até a decisão cair no efeito certo.
+
+**Corrigido na origem:** `broker_approve` agora recebe `effect_id`
+(`ide-domain::WorkspaceEffectBroker::approve_effect`), casando o id contra os
+args registrados de cada linha pendente. Id que não está pendente é erro que
+nomeia quais estão — nunca aprovação silenciosa de outro efeito. As duas guardas
+foram removidas, e os testes que as fixavam viraram testes da regra:
+`approving_the_second_proposal_does_not_authorize_the_first` em
+`crates/ide-domain/tests/workspace_effects.rs`, contra o broker real.
+
+Consequência para o agente: **propostas podem coexistir**. Um turno que toca
+cinco arquivos vira cinco decisões independentes, e aprovar uma não mexe nas
+outras.

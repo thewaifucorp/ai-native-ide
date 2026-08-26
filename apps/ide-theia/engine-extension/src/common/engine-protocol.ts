@@ -92,8 +92,14 @@ export interface EngineService {
         content: string
     ): Promise<{ awaiting_approval?: boolean; written?: boolean; path?: string }>;
 
-    /** Approve the next pending effect for this (owner, root). */
-    brokerApprove(root: string, owner: string): Promise<{ approved_id: number }>;
+    /**
+     * Approve ONE pending effect, named by its id.
+     *
+     * It used to approve "the next pending effect" for the scope, which
+     * authorized the oldest queued row rather than the one decided on. With two
+     * decisions open that grants the wrong write.
+     */
+    brokerApprove(root: string, owner: string, effectId: string): Promise<{ approved_id: number }>;
 
     /** Restore the snapshot taken when the effect executed. */
     brokerRollback(root: string, owner: string, effectId: string): Promise<{ rolledback: boolean }>;

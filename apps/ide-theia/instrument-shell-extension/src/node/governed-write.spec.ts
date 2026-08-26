@@ -48,14 +48,10 @@ class FakeEngine implements Partial<EngineService> {
         if (this.proposeAnswers.length > 0) {
             return this.proposeAnswers.shift()!;
         }
-        // Model the real broker: an outstanding grant makes the next identical
-        // propose execute, unless an OLDER queue entry consumed that grant first.
-        if (this.grants > 0) {
-            this.grants--;
-            if (this.staleGrants > 0) {
-                this.staleGrants--;
-                return { awaiting_approval: true };
-            }
+        // Model the real broker: a grant is held FOR A SPECIFIC EFFECT, so only
+        // that effect's next identical propose executes. Any other pending
+        // effect stays queued no matter how many grants exist.
+        if (this.grants.delete(effectId)) {
             return { written: true, path: 'x' };
         }
         return { awaiting_approval: true };
@@ -76,14 +72,16 @@ class FakeEngine implements Partial<EngineService> {
         return { rolledback: true };
     }
 
-    /** Outstanding approvals, as the persistent gate would hold them. */
-    grants = 0;
-    /** How many approvals are swallowed by older queue entries before ours runs. */
-    staleGrants = 0;
+    /** Outstanding approvals, keyed by effect id, as the gate would hold them. */
+    grants = new Set<string>();
 
-    async brokerApprove(): Promise<{ approved_id: number }> {
-        this.calls.push('approve');
-        this.grants++;
+    async brokerApprove(
+        _root: string,
+        _owner: string,
+        effectId: string
+    ): Promise<{ approved_id: number }> {
+        this.calls.push(`approve:${effectId}`);
+        this.grants.add(effectId);
         return { approved_id: 1 };
     }
 }
@@ -169,41 +167,48 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         );
     });
 
-    it('refuses to stack a second proposal while one awaits a decision', async () => {
-        const { service, rootUri } = fixture();
+    // Both of these replace guards this adapter used to carry. The broker's
+    // approval was positional (oldest pending first), so the adapter refused to
+    // stack proposals and drained stale grants until the decided effect ran.
+    // `broker_approve` now takes an effect id, so the guards are gone and what
+    // is pinned here is the property they were faking.
+
+    it('propostas podem coexistir: aprovar uma não autoriza a outra', async () => {
+        const { service, engine, rootUri } = fixture();
         const first = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
+        const second = await service.proposeWrite(rootUri, 'alvo.md', 'b\n');
         assert.strictEqual(first.state, 'awaiting');
-        // Positional approval means two pending proposals could swap places, so the
-        // adapter refuses instead of risking the wrong diff being authorized.
-        await assert.rejects(
-            () => service.proposeWrite(rootUri, 'alvo.md', 'b\n'),
-            /já existe uma escrita aguardando decisão/
-        );
-        // Resolving the first one frees the project again.
-        await service.approve(first.id);
-        const third = await service.proposeWrite(rootUri, 'alvo.md', 'c\n');
-        assert.strictEqual(third.state, 'awaiting');
-    });
+        assert.strictEqual(second.state, 'awaiting', 'empilhar deixou de ser recusado');
 
-    it('drains stale grants so the approval lands on the decided effect', async () => {
-        const { service, engine, rootUri } = fixture();
-        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
-        // Two older queue entries swallow the first two approvals.
-        engine.staleGrants = 2;
-        const approved = await service.approve(proposal.id);
+        const approved = await service.approve(second.id);
+
+        assert.strictEqual(approved.id, second.id);
         assert.strictEqual(approved.state, 'approved');
-        assert.match(approved.warning ?? '', /2 autorização/);
-        assert.strictEqual(engine.calls.filter(c => c === 'approve').length, 3);
+        assert.deepStrictEqual(
+            engine.calls.filter(c => c.startsWith('approve:')),
+            [`approve:${second.id}`],
+            'a autorização tem que nomear o efeito decidido, e só ele'
+        );
+        assert.strictEqual(
+            first.state,
+            'awaiting',
+            'a proposta que ninguém decidiu não pode ter sido aplicada'
+        );
     });
 
-    it('gives up loudly when the queue cannot be drained', async () => {
+    it('aprovar não vira `approved` se o broker ainda deixou o efeito na fila', async () => {
         const { service, engine, rootUri } = fixture();
         const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
-        engine.staleGrants = 99;
+        // A grant that does not reach this effect (a broker that rejected it, a
+        // queue that moved): the write did not run, so the UI must not be told
+        // it did.
+        engine.proposeAnswers = [{ awaiting_approval: true }];
+
         await assert.rejects(
             () => service.approve(proposal.id),
-            /aprovação não chegou ao efeito/
+            /did not execute approved effect/
         );
+        assert.strictEqual(proposal.state, 'awaiting');
     });
 
     it('refuses a path that escapes the workspace root', async () => {

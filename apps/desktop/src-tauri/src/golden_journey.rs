@@ -94,7 +94,7 @@ async fn informal_intent_reaches_evidenced_preview_reconciliation() {
         .expect("propose governed effect");
     assert_eq!(proposed["awaitingApproval"], true);
     bridge
-        .approve_next_write(&project.id.0, "auction-local")
+        .approve_write(&project.id.0, "auction-local", "benchmark-plan-v1")
         .await
         .expect("approve exact effect");
     let written = bridge

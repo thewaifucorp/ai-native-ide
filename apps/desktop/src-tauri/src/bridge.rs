@@ -537,11 +537,13 @@ impl DesktopBridge {
             bail!("YOLO writes require the explicit Yolo permission level")
         }
         let resource_id = request.resource_id.clone();
+        let effect_id = request.effect_id.clone();
         let first = self.propose_write(project_id, request.clone()).await?;
         if first["written"] == serde_json::Value::Bool(true) {
             return Ok(first);
         }
-        self.approve_next_write(project_id, &resource_id).await?;
+        self.approve_write(project_id, &resource_id, &effect_id)
+            .await?;
         self.propose_write(project_id, request).await
     }
 
@@ -948,17 +950,23 @@ impl DesktopBridge {
         ))
     }
 
-    pub async fn approve_next_write(
+    /// Approves one specific pending write.
+    ///
+    /// Takes the effect id rather than approving "the next one": with more than
+    /// one decision open, positional approval authorizes the wrong effect.
+    pub async fn approve_write(
         &self,
         project_id: &str,
         resource_id: &str,
+        effect_id: &str,
     ) -> anyhow::Result<i64> {
         validate_identifier("project id", project_id)?;
         validate_identifier("resource id", resource_id)?;
+        validate_identifier("effect id", effect_id)?;
         let workspaces = self.workspaces.lock().await;
         workspace_for(&workspaces, project_id, resource_id)?
             .broker
-            .approve_next()
+            .approve_effect(effect_id)
             .await
     }
 

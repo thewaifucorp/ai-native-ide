@@ -13,7 +13,7 @@
 //!                                                                  -> the broker's Value
 //!                        (`{ awaiting_approval: true }` on the first call, then
 //!                         `{ written: true, path }` once the effect is approved)
-//!   - `broker_approve`  params `{ root, owner }`   -> `{ approved_id: <i64> }`
+//!   - `broker_approve`  params `{ root, owner, effect_id }` -> `{ approved_id: <i64> }`
 //!   - `broker_rollback` params `{ root, owner, effect_id }` -> `{ rolledback: true }`
 //!   - `broker_activity` params `{ root, owner }`   -> `{ activity: [...] }`
 //!
@@ -93,6 +93,16 @@ struct BrokerProposeParams {
 struct BrokerScopeParams {
     root: String,
     owner: String,
+}
+
+/// Scope plus the effect being decided on. `effect_id` is required: approving
+/// without naming the effect is what let a decision on one proposal authorize
+/// another.
+#[derive(Deserialize)]
+struct BrokerApproveParams {
+    root: String,
+    owner: String,
+    effect_id: String,
 }
 
 #[derive(Deserialize)]
@@ -260,9 +270,12 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             broker.propose_write(&write).await.map_err(|e| e.to_string())
         }
         "broker_approve" => {
-            let p: BrokerScopeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let p: BrokerApproveParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let broker = broker_for(&p.root, &p.owner).await?;
-            let approved_id = broker.approve_next().await.map_err(|e| e.to_string())?;
+            let approved_id = broker
+                .approve_effect(&p.effect_id)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(json!({ "approved_id": approved_id }))
         }
         "broker_rollback" => {
@@ -597,9 +610,12 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
 
         // 2) Approve grants the SqliteApprovalGate.
-        handle("broker_approve", json!({ "root": root, "owner": owner }))
-            .await
-            .expect("approve");
+        handle(
+            "broker_approve",
+            json!({ "root": root, "owner": owner, "effect_id": "e1" }),
+        )
+        .await
+        .expect("approve");
 
         // 3) Second propose now EXECUTES the write.
         let written = handle("broker_propose", propose()).await.expect("write");
