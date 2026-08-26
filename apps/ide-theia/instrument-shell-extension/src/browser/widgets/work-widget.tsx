@@ -1,16 +1,35 @@
-// 001 WORK SURFACE — the central column: 001 tab bar plus the two views.
-//   • Home ("situação"): continue goal, Agora, Precisa de você, Produto map,
-//     Marco atual (Game Mode), Recentes.
-//   • Build ("intenção ↔ preview"): conversation + steps + composer next to the
-//     live product preview.
-// Tabs and nav both switch the view via the shared store.
+// WORK SURFACE — the central column: Overview ("what is true about this project
+// right now") and Build ("intention ↔ agent session").
+//
+// HONESTY PASS (M10). What used to be here was a sketch rendered as if it were
+// live: a goal sentence about an auction nobody had stated, an "Agora" list
+// claiming Codex was on step 3 of 4 and a preview was live on localhost:3000, a
+// "Marco atual" bar at "3 de 5 critérios verificados", four timestamped
+// "Recentes" entries, two fake editor tabs, and a Build view with an invented
+// conversation plus a fake rendered website. None of it came from the project.
+//
+// Overview now renders only what the IDE actually knows: the real workspace, the
+// capability states the backend detected, the real agent probe, the broker's own
+// trail, the harness slot bindings, and the real pending governed write. Where a
+// surface is genuinely queued work (checks/preview/evidence, the semantic product
+// model), it is drawn as an explicit placeholder — never as data.
 
 import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandService } from '@theia/core/lib/common/command';
 import { AbstractInstrumentWidget } from './abstract-instrument-widget';
-import { Icon } from './icons';
 import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
+import { CMD_BROKER_TRAIL } from '../instrument-capability-contribution';
+import { CapabilityState } from '../../common/capability-protocol';
+
+/** Short label per broker event kind, for the recent-activity list. */
+const KIND_LABEL: Record<string, string> = {
+    proposed: 'proposta',
+    awaiting_approval: 'decisão',
+    snapshot_created: 'checkpoint',
+    executed: 'escrita',
+    rolled_back: 'rollback'
+};
 
 @injectable()
 export class WorkWidget extends AbstractInstrumentWidget {
@@ -33,9 +52,6 @@ export class WorkWidget extends AbstractInstrumentWidget {
                 <div className="tabs">
                     <button className={`tab${view === 'home' ? ' on' : ''}`} onClick={() => this.store.setView('home')}>Overview</button>
                     <button className={`tab${view === 'build' ? ' on' : ''}`} onClick={() => this.store.setView('build')}><span className="mod" />Build</button>
-                    <button className="tab file">product-intent.md</button>
-                    <button className="tab file">auction.ts</button>
-                    <button className="tab new" title="Nova aba"><Icon name="plus" style={{ width: 12, height: 12 }} /></button>
                 </div>
                 {this.renderHome(view === 'home')}
                 {this.renderBuild(view === 'build')}
@@ -43,156 +59,284 @@ export class WorkWidget extends AbstractInstrumentWidget {
         );
     }
 
+    // ── Overview ────────────────────────────────────────────────────────────
+
     protected renderHome(on: boolean): React.ReactNode {
         return (
             <section className={`view${on ? ' on' : ''}`} id="view-home">
                 <div className="home-main">
-                    <div className="h-sec continue">
-                        <h1 className="goal">Permitir que aplicações disputem a primeira posição <em>sem ver o lance vencedor</em>.</h1>
-                        <div className="next">
-                            <button className="btn pri lg" onClick={() => this.store.setView('build')}>Retomar a sessão<span className="kbd">⏎</span></button>
-                            <span>próximo resultado: ranking à prova de concorrência, testável no preview</span>
-                        </div>
-                    </div>
-
-                    <div className="h-sec">
-                        <span className="tag">Agora</span>
-                        <div className="now-list">
-                            <div className="now-row">
-                                <span className="live" />
-                                <span className="who">Codex · app-web</span>
-                                <span className="what">Verificando se dois lances simultâneos podem furar a reserva.</span>
-                                <span className="meta">passo 3 de 4</span>
-                            </div>
-                            <div className="now-row">
-                                <span className="live ok" />
-                                <span className="who">Preview · localhost:3000</span>
-                                <span className="what">Refletindo a última alteração. A campanha já aceita lances de teste.</span>
-                                <span className="meta">agora</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="h-sec">
-                        <span className="tag">Precisa de você</span>
-                        <div className="need">
-
-                            <div className="need-item">
-                                <div className="txt">
-                                    <b>Empate entre lances usa ordem de criação</b>
-                                    <small>Sua intenção não define desempate. Isso pode favorecer quem chegou antes.</small>
-                                </div>
-                                <div className="acts">
-                                    <button className="btn" onClick={() => this.store.toast('Divergência aberta ao lado do preview')}>Entender</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    {this.renderProjectHeader()}
+                    {this.renderNeedsYou()}
+                    {this.renderCapabilitySummary()}
+                    {this.renderQueuedSurfaces()}
                 </div>
-
                 <div className="home-side">
-                    <div className="h-sec">
-                        {/* REAL: the opened workspace's top-level resources (WorkspaceService +
-                            FileService). Clicking a row opens it in the real Monaco/explorer. */}
-                        <span className="tag">Recursos do workspace · {this.store.workspaceName || 'workspace'}</span>
-                        <div className="prod-map">
-                            {this.store.resources.length === 0 &&
-                                <div className="prod-row"><span className="st idle" /><span className="nm">—</span><span className="ds">nenhum recurso no topo</span></div>}
-                            {this.store.resources.map(r => (
-                                <div
-                                    key={r.uri}
-                                    className="prod-row"
-                                    role="button"
-                                    title={r.isDir ? `Abrir pasta ${r.name}` : `Abrir ${r.name}`}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => this.commands.executeCommand(CMD_OPEN_RESOURCE, r.uri)}
-                                >
-                                    <span className={`st ${r.isDir ? 'idle' : 'ok'}`} />
-                                    <span className="nm">{r.name}</span>
-                                    <span className="ds">{r.isDir ? 'pasta' : 'arquivo'}</span>
-                                    <span className="lb">abrir</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="quest">
-                        <span className="tag">Marco atual</span>
-                        <p>Um lance disputado por duas pessoas ao mesmo tempo termina com um único vencedor.</p>
-                        <div className="qbar"><i /></div>
-                        <small>3 de 5 critérios verificados</small>
-                    </div>
-
-                    <div className="recent">
-                        <span className="tag">Recentes</span>
-                        <div className="r"><time>14:32</time><span>Você pediu: <em>“ninguém pode pagar depois de ver o lance vencedor”</em></span></div>
-                        <div className="r"><time>14:35</time><span>Codex protegeu o endpoint de lances por sessão</span></div>
-                        <div className="r"><time>14:41</time><span>Checkpoint criado antes da mudança no schema</span></div>
-                        <div className="r"><time>14:44</time><span>Preview atualizado com a lista de campanhas</span></div>
-                    </div>
+                    {this.renderResources()}
+                    {this.renderRecent()}
+                    {this.renderHarnessSummary()}
                 </div>
             </section>
         );
     }
 
+    /** The real opened project: name, root path, resource count. */
+    protected renderProjectHeader(): React.ReactNode {
+        const root = this.store.workspaceRootUri;
+        const path = root ? decodeURIComponent(root.replace(/^file:\/\//, '')) : 'nenhum projeto aberto';
+        return (
+            <div className="h-sec continue">
+                <h1 className="goal">{this.store.workspaceName || 'nenhum projeto aberto'}</h1>
+                <div className="next">
+                    <span title={path}>{path}</span>
+                </div>
+            </div>
+        );
+    }
+
+    /** Real pending work only: the governed write awaiting a human. */
+    protected renderNeedsYou(): React.ReactNode {
+        const proposal = this.store.proposal;
+        const awaiting = proposal && proposal.state === 'awaiting' ? proposal : undefined;
+        return (
+            <div className="h-sec">
+                <span className="tag">Precisa de você</span>
+                <div className="need">
+                    {!awaiting && (
+                        <div className="need-item">
+                            <div className="txt">
+                                <b>Nada aguardando decisão</b>
+                                <small>
+                                    Escritas de agente ou de provider param no broker e aparecem aqui
+                                    e no dock antes de tocar o disco.
+                                </small>
+                            </div>
+                        </div>
+                    )}
+                    {awaiting && (
+                        <div className="need-item">
+                            <div className="txt">
+                                <b>Gravar mudança em {awaiting.relPath}?</b>
+                                <small>
+                                    +{awaiting.addedLines} / -{awaiting.removedLines} · {awaiting.hunkCount} hunk(s),
+                                    calculados pelo engine Rust. Nada foi escrito ainda.
+                                </small>
+                            </div>
+                            <div className="acts">
+                                <button className="btn" onClick={() => this.store.focusDecision()}>Revisar no dock</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    /** The capability states the backend registry actually detected. */
+    protected renderCapabilitySummary(): React.ReactNode {
+        const capabilities = this.store.capabilities;
+        return (
+            <div className="h-sec">
+                <span className="tag">Capabilities deste projeto</span>
+                <div className="prod-map">
+                    {!this.store.capabilitiesDetected && (
+                        <div className="prod-row"><span className="st idle" /><span className="nm">—</span><span className="ds">detectando…</span></div>
+                    )}
+                    {this.store.capabilitiesDetected && capabilities.length === 0 && (
+                        <div className="prod-row"><span className="st idle" /><span className="nm">—</span><span className="ds">nenhuma capability registrada</span></div>
+                    )}
+                    {capabilities.map(c => (
+                        <div
+                            key={c.id}
+                            className="prod-row"
+                            role="button"
+                            style={{ cursor: 'pointer' }}
+                            title={c.detail}
+                            onClick={() => this.commands.executeCommand('instrument.mode.ferramentas')}
+                        >
+                            <span className={`st ${this.dotFor(c)}`} />
+                            <span className="nm">{c.label}</span>
+                            <span className="ds">{c.status}</span>
+                            <span className="lb">ver</span>
+                        </div>
+                    ))}
+                    {this.renderAgentRow()}
+                </div>
+            </div>
+        );
+    }
+
+    /** Honest dot: only a genuinely ready capability gets the healthy colour. */
+    protected dotFor(capability: CapabilityState): string {
+        return capability.status === 'ready' ? 'ok' : capability.status === 'degraded' ? 'run' : 'idle';
+    }
+
+    protected renderAgentRow(): React.ReactNode {
+        const agent = this.store.agent;
+        return (
+            <div className="prod-row" title={agent?.detail ?? 'sondando o adaptador'}>
+                <span className={`st ${agent?.availability === 'ready' ? 'ok' : agent ? 'run' : 'idle'}`} />
+                <span className="nm">Agente {agent ? agent.agent : ''}</span>
+                <span className="ds">{agent ? agent.availability : 'sondando…'}</span>
+            </div>
+        );
+    }
+
+    /** What this surface will hold, stated as queued work instead of faked. */
+    protected renderQueuedSurfaces(): React.ReactNode {
+        return (
+            <div className="h-sec">
+                <span className="tag">Ainda não medido<span className="queued">na fila</span></span>
+                <div className="placeholder">
+                    <b>Checks, preview e evidência</b>
+                    <p>
+                        Nenhum motor de checks, preview ou reconciliação roda aqui ainda, então esta
+                        área não mostra números. Quando rodar, cada resultado vem com o comando cru
+                        que o produziu — e `unknown` / `não executado` não vira verde.
+                    </p>
+                </div>
+                <div className="placeholder">
+                    <b>Produto semântico e divergências</b>
+                    <p>
+                        Recursos, autoridades, consumidores e o arquivo causal do projeto (a visão
+                        Produto ainda é um esboço). A divergência plantada neste workspace — o
+                        desempate por ordem de criação em `auction.ts` contra o que
+                        `docs/product-intent.md` declara — é o caso de prova.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    // ── side column ─────────────────────────────────────────────────────────
+
+    protected renderResources(): React.ReactNode {
+        return (
+            <div className="h-sec">
+                <span className="tag">Recursos do workspace</span>
+                <div className="prod-map">
+                    {this.store.resources.length === 0 &&
+                        <div className="prod-row"><span className="st idle" /><span className="nm">—</span><span className="ds">nenhum recurso no topo</span></div>}
+                    {this.store.resources.map(r => (
+                        <div
+                            key={r.uri}
+                            className="prod-row"
+                            role="button"
+                            title={r.isDir ? `Abrir pasta ${r.name}` : `Abrir ${r.name}`}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => this.commands.executeCommand(CMD_OPEN_RESOURCE, r.uri)}
+                        >
+                            <span className={`st ${r.isDir ? 'idle' : 'ok'}`} />
+                            <span className="nm">{r.name}</span>
+                            <span className="ds">{r.isDir ? 'pasta' : 'arquivo'}</span>
+                            <span className="lb">abrir</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    /** Recent = the broker's real trail for this project, read on demand. */
+    protected renderRecent(): React.ReactNode {
+        const trail = this.store.brokerActivity;
+        return (
+            <div className="recent">
+                <span className="tag">
+                    Efeitos governados
+                    <button
+                        className="cap-btn tiny"
+                        disabled={this.store.brokerActivityBusy}
+                        onClick={() => this.commands.executeCommand(CMD_BROKER_TRAIL)}
+                    >
+                        {this.store.brokerActivityBusy ? '…' : 'ler'}
+                    </button>
+                </span>
+                {trail === undefined && <div className="r"><span>trilha não lida</span></div>}
+                {trail && trail.length === 0 && <div className="r"><span>nenhum efeito registrado neste projeto</span></div>}
+                {trail && trail.slice(-6).reverse().map((e, i) => (
+                    <div className="r" key={`${e.effect_id}:${e.kind}:${i}`}>
+                        <time>{KIND_LABEL[e.kind] ?? e.kind}</time>
+                        <span>{e.path ? e.path.split('/').slice(-2).join('/') : e.effect_id}</span>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    /** Who owns the project's exclusive harness slots, if anyone. */
+    protected renderHarnessSummary(): React.ReactNode {
+        const harness = this.store.harness;
+        const taken = harness ? harness.bindings.filter(b => b.providerId) : [];
+        return (
+            <div className="quest">
+                <span className="tag">Harness do projeto</span>
+                {!harness && <p>lendo o registry…</p>}
+                {harness && taken.length === 0 && (
+                    <p>Nenhum provider assumiu os slots de workflow, hierarquia ou status principal.</p>
+                )}
+                {harness && taken.length > 0 && (
+                    <p>
+                        {taken.map(b => `${b.slot}: ${b.providerId}`).join(' · ')}
+                    </p>
+                )}
+                {harness && (
+                    <small>{harness.composedExtensions.length} extensões compostas</small>
+                )}
+            </div>
+        );
+    }
+
+    // ── Build ───────────────────────────────────────────────────────────────
+
+    /** The agent-session surface. It has a real probe and no session wiring yet,
+     *  so it says exactly that instead of replaying an invented conversation. */
     protected renderBuild(on: boolean): React.ReactNode {
+        const agent = this.store.agent;
         return (
             <section className={`view${on ? ' on' : ''}`} id="view-build">
                 <div className="conv">
                     <div className="conv-scroll">
-                        <h2 className="goal">Aplicações disputam a primeira posição sem ver o lance vencedor.</h2>
-                        <div className="msg user">
-                            <div className="bubble">Quero que a maior oferta fique em primeiro, mas ninguém pode pagar depois de ver o lance vencedor.</div>
+                        <h2 className="goal">Sessão de agente</h2>
+                        <div className="placeholder">
+                            <b>Adaptador detectado, sessão ainda não ligada</b>
+                            <p>
+                                {agent
+                                    ? `${agent.agent} · ${agent.availability}${agent.detectedVersion ? ` · ${agent.detectedVersion}` : ''}` +
+                                    `${agent.transport ? ` · transporte ${agent.transport}` : ''}.`
+                                    : 'Sondando o adaptador de agente…'}
+                            </p>
+                            <p>
+                                O IDE já sonda o adaptador de verdade e já governa toda escrita pelo
+                                broker. O que falta aqui é a sessão: mandar intenção, receber passos e
+                                ligar cada efeito ao seu recibo. Enquanto isso, este painel não simula
+                                conversa — use o modo Agentes na view Ferramentas para ver o estado real
+                                do adaptador.
+                            </p>
                         </div>
-                        <div className="msg agent">
-                            <div className="head"><span className="live" />CODEX · APP-WEB</div>
-                            <div className="body">
-                                Entendi como <strong>leilão selado</strong>: o valor de cada lance fica reservado e escondido até o fechamento.
-                                Implementei a reserva e agora estou verificando o que acontece se duas pessoas derem lances no mesmo instante.
-                                <div className="steps">
-                                    <div className="step done"><Icon name="check" />schema de lances com valor selado</div>
-                                    <div className="step done"><Icon name="check" />endpoint protegido por sessão</div>
-                                    <div className="step run"><Icon name="dot" />teste de concorrência em andamento</div>
-                                    <div className="step"><Icon name="circle" />reconciliar desempate com sua intenção</div>
-                                </div>
+                        {agent && agent.degradations.length > 0 && (
+                            <div className="placeholder">
+                                <b>Fora do gate do IDE</b>
+                                <ul className="cap-degr">
+                                    {agent.degradations.map(d => <li key={d}>{d}</li>)}
+                                </ul>
                             </div>
-                        </div>
-                    </div>
-                    <div className="composer">
-                        <input placeholder="Peça uma mudança ou pergunte o porquê…" />
-                        <div className="foot">
-                            <span className="hint"><em>Tab</em> completa o que falta decidir</span>
-                            <span>Hybrid · efeitos locais liberados</span>
-                        </div>
+                        )}
                     </div>
                 </div>
 
                 <div className="preview">
                     <div className="pv-bar">
-                        <Icon name="refresh" />
-                        <span className="pv-url">localhost:3000/campanhas</span>
-                        <Icon name="more" />
+                        <span className="pv-url">preview não configurado</span>
                     </div>
                     <div className="pv-body">
-                        <div className="site">
-                            <div className="site-nav">
-                                <span className="site-brand">MELHOR/LANCE</span>
-                                <button className="site-cta">Anunciar aplicação</button>
-                            </div>
-                            <div className="site-hero">
-                                <h2>Descubra o que estão construindo.</h2>
-                                <p>Aplicações independentes disputam visibilidade de forma transparente.</p>
-                            </div>
-                            <div className="bids">
-                                <div className="bid first"><span className="rk">1</span><span><b>Fluxo Fiscal</b><small>Automação para pequenas empresas</small></span><span className="pr">R$ 84</span></div>
-                                <div className="bid"><span className="rk">2</span><span><b>Agenda Clara</b><small>Reservas sem mensalidade</small></span><span className="pr">R$ 61</span></div>
-                                <div className="bid"><span className="rk">3</span><span><b>Pedido Zap</b><small>Catálogo e pedidos locais</small></span><span className="pr">R$ 43</span></div>
-                            </div>
+                        <div className="placeholder">
+                            <b>Sem preview</b>
+                            <p>
+                                Nenhum servidor de preview foi detectado ou iniciado para este projeto.
+                                Um preview falso já ocupou este espaço; agora o espaço fica vazio até
+                                existir um processo real para mostrar.
+                            </p>
                         </div>
-                    </div>
-                    <div className="pv-foot">
-                        <span><b>Divergência.</b> O empate ainda usa ordem de criação — sua intenção não define isso.</span>
-                        <button className="btn" onClick={() => this.store.toast('Divergência explicada: opções de desempate propostas')}>Entender</button>
                     </div>
                 </div>
             </section>

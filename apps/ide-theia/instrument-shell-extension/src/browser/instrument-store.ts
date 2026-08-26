@@ -71,6 +71,9 @@ export class InstrumentStore {
     /** Which capability the (generic) surface tab is currently showing. */
     surfaceCapabilityId: string | undefined;
 
+    /** Ids of collapsed sections in the Ferramentas view (session-local). */
+    collapsedSections: string[] = ['workbench', 'broker', 'harness'];
+
     // ── REAL broker trail (M9): the raw audit the Rust broker recorded for this
     //    project — propose / awaiting / snapshot / execute / rollback. Fetched on
     //    demand, so "inspecionável" does not mean "always polling".
@@ -82,14 +85,10 @@ export class InstrumentStore {
     // running. These only ever move when a REAL governed write does.
     protected pulseNow = 'nenhuma escrita proposta';
     protected stage = 'OCIOSO';
-    protected lvlBar = 64;
-    protected lvlNext = '3 marcos verificados para o nível 8';
     protected pendingCount = '0 decisões';
 
     get nowText(): string { return this.pulseNow; }
     get stageText(): string { return this.stage; }
-    get lvlBarPct(): number { return this.lvlBar; }
-    get lvlNextText(): string { return this.lvlNext; }
     get pendingText(): string { return this.pendingCount; }
     get pendingIsWarn(): boolean { return this.pendingCount !== '0 decisões'; }
 
@@ -192,6 +191,17 @@ export class InstrumentStore {
             this.surfaceCapabilityId = id;
             this.emit();
         }
+    }
+
+    isSectionCollapsed(id: string): boolean {
+        return this.collapsedSections.includes(id);
+    }
+
+    toggleSection(id: string): void {
+        this.collapsedSections = this.collapsedSections.includes(id)
+            ? this.collapsedSections.filter(s => s !== id)
+            : [...this.collapsedSections, id];
+        this.emit();
     }
 
     setBrokerActivity(activity: BrokerActivity[] | undefined): void {

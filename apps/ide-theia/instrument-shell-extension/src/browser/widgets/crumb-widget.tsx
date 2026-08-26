@@ -1,6 +1,10 @@
-// 001 CRUMB TITLEBAR — 44px top strip: traffic lights, project · session
-// breadcrumb, "Hybrid · local" pill, and the Game Mode toggle (drives the shared
-// store, which flips the `game` class on <body>).
+// 001 CRUMB TITLEBAR — 44px top strip: traffic lights, the real project
+// breadcrumb, the governed-write action, and the Game Mode toggle (a visual mode
+// that flips the `game` class on <body>).
+//
+// HONESTY PASS (M10): the "Hybrid · local" pill was removed — it announced an
+// execution mode the IDE does not implement or enforce yet (modes are a queued
+// item), so it read as a policy statement backed by nothing.
 
 import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
@@ -34,7 +38,6 @@ export class CrumbWidget extends AbstractInstrumentWidget {
                 <div className="tb-right">
                     {/* REAL: fires the governed-write loop on a real workspace file. */}
                     <button className="gm-toggle" title="Propor uma escrita governada em um arquivo real" onClick={() => this.commands.executeCommand(CMD_GOVERNED_PROPOSE)}>Propor mudança</button>
-                    <span className="pill"><span className="dot" />Hybrid · local</span>
                     <button className="gm-toggle" aria-pressed={on} onClick={() => this.store.toggleGame()}>Game mode<span className="sw" /></button>
                 </div>
             </header>

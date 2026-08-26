@@ -83,29 +83,74 @@ export class ToolsWidget extends AbstractInstrumentWidget {
         );
     }
 
+    /** One collapsible section. Four full panels stacked in a 240px column was a
+     *  scroll with no landmarks; the header carries a summary so the state of a
+     *  collapsed section is still readable, and only Capabilities starts open. */
+    protected section(
+        id: string,
+        title: string,
+        summary: string,
+        body: () => React.ReactNode,
+        action?: React.ReactNode
+    ): React.ReactNode {
+        const open = !this.store.isSectionCollapsed(id);
+        return (
+            <div className="nav-sec">
+                <button
+                    className={`sec-head${open ? ' open' : ''}`}
+                    aria-expanded={open}
+                    onClick={() => this.store.toggleSection(id)}
+                >
+                    <span className="chev">▶</span>
+                    <span className="sec-title">{title}</span>
+                    <span className="sec-sum">{summary}</span>
+                </button>
+                {open && action}
+                {open && body()}
+            </div>
+        );
+    }
+
+    /** Compact status summary for the collapsed Capabilities header. */
+    protected capabilitySummary(): string {
+        if (!this.store.capabilitiesDetected) {
+            return 'detectando…';
+        }
+        const all = this.store.capabilities;
+        if (all.length === 0) {
+            return 'nenhuma';
+        }
+        const ready = all.filter(c => c.status === 'ready').length;
+        return `${ready}/${all.length} prontas`;
+    }
+
     // ── capabilities ────────────────────────────────────────────────────────
 
     protected renderCapabilities(): React.ReactNode {
         const capabilities = this.store.capabilities;
-        return (
-            <div className="nav-sec">
-                <span className="tag">
-                    Capabilities (real)
-                    <button
-                        className="cap-btn tiny"
-                        title="Re-detectar tudo"
-                        onClick={() => this.commands.executeCommand(CMD_CAP_REFRESH)}
-                    >
-                        detectar
-                    </button>
-                </span>
-                {!this.store.capabilitiesDetected && (
-                    <div className="cap-card"><small>detectando capabilities do projeto…</small></div>
-                )}
-                {this.store.capabilitiesDetected && capabilities.length === 0 && (
-                    <div className="cap-card"><small>nenhuma capability registrada</small></div>
-                )}
-                {capabilities.map(c => this.renderCapability(c))}
+        return this.section(
+            'capabilities',
+            'Capabilities',
+            this.capabilitySummary(),
+            () => (
+                <>
+                    {!this.store.capabilitiesDetected && (
+                        <div className="cap-card"><small>detectando capabilities do projeto…</small></div>
+                    )}
+                    {this.store.capabilitiesDetected && capabilities.length === 0 && (
+                        <div className="cap-card"><small>nenhuma capability registrada</small></div>
+                    )}
+                    {capabilities.map(c => this.renderCapability(c))}
+                </>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    title="Re-detectar tudo"
+                    onClick={() => this.commands.executeCommand(CMD_CAP_REFRESH)}
+                >
+                    Re-detectar tudo
+                </button>
             </div>
         );
     }
@@ -193,9 +238,12 @@ export class ToolsWidget extends AbstractInstrumentWidget {
             { surface: 'extensions', label: 'Open VSX', hint: 'marketplace de extensões' },
             { surface: 'sqltools', label: 'SQLTools', hint: 'só se o plugin estiver instalado' }
         ];
-        return (
-            <div className="nav-sec">
-                <span className="tag">Workspace técnico (real)</span>
+        return this.section(
+            'workbench',
+            'Workspace técnico',
+            'debug · terminal · saída',
+            () => (
+                <>
                 <div className="cap-card">
                     <div className="cap-head"><b>Depuração</b></div>
                     <small>
@@ -234,25 +282,22 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     </div>
                     <small>a casca esconde a barra nativa — estas são as portas explícitas</small>
                 </div>
-            </div>
+                </>
+            )
         );
     }
 
     /** The broker's raw trail: what governance actually recorded, unedited. */
     protected renderBrokerTrail(): React.ReactNode {
         const trail = this.store.brokerActivity;
-        return (
-            <div className="nav-sec">
-                <span className="tag">
-                    Trilha do broker (raw)
-                    <button
-                        className="cap-btn tiny"
-                        disabled={this.store.brokerActivityBusy}
-                        onClick={() => this.commands.executeCommand(CMD_BROKER_TRAIL)}
-                    >
-                        {this.store.brokerActivityBusy ? '…' : 'ler'}
-                    </button>
-                </span>
+        const summary = this.store.brokerActivityBusy
+            ? 'lendo…'
+            : trail === undefined ? 'não lida' : `${trail.length} eventos`;
+        return this.section(
+            'broker',
+            'Trilha do broker (raw)',
+            summary,
+            () => (
                 <div className="cap-card">
                     {trail === undefined && <small>não lida — clique em “ler” para buscar do broker</small>}
                     {trail && trail.length === 0 && <small>o broker não registrou eventos neste projeto</small>}
@@ -264,6 +309,15 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                         </div>
                     ))}
                 </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={this.store.brokerActivityBusy}
+                    onClick={() => this.commands.executeCommand(CMD_BROKER_TRAIL)}
+                >
+                    {this.store.brokerActivityBusy ? 'lendo…' : 'Ler do broker'}
+                </button>
             </div>
         );
     }
@@ -272,15 +326,23 @@ export class ToolsWidget extends AbstractInstrumentWidget {
 
     protected renderHarness(): React.ReactNode {
         const snapshot = this.store.harness;
-        return (
-            <div className="nav-sec">
-                <span className="tag">Harness Provider (contrato)</span>
-                {!snapshot && <div className="cap-card"><small>lendo o harness do projeto…</small></div>}
-                {snapshot && this.renderSlots(snapshot)}
-                {snapshot && this.renderProviders(snapshot)}
-                {snapshot && this.renderExtensions(snapshot)}
-                {snapshot && this.renderReceipts(snapshot)}
-            </div>
+        const taken = snapshot ? snapshot.bindings.filter(b => b.providerId).length : 0;
+        const summary = !snapshot
+            ? 'lendo…'
+            : `${snapshot.providers.length} providers · ${taken}/3 slots`;
+        return this.section(
+            'harness',
+            'Harness Provider',
+            summary,
+            () => (
+                <>
+                    {!snapshot && <div className="cap-card"><small>lendo o harness do projeto…</small></div>}
+                    {snapshot && this.renderSlots(snapshot)}
+                    {snapshot && this.renderProviders(snapshot)}
+                    {snapshot && this.renderExtensions(snapshot)}
+                    {snapshot && this.renderReceipts(snapshot)}
+                </>
+            )
         );
     }
 

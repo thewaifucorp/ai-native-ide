@@ -86,7 +86,7 @@
 .iws-pulse-host { min-height: 42px; max-height: 42px; width: 100%; }
 .iws-work-host  { height: 100%; width: 100%; }
 .iws-dock-host  { height: 100%; width: 100%; }
-.iws-navmodes-host { min-height: 40px; max-height: 40px; width: 100%; overflow: hidden; }
+.iws-navmodes-host { min-height: 40px; max-height: 76px; width: 100%; overflow: hidden; }
 
 .iws-crumb-host .titlebar,
 .iws-rail-host .rail,
@@ -112,11 +112,14 @@ body.iws-shell .theia-app-sidebar-container { display: none !important; }
 /* (2) The navigator "modes" row — pinned strip at the top of the left column,
    replacing the activity bar. Ported from sketch 003. */
 .iws .nav-modes {
-  display: flex; gap: 2px; margin: 7px 8px 3px; padding: 3px;
+  display: flex; flex-wrap: wrap; gap: 2px; margin: 7px 8px 3px; padding: 3px;
   border-radius: var(--r1); background: var(--panel-2);
 }
 .iws .nav-mode {
-  flex: 1; height: 26px; border-radius: 3px; display: grid; place-items: center;
+  /* `flex-basis: 0` + `min-width: 0` lets seven buttons share a 168px column
+     instead of overflowing it; `flex-wrap` above catches anything narrower. */
+  flex: 1 1 0; min-width: 20px; height: 26px; border-radius: 3px;
+  display: grid; place-items: center;
   color: var(--faint); position: relative; transition: background .12s, color .12s;
 }
 .iws .nav-mode:hover { color: var(--text); background: var(--raise); }
@@ -618,3 +621,46 @@ body.game .iws .strip .lvl-strip { display: inline; }
 .iws .cap-empty { flex: 1; overflow-y: auto; padding: 40px 32px; max-width: 640px; }
 .iws .cap-empty b { display: block; font: 600 15px var(--ui); }
 .iws .cap-empty p { margin-top: 8px; font: 400 12.5px/1.55 var(--ui); color: var(--mut); }
+
+
+/* ============================================================
+   HONESTY + HIERARCHY PASS (M10)
+   ============================================================ */
+
+/* A visible marker for a surface that is still a placeholder for a queued item.
+   It exists so atmosphere can never be mistaken for project state. */
+.iws .placeholder {
+  margin-top: 8px; padding: 10px 11px;
+  border: 1px dashed var(--line-2); border-radius: var(--r2);
+  background: transparent;
+}
+.iws .placeholder b { display: block; font: 500 12.5px var(--ui); color: var(--mut); }
+.iws .placeholder p { margin-top: 6px; font: 400 11.5px/1.5 var(--ui); color: var(--faint); }
+.iws .tag .queued {
+  margin-left: 6px; padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--line-2); color: var(--faint);
+  font: var(--mono-w) 9px var(--mono); letter-spacing: .04em;
+}
+
+/* Collapsible section headers for the Ferramentas view: four stacked panels
+   needed a hierarchy and a per-section summary you can read without scrolling. */
+.iws .sec-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 0 6px 8px; text-align: left;
+}
+.iws .sec-head .chev {
+  flex: none; width: 10px; color: var(--faint);
+  font: 400 9px/1 var(--mono); transition: transform .12s;
+}
+.iws .sec-head.open .chev { transform: rotate(90deg); }
+.iws .sec-head .sec-title {
+  flex: 1; min-width: 0;
+  font: 600 10px/1 var(--ui); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--faint);
+}
+.iws .sec-head:hover .sec-title { color: var(--mut); }
+.iws .sec-head .sec-sum { flex: none; font: 400 10px var(--mono); color: var(--faint); }
+
+/* Pulse strip: the stats are real now, so a "not measured" state needs its own
+   muted look — it must NOT read as a passing check. */
+.iws .stats .none { color: var(--faint); }

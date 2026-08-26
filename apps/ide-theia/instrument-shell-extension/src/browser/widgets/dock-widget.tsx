@@ -1,5 +1,11 @@
-// 001 CONTEXT DOCK — 288px right column: active-agent card (real ide-agent
-// probe), the decision card, and the Game Mode progression.
+// 001 CONTEXT DOCK — 288px right column: the active-agent card (real ide-agent
+// probe) and the decision card.
+//
+// HONESTY PASS (M10): the gamified progression block was removed — level 7, a
+// 64%-full bar, "Rendeu hoje +1 intenção esclarecida", "também presente:
+// Architect". None of it was measured anywhere, and it sat directly under the one
+// card that reports real adapter health, which made the real card read as decor
+// too. Progression only comes back when something actually computes it.
 //
 // The decision card is the canonical surface of the REAL governed write: awaiting
 // → approved → rolled back, driven by the broker. There is no mock decision any
@@ -34,28 +40,7 @@ export class DockWidget extends AbstractInstrumentWidget {
             <aside className="dock">
                 <span className="tag">Contexto ativo</span>
                 {this.renderAgentCard()}
-
                 {this.renderDecision()}
-
-                <div className="prog">
-                    <div className="prog-top">
-                        <div className="prog-lvl">7</div>
-                        <div className="who">
-                            <b>Explorer</b>
-                            <small>nível 7 · leitura descritiva</small>
-                        </div>
-                    </div>
-                    <div className="prog-bar"><i style={{ width: `${this.store.lvlBarPct}%` }} /></div>
-                    <div className="prog-next">{this.store.lvlNextText}</div>
-                    <div className="prog-earn">
-                        <span className="tag">Rendeu hoje</span>
-                        <div className="e"><em>+1</em>intenção esclarecida</div>
-                        <div className="e"><em>+2</em>hipóteses testadas no preview</div>
-                        <div className="e"><em>+1</em>finding resolvido sem regressão</div>
-                    </div>
-                    <div className="prog-never">nunca rende: <b>tokens, horas, linhas, prompts</b></div>
-                    <div className="prog-arch">também presente: Architect · <button>ocultar leitura</button></div>
-                </div>
             </aside>
         );
     }
@@ -173,6 +158,7 @@ export class DockWidget extends AbstractInstrumentWidget {
                 <div className="st-row">AGUARDANDO VOCÊ</div>
                 <h4>Gravar mudança em {p.relPath}?</h4>
                 <p>Escrita governada sobre um arquivo real. Diff calculado pelo engine Rust ide-diff · {summary}. Um snapshot reversível é tirado antes — nada foi escrito ainda.</p>
+                {p.warning && <p style={{ color: 'var(--need)' }}>{p.warning}</p>}
                 {diff}
                 <div className="acts">
                     <button className="btn" onClick={() => this.commands.executeCommand(CMD_GOVERNED_PROPOSE)}>Recalcular</button>

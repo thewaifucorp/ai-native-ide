@@ -43,6 +43,12 @@ export interface WriteProposal {
     state: WriteState;
     /** A capped slice of the real diff, for the dock decision card. */
     preview: DiffLinePreview[];
+    /**
+     * Set when the adapter had to recover from a governance anomaly while
+     * producing this proposal. Shown to the user verbatim — a recovered anomaly
+     * is still an anomaly, and hiding it would be the whole problem again.
+     */
+    warning?: string;
 }
 
 /**

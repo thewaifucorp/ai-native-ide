@@ -41,7 +41,7 @@ import '../../src/browser/style/instrument-shell.css';
 // Bump LAYOUT_VERSION on any structural shell change to drop the stale layout
 // BEFORE Theia's ShellLayoutRestorer reads it. Runs at module-load, i.e. well
 // before `initializeLayout`. Preferences and other storage are untouched.
-const LAYOUT_VERSION = 'm9-workspace-tecnico';
+const LAYOUT_VERSION = 'm10-honestidade-ui-2';
 try {
     if (typeof localStorage !== 'undefined' && localStorage.getItem('iws.layoutVersion') !== LAYOUT_VERSION) {
         Object.keys(localStorage)

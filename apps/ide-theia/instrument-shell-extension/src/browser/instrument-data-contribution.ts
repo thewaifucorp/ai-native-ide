@@ -18,7 +18,7 @@
 // See governed-write-service.ts for the honest Node-stand-in vs Rust-broker line.
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
+import { CommandContribution, CommandRegistry, CommandService } from '@theia/core/lib/common/command';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
@@ -30,6 +30,7 @@ import { EditorManager } from '@theia/editor/lib/browser';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { EngineService } from 'engine-extension';
 import { InstrumentStore } from './instrument-store';
+import { CMD_BROKER_TRAIL } from './instrument-capability-contribution';
 
 /** Agent adapter probed for the "Contexto ativo" card. */
 const DEFAULT_AGENT = 'codex';
@@ -61,6 +62,7 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(EngineService) protected readonly engine!: EngineService;
     @inject(InstrumentStore) protected readonly store!: InstrumentStore;
+    @inject(CommandService) protected readonly commandService!: CommandService;
 
     onStart(): void {
         this.stateService.reachedState('ready').then(() => {
@@ -171,6 +173,11 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
                 : current + GOVERNED_BLOCK;                 // propose the addition
             const proposal = await this.governed.proposeWrite(rootUriStr, relPath, newContent);
             this.store.governedProposed(proposal);
+            if (proposal.warning) {
+                // A recovered governance anomaly is still reported, not swallowed.
+                this.messages.warn(proposal.warning);
+            }
+            this.refreshTrail();
         } catch (err) {
             this.messages.error(`Falha ao propor mudança: ${this.msg(err)}`);
         }
@@ -184,6 +191,7 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
         try {
             const updated = await this.governed.approve(proposal.id);
             this.store.governedApproved(updated);
+            this.refreshTrail();
         } catch (err) {
             this.messages.error(`Falha ao aplicar escrita: ${this.msg(err)}`);
         }
@@ -197,9 +205,16 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
         try {
             const updated = await this.governed.rollback(proposal.id);
             this.store.governedRolledBack(updated);
+            this.refreshTrail();
         } catch (err) {
             this.messages.error(`Falha ao reverter escrita: ${this.msg(err)}`);
         }
+    }
+
+    /** Re-read the broker's own trail after a real effect, so the pulse strand,
+     *  the timeline drawer and the Overview list stay in step with governance. */
+    protected refreshTrail(): void {
+        this.commandService.executeCommand(CMD_BROKER_TRAIL);
     }
 
     protected msg(err: unknown): string {

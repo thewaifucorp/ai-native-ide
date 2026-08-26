@@ -30,7 +30,7 @@ import URI from '@theia/core/lib/common/uri';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import * as fs from 'fs';
 import * as path from 'path';
-import { BrokerActivity, EngineService } from 'engine-extension';
+import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
 import {
     GovernedWriteService,
     WriteProposal,
@@ -39,6 +39,30 @@ import {
 
 /** Fixed owner identity for effects proposed through the instrument shell. */
 const OWNER = 'owner:instrument-ide';
+
+/**
+ * Per-process prefix for effect ids.
+ *
+ * ── WHY THIS EXISTS (a real governance bug this fixes) ────────────────────
+ * The broker's approval gate persists in `<root>/.instrument/effects.sqlite3`,
+ * and a grant is matched by (owner, effect id, path, content). This service used
+ * to number effects `w1, w2, …` from a counter that RESTARTED at 1 on every
+ * backend boot. So an approval granted in one session and left unconsumed — the
+ * user approves, the confirming propose never happens, the IDE is closed — stayed
+ * valid, and the NEXT session's first proposal reused `w1`. Same id, same file,
+ * same bytes: the gate matched and the broker EXECUTED the write on the first
+ * propose, with nobody deciding.
+ *
+ * Reproduced against the real sidecar: propose `w1` + approve, restart the
+ * sidecar, propose `w1` again with the same content -> `{written: true}` and the
+ * file changed on disk. Also observed in the running app.
+ *
+ * A process-unique prefix makes an effect id unrepeatable across sessions, so a
+ * stale grant can never match a future proposal. `verifyQueued` below is the
+ * belt-and-braces check: if a queueing propose ever comes back executed anyway,
+ * we do not paper over it.
+ */
+const EFFECT_PREFIX = `w${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 
 interface StoredRecord {
     proposal: WriteProposal;
@@ -98,6 +122,69 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
 
         // Real diff via the Rust ide-diff engine — same round trip as the demo.
         const hunks = await this.engine.diff(original, newContent);
+
+        // Process-unique, monotonic id: never reused by a later session.
+        let id = `${EFFECT_PREFIX}-${this.seq++}`;
+
+        // QUEUE the effect in the REAL Rust broker. It writes nothing yet — it
+        // records the proposal and returns awaiting_approval.
+        let queued = await this.engine.brokerPropose(rootFsPath, OWNER, id, relPath, newContent);
+
+        // ── DEFENSE IN DEPTH ───────────────────────────────────────────────
+        // With process-unique ids this must not happen. If it ever does, an
+        // effect got executed without a decision, so: revert it through the
+        // broker's own snapshot, re-propose under a fresh id, and report what
+        // actually happened — including the case where the revert fails and the
+        // bytes are still on disk. Never report `awaiting` for a write that ran.
+        let warning: string | undefined;
+        if (queued.written === true) {
+            let reverted = false;
+            try {
+                const rollback = await this.engine.brokerRollback(rootFsPath, OWNER, id);
+                reverted = rollback.rolledback === true;
+            } catch {
+                reverted = false;
+            }
+            const onDisk = fs.existsSync(absPath) ? fs.readFileSync(absPath, 'utf8') : '';
+            if (!reverted && onDisk === newContent) {
+                // The write stands and the broker could not undo it. Hand back an
+                // APPROVED proposal so the dock offers a rollback, and say so.
+                const applied = this.summarize(hunks, id, relPath, 'approved');
+                applied.warning =
+                    'Esta escrita foi executada sem aprovação (autorização pendente de uma ' +
+                    'sessão anterior) e o rollback do broker falhou. Os bytes estão no disco.';
+                this.records.set(id, { proposal: applied, rootFsPath, relPath, proposed: newContent });
+                return applied;
+            }
+            warning = reverted
+                ? 'Uma autorização pendente de uma sessão anterior executou esta escrita ' +
+                  'sozinha. Ela foi revertida pelo snapshot do broker e a proposta foi ' +
+                  'refeita — nada ficou aplicado sem você decidir.'
+                : 'Uma autorização pendente de uma sessão anterior disparou esta escrita, ' +
+                  'mas o arquivo no disco não contém a mudança. A proposta foi refeita.';
+            id = `${EFFECT_PREFIX}-${this.seq++}`;
+            queued = await this.engine.brokerPropose(rootFsPath, OWNER, id, relPath, newContent);
+        }
+
+        if (queued.awaiting_approval !== true) {
+            throw new Error(
+                `broker did not queue effect ${id} for approval (got ${JSON.stringify(queued)})`
+            );
+        }
+
+        const proposal = this.summarize(hunks, id, relPath, 'awaiting');
+        proposal.warning = warning;
+        this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
+        return proposal;
+    }
+
+    /** Build the wire-level proposal from the real diff. */
+    protected summarize(
+        hunks: Hunk[],
+        id: string,
+        relPath: string,
+        state: WriteProposal['state']
+    ): WriteProposal {
         let added = 0;
         let removed = 0;
         const preview: DiffLinePreview[] = [];
@@ -113,29 +200,15 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
                 }
             }
         }
-
-        const id = `w${this.seq++}`;
-
-        // QUEUE the effect in the REAL Rust broker. It writes nothing yet — it
-        // records the proposal and returns awaiting_approval.
-        const queued = await this.engine.brokerPropose(rootFsPath, OWNER, id, relPath, newContent);
-        if (queued.awaiting_approval !== true) {
-            throw new Error(
-                `broker did not queue effect ${id} for approval (got ${JSON.stringify(queued)})`
-            );
-        }
-
-        const proposal: WriteProposal = {
+        return {
             id,
             relPath,
             addedLines: added,
             removedLines: removed,
             hunkCount: hunks.length,
-            state: 'awaiting',
+            state,
             preview
         };
-        this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
-        return proposal;
     }
 
     async approve(id: string): Promise<WriteProposal> {

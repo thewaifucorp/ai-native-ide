@@ -69,6 +69,7 @@ export class InstrumentCapabilityContribution
         this.stateService.reachedState('ready').then(() => {
             this.refreshCapabilities();
             this.refreshHarness();
+            this.brokerTrail();
         });
         this.workspace.onWorkspaceChanged(() => {
             this.refreshCapabilities();
