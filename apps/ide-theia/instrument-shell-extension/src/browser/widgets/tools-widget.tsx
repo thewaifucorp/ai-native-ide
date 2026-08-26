@@ -467,13 +467,30 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 </div>
                 <small>
                     manifesto v{m.manifestVersion} · provider {m.version} ·
-                    estado escrito por {provider.stateVersion} · {provider.items.length} itens preservados
+                    estado escrito por {provider.stateVersion} · {provider.items.length} artefatos
                 </small>
+                <small>manifesto: {provider.manifestPath}</small>
                 <small>reivindica: {m.claims.join(', ') || 'nada'}</small>
+                <small>artefatos: {m.artifacts.itemsDir}/*{m.artifacts.itemExtension}</small>
                 {m.workflow && <small>workflow: {m.workflow.states.join(' → ')}</small>}
                 {m.hierarchy && <small>hierarquia: {m.hierarchy.levels.join(' / ')}</small>}
                 {m.primaryStatus && (
                     <small>{m.primaryStatus.label}: {m.primaryStatus.values.join(' · ')}</small>
+                )}
+                {m.limitations && m.limitations.length > 0 && (
+                    <ul className="cap-degr">
+                        {m.limitations.map(l => <li key={l}>{l}</li>)}
+                    </ul>
+                )}
+                {provider.items.length > 0 && (
+                    <div className="cap-providers">
+                        {provider.items.map(item => (
+                            <div className="cap-provider" key={item.id} title={item.path}>
+                                <span className="st ok" />
+                                <span className="cap-provider-name">{item.title}</span>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
         );

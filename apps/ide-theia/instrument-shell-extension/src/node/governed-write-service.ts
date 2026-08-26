@@ -77,6 +77,25 @@ interface StoredRecord {
 /** Cap on diff lines shipped to the dock decision card. */
 const PREVIEW_CAP = 14;
 
+/**
+ * How many stale grants `approve` may drain before giving up.
+ *
+ * ── WHY THIS EXISTS (second real governance bug) ──────────────────────────
+ * `broker_approve(root, owner)` grants THE OLDEST PENDING effect in that scope,
+ * and the broker's queue persists in `.instrument/effects.sqlite3`. So when more
+ * than one effect is pending — trivial once agents propose over MCP, or simply
+ * after a session left a proposal un-decided — a person clicking "Permitir" on
+ * proposal B could grant proposal A, and B stays awaiting. Observed: an agent
+ * proposal in the dock refused to apply with
+ * `broker did not execute approved effect … (got {awaiting_approval: true})`.
+ *
+ * Until the sidecar can approve BY EFFECT ID, this adapter keeps the invariant
+ * two ways: it refuses to stack proposals (see `proposeWrite`), and `approve`
+ * drains grants until the effect the user actually decided on is the one that
+ * executes — reporting how many stale queue entries it had to clear.
+ */
+const APPROVE_DRAIN_LIMIT = 8;
+
 @injectable()
 export class GovernedWriteServiceImpl implements GovernedWriteService {
 
@@ -114,6 +133,21 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
 
     async proposeWrite(rootUri: string, relPath: string, newContent: string): Promise<WriteProposal> {
         const rootFsPath = FileUri.fsPath(new URI(rootUri));
+
+        // ONE DECISION AT A TIME, PER PROJECT. The broker's approval is positional
+        // (oldest pending first), so stacking proposals would let a person approve
+        // one diff and authorize another. Refuse instead, and say what is blocking
+        // — an agent gets the id and path it has to resolve first.
+        const blocking = [...this.records.values()]
+            .find(r => r.rootFsPath === rootFsPath && r.proposal.state === 'awaiting');
+        if (blocking) {
+            throw new Error(
+                `já existe uma escrita aguardando decisão neste projeto: ` +
+                `${blocking.proposal.relPath} (${blocking.proposal.id}). ` +
+                'Aprove ou reverta antes de propor outra — a aprovação do broker é ' +
+                'posicional, então propostas empilhadas poderiam trocar de lugar.'
+            );
+        }
         const absPath = this.confine(rootFsPath, relPath);
         if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
             throw new Error(`no such workspace file: ${relPath}`);
@@ -213,23 +247,52 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
 
     async approve(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
-        // Grant the broker's SqliteApprovalGate, then re-send the identical
-        // effect: the broker now executes the write and snapshots the pre-image.
-        await this.engine.brokerApprove(rec.rootFsPath, OWNER);
-        const written = await this.engine.brokerPropose(
-            rec.rootFsPath,
-            OWNER,
-            id,
-            rec.relPath,
-            rec.proposed
-        );
-        if (written.written !== true) {
-            throw new Error(
-                `broker did not execute approved effect ${id} (got ${JSON.stringify(written)})`
+        // Grant, then re-send the identical effect: the broker executes the write
+        // and snapshots the pre-image. The grant is POSITIONAL, so a stale pending
+        // entry left in the persistent queue can swallow it — drain until OUR
+        // effect is the one that runs, and count what we cleared.
+        let drained = 0;
+        for (let attempt = 0; attempt < APPROVE_DRAIN_LIMIT; attempt++) {
+            await this.engine.brokerApprove(rec.rootFsPath, OWNER);
+            const written = await this.engine.brokerPropose(
+                rec.rootFsPath,
+                OWNER,
+                id,
+                rec.relPath,
+                rec.proposed
             );
+            if (written.written === true) {
+                rec.proposal.state = 'approved';
+                if (drained > 0) {
+                    rec.proposal.warning =
+                        `A fila do broker tinha ${drained} autorização(ões) pendente(s) de ` +
+                        'efeitos anteriores; elas foram consumidas para que a decisão caísse ' +
+                        'nesta escrita. Nenhuma delas gravou nada.';
+                }
+                return rec.proposal;
+            }
+            if (written.awaiting_approval !== true) {
+                throw new Error(
+                    `broker did not execute approved effect ${id} (got ${JSON.stringify(written)})`
+                );
+            }
+            drained++;
         }
-        rec.proposal.state = 'approved';
-        return rec.proposal;
+        throw new Error(
+            `a aprovação não chegou ao efeito ${id} após ${APPROVE_DRAIN_LIMIT} tentativas: ` +
+            'a fila persistente do broker tem entradas pendentes demais. A correção definitiva ' +
+            'é o sidecar aprovar por effect id.'
+        );
+    }
+
+    /** Proposals still awaiting a decision (or awaiting a rollback) for this
+     *  project, newest first — including the ones an agent created over MCP. */
+    async pending(rootUri: string): Promise<WriteProposal[]> {
+        const rootFsPath = FileUri.fsPath(new URI(rootUri));
+        return [...this.records.values()]
+            .filter(r => r.rootFsPath === rootFsPath && r.proposal.state !== 'rolledback')
+            .map(r => r.proposal)
+            .reverse();
     }
 
     /** Straight passthrough of the broker's audit trail — no reinterpretation. */

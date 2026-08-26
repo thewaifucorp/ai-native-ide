@@ -3,8 +3,9 @@
 //  • the M3/M4 governed-write service (real Rust broker behind every write);
 //  • the CAPABILITY REGISTRY (generic chassis + its hosted definitions) and the
 //    same-origin route that serves a capability's generated artifacts;
-//  • the HARNESS PROVIDER registry (versioned manifests, exclusive slots,
-//    composable extensions, migration, and no path around the broker).
+//  • the HARNESS PROVIDER registry (manifest/work artifacts discovered from the
+//    project, exclusive slots, composable extensions, migration, no bypass);
+//  • the MCP surface that exposes all of the above to an external agent.
 //
 // The EngineService (Rust sidecar: ide-diff, broker, agent probe) that these
 // services inject is bound by engine-extension's own backend module — both load
@@ -20,6 +21,7 @@ import { GovernedWriteServiceImpl } from './governed-write-service';
 import { CapabilityRegistryService } from './capability-registry-service';
 import { CapabilitySiteContribution } from './capability-site-contribution';
 import { HarnessRegistryService } from './harness-registry-service';
+import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
     bind(GovernedWriteServiceImpl).toSelf().inSingletonScope();
@@ -35,6 +37,11 @@ export default new ContainerModule(bind => {
     // (today: `<root>/.aag/graph.html` for the Grafo capability).
     bind(CapabilitySiteContribution).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(CapabilitySiteContribution);
+
+    // Agent-facing MCP surface over the SAME services the UI drives, so an
+    // external agent gets the IDE's guarantees instead of writing behind them.
+    bind(McpContribution).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(McpContribution);
 
     bind(ConnectionHandler)
         .toDynamicValue(

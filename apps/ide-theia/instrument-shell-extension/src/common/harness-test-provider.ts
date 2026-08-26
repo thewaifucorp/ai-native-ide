@@ -1,5 +1,11 @@
 // The IDE's own PROOF provider for the harness contract.
 //
+// These constants are SEED manifests, not the provider mechanism: `register`
+// writes them to `.harness/providers/<id>.json`, and from then on the registry
+// reads the file. Deleting the constants would not remove the provider
+// from a project, and writing an equivalent file by hand — or from an agent —
+// registers a provider the IDE has never heard of.
+//
 // It is not a work method — it is the minimal real thing that exercises every
 // clause of common/harness-protocol.ts: a versioned manifest, exclusive slot
 // claims, composable extensions, and a v2 the registry can migrate to while the
@@ -28,6 +34,18 @@ export const TEST_PROVIDER_V1: HarnessManifest = {
         importers: ['prova:importador-json'],
         views: ['prova:visao-de-slots']
     },
+    artifacts: {
+        itemsDir: '.harness/items/harness-test',
+        itemExtension: '.md'
+    },
+    coverage: [
+        'slots exclusivos de workflow, hierarquia e status principal',
+        'itens de trabalho como arquivos markdown versionáveis'
+    ],
+    limitations: [
+        'não executa checks nem produz evidência — só declara os nomes',
+        'não é um método de trabalho real; existe para provar o contrato'
+    ],
     workflow: {
         states: ['proposto', 'em-execucao', 'verificado'],
         initial: 'proposto'
@@ -46,6 +64,7 @@ export const TEST_PROVIDER_V2: HarnessManifest = {
     ...TEST_PROVIDER_V1,
     label: 'Harness de prova (v2)',
     version: '2.0.0',
+    migratesFrom: ['1.0.0'],
     extensions: {
         ...TEST_PROVIDER_V1.extensions,
         checks: ['prova:contrato-do-harness', 'prova:migracao-preserva-estado']
@@ -64,5 +83,9 @@ export const CONFLICT_PROVIDER: HarnessManifest = {
     manifestVersion: 1,
     claims: ['workflow'],
     extensions: { checks: [], packs: [], importers: [], views: [] },
+    artifacts: {
+        itemsDir: '.harness/items/harness-conflict',
+        itemExtension: '.md'
+    },
     workflow: { states: ['aberto', 'fechado'], initial: 'aberto' }
 };

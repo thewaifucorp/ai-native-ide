@@ -44,7 +44,20 @@ class FakeEngine implements Partial<EngineService> {
         effectId: string
     ): Promise<ProposeResult> {
         this.calls.push(`propose:${effectId}`);
-        return this.proposeAnswers.shift() ?? { awaiting_approval: true };
+        if (this.proposeAnswers.length > 0) {
+            return this.proposeAnswers.shift()!;
+        }
+        // Model the real broker: an outstanding grant makes the next identical
+        // propose execute, unless an OLDER queue entry consumed that grant first.
+        if (this.grants > 0) {
+            this.grants--;
+            if (this.staleGrants > 0) {
+                this.staleGrants--;
+                return { awaiting_approval: true };
+            }
+            return { written: true, path: 'x' };
+        }
+        return { awaiting_approval: true };
     }
 
     /** Flip to simulate a broker that lost its snapshot (e.g. after a restart). */
@@ -62,8 +75,14 @@ class FakeEngine implements Partial<EngineService> {
         return { rolledback: true };
     }
 
+    /** Outstanding approvals, as the persistent gate would hold them. */
+    grants = 0;
+    /** How many approvals are swallowed by older queue entries before ours runs. */
+    staleGrants = 0;
+
     async brokerApprove(): Promise<{ approved_id: number }> {
         this.calls.push('approve');
+        this.grants++;
         return { approved_id: 1 };
     }
 }
@@ -99,9 +118,9 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
     });
 
     it('never reuses an effect id across processes (the actual root cause)', async () => {
-        const { service, engine, rootUri } = fixture();
-        engine.proposeAnswers = [{ awaiting_approval: true }, { awaiting_approval: true }];
+        const { service, rootUri } = fixture();
         const first = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
+        await service.approve(first.id);     // one decision at a time, per project
         const second = await service.proposeWrite(rootUri, 'alvo.md', 'b\n');
         assert.notStrictEqual(first.id, second.id);
         // The id carries a per-process prefix, so `w1` from an earlier session can
@@ -145,6 +164,43 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         await assert.rejects(
             () => service.proposeWrite(rootUri, 'alvo.md', 'x'),
             /did not queue effect/
+        );
+    });
+
+    it('refuses to stack a second proposal while one awaits a decision', async () => {
+        const { service, rootUri } = fixture();
+        const first = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
+        assert.strictEqual(first.state, 'awaiting');
+        // Positional approval means two pending proposals could swap places, so the
+        // adapter refuses instead of risking the wrong diff being authorized.
+        await assert.rejects(
+            () => service.proposeWrite(rootUri, 'alvo.md', 'b\n'),
+            /já existe uma escrita aguardando decisão/
+        );
+        // Resolving the first one frees the project again.
+        await service.approve(first.id);
+        const third = await service.proposeWrite(rootUri, 'alvo.md', 'c\n');
+        assert.strictEqual(third.state, 'awaiting');
+    });
+
+    it('drains stale grants so the approval lands on the decided effect', async () => {
+        const { service, engine, rootUri } = fixture();
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
+        // Two older queue entries swallow the first two approvals.
+        engine.staleGrants = 2;
+        const approved = await service.approve(proposal.id);
+        assert.strictEqual(approved.state, 'approved');
+        assert.match(approved.warning ?? '', /2 autorização/);
+        assert.strictEqual(engine.calls.filter(c => c === 'approve').length, 3);
+    });
+
+    it('gives up loudly when the queue cannot be drained', async () => {
+        const { service, engine, rootUri } = fixture();
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'a\n');
+        engine.staleGrants = 99;
+        await assert.rejects(
+            () => service.approve(proposal.id),
+            /aprovação não chegou ao efeito/
         );
     });
 

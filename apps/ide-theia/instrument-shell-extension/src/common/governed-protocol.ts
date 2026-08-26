@@ -72,6 +72,14 @@ export interface GovernedWriteService {
     rollback(id: string): Promise<WriteProposal>;
 
     /**
+     * Every proposal this backend is currently holding for the project, newest
+     * first. An agent (through MCP) proposes without any UI involved, so the
+     * frontend has to be able to ASK what is waiting — otherwise a write proposed
+     * by an agent would sit in the broker with nobody able to decide it.
+     */
+    pending(rootUri: string): Promise<WriteProposal[]>;
+
+    /**
      * The broker's own raw audit trail for this project: every propose,
      * awaiting-approval, snapshot, execute and rollback it recorded. Read on
      * demand — this is the evidence that a governed write is inspectable, not a

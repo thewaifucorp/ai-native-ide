@@ -70,6 +70,10 @@ export class InstrumentCapabilityContribution
             this.refreshCapabilities();
             this.refreshHarness();
             this.brokerTrail();
+            this.adoptPendingProposal();
+            // Agent proposals arrive out of band; ask periodically. A push channel
+            // over the RPC connection would be better and is not built yet.
+            window.setInterval(() => this.adoptPendingProposal(), 5000);
         });
         this.workspace.onWorkspaceChanged(() => {
             this.refreshCapabilities();
@@ -210,6 +214,35 @@ export class InstrumentCapabilityContribution
 
     /** The broker's raw trail, verbatim. On failure the store is cleared rather
      *  than showing a stale trail as if it were current. */
+    /** Adopt a proposal created outside this frontend — typically by an agent over
+     *  MCP. Without this the dock would only ever show proposals the UI itself
+     *  started, and an agent's write would wait for a decision nobody could see. */
+    async adoptPendingProposal(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        try {
+            const pending = await this.governed.pending(root);
+            const current = this.store.proposal;
+            const awaiting = pending.find(p => p.state === 'awaiting');
+            const next = awaiting ?? pending[0];
+            if (!next) {
+                return;
+            }
+            if (!current || current.id !== next.id) {
+                // Only adopt when the local card has nothing live to lose.
+                if (!current || current.state === 'rolledback' || current.state === 'approved') {
+                    this.store.governedProposed(next);
+                    this.messages.info(
+                        `Proposta de escrita em ${next.relPath} aguardando você ` +
+                        '(criada fora desta janela — provavelmente por um agente).'
+                    );
+                }
+            }
+        } catch { /* backend not ready yet — the next tick tries again */ }
+    }
+
     async brokerTrail(): Promise<void> {
         const root = this.root;
         if (!root) {
