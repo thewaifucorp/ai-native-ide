@@ -21,6 +21,7 @@ import { AbstractInstrumentWidget } from './abstract-instrument-widget';
 import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
     CMD_BROKER_TRAIL,
+    CMD_CHECKS_RUN,
     CMD_SESSION_CANCEL,
     CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
@@ -28,6 +29,18 @@ import {
     CMD_SESSION_SUBMIT
 } from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
+
+/** State words shown on a finding.
+ *
+ *  `não executado` and `desconhecido` get their own words on purpose: rendering
+ *  either as a neutral tick would make an absence of knowledge look like a
+ *  small pass, which is the one thing this surface must never do. */
+const CHECK_STATE_LABEL: Record<string, string> = {
+    passed: 'passou',
+    failed: 'falhou',
+    unknown: 'desconhecido',
+    not_run: 'não executado'
+};
 
 /** Short label per broker event kind, for the recent-activity list. */
 const KIND_LABEL: Record<string, string> = {
@@ -201,6 +214,118 @@ export class WorkWidget extends AbstractInstrumentWidget {
         return capability.status === 'ready' ? 'ok' : capability.status === 'degraded' ? 'run' : 'idle';
     }
 
+    /**
+     * The deterministic Layer-0 report (§4).
+     *
+     * Two rules drive every branch below, and both are the point of the surface
+     * rather than decoration:
+     *  • `unknown` / `não executado` never render as approval. They get their own
+     *    state word and their own colour, never the green one.
+     *  • a result always shows the observed fact that produced it — for a tool
+     *    check that is the raw command and its exit status.
+     */
+    protected renderChecks(): React.ReactNode {
+        const run = this.store.checks;
+        const busy = this.store.checksBusy;
+
+        if (!run) {
+            return (
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Checks determinísticos</b>
+                        <span className="cap-pill not-installed">não executados</span>
+                    </div>
+                    <small className="cap-hint">
+                        nada foi medido nesta sessão · rodar os comandos declarados é ato explícito,
+                        nunca automático ao abrir o projeto
+                    </small>
+                    <div className="cap-actions">
+                        <button
+                            className="cap-btn primary"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_CHECKS_RUN, false)}
+                        >
+                            {busy ? 'medindo…' : 'Medir'}
+                        </button>
+                        <button
+                            className="cap-btn"
+                            disabled={busy}
+                            title="Também executa build/testes/tipos declarados em .instrument/checks.json"
+                            onClick={() => this.commands.executeCommand(CMD_CHECKS_RUN, true)}
+                        >
+                            Medir e rodar comandos
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const { report } = run;
+        // A run with no failures is NOT announced as approval while anything is
+        // unknown or not run — that is exactly the conflation the engine avoids.
+        const settled = report.unknown === 0 && report.notRun === 0;
+        const pill = report.failed > 0 ? 'unavailable' : settled ? 'ready' : 'not-installed';
+        const verdict =
+            report.failed > 0
+                ? `${report.failed} falhando`
+                : settled
+                    ? 'tudo passou'
+                    : 'sem falhas, mas incompleto';
+
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Checks determinísticos</b>
+                    <span className={`cap-pill ${pill}`}>{verdict}</span>
+                </div>
+                <small className="cap-hint">
+                    {report.passed} passou · {report.failed} falhou · {report.unknown} desconhecido ·{' '}
+                    {report.notRun} não executado — desconhecido e não executado não são aprovação
+                </small>
+                {run.not_run_reason && <p className="cap-detail">{run.not_run_reason}</p>}
+                <small className="cap-hint">
+                    varredura leu {run.files_scanned} arquivo(s)
+                    {run.files_skipped > 0 && ` · ${run.files_skipped} pulado(s) por tamanho ou leitura`}
+                </small>
+
+                {run.declared.length > 0 && (
+                    <small className="cap-hint">
+                        declarado: {run.declared.map(d => `${d.slug} → ${d.command}`).join(' · ')}
+                    </small>
+                )}
+
+                {report.findings.map(f => (
+                    <div className="cap-receipt" key={f.id}>
+                        <span className={`cap-receipt-action check-${f.state}`}>
+                            {CHECK_STATE_LABEL[f.state]}
+                        </span>
+                        <span className="cap-receipt-detail">{f.title}</span>
+                        <small>{f.evidence}</small>
+                        {f.remediation && <small className="cap-remediation">{f.remediation}</small>}
+                    </div>
+                ))}
+
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_CHECKS_RUN, false)}
+                    >
+                        {busy ? 'medindo…' : 'Medir de novo'}
+                    </button>
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        title="Também executa build/testes/tipos declarados em .instrument/checks.json"
+                        onClick={() => this.commands.executeCommand(CMD_CHECKS_RUN, true)}
+                    >
+                        Medir e rodar comandos
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     protected renderAgentRow(): React.ReactNode {
         const agent = this.store.agent;
         return (
@@ -216,15 +341,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
     protected renderQueuedSurfaces(): React.ReactNode {
         return (
             <div className="h-sec">
-                <span className="tag">Ainda não medido<span className="queued">na fila</span></span>
-                <div className="placeholder">
-                    <b>Checks, preview e evidência</b>
-                    <p>
-                        Nenhum motor de checks, preview ou reconciliação roda aqui ainda, então esta
-                        área não mostra números. Quando rodar, cada resultado vem com o comando cru
-                        que o produziu — e `unknown` / `não executado` não vira verde.
-                    </p>
-                </div>
+                {this.renderChecks()}
                 <div className="placeholder">
                     <b>Produto semântico e divergências</b>
                     <p>

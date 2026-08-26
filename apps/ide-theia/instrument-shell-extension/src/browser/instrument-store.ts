@@ -11,7 +11,7 @@ import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { WriteProposal } from '../common/governed-protocol';
 import { CapabilityState } from '../common/capability-protocol';
-import { BrokerActivity } from 'engine-extension';
+import { BrokerActivity, HarnessRun } from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
 import { AgentSessionSnapshot } from '../common/agent-session-protocol';
@@ -83,6 +83,11 @@ export class InstrumentStore {
     //    cross the broker before reaching the project.
     session: AgentSessionSnapshot | undefined;
     sessionBusy = false;
+
+    // ── REAL checks determinísticos (§4). Nome `checks`, não `harness`: o store
+    //    já tem `harness`, que é o MANIFESTO de provider do projeto — outro eixo.
+    checks: HarnessRun | undefined;
+    checksBusy = false;
 
     // ── REAL modelo semântico (§3): recursos, autoridades e divergências
     //    calculadas a partir dos artefatos em `.product/`.
@@ -245,6 +250,21 @@ export class InstrumentStore {
     setSessionBusy(busy: boolean): void {
         this.sessionBusy = busy;
         this.emit();
+    }
+
+    setChecks(run: HarnessRun | undefined): void {
+        this.checks = run;
+        this.emit();
+    }
+
+    setChecksBusy(busy: boolean): void {
+        this.checksBusy = busy;
+        this.emit();
+    }
+
+    /** Failed findings, which is what the status strip counts. */
+    get checksFailed(): number {
+        return this.checks ? this.checks.report.failed : 0;
     }
 
     setObserver(report: ObserverReport | undefined): void {

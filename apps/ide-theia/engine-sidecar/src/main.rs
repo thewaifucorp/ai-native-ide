@@ -23,6 +23,8 @@
 //! per (owner, workspace-root), kept in a process-wide registry so the
 //! propose → approve → propose-executes → rollback lifecycle spans requests.
 
+mod harness;
+
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -287,6 +289,28 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "rolledback": true }))
+        }
+        // §4 — deterministic Layer-0 checks. `run_tools` defaults to FALSE: a
+        // refresh must never execute a command a repository file declared.
+        // Running them is an explicit act, per call.
+        "harness_run" => {
+            #[derive(Deserialize)]
+            struct HarnessRunParams {
+                root: String,
+                owner: String,
+                #[serde(default)]
+                run_tools: bool,
+            }
+            let p: HarnessRunParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let broker = broker_for(&p.root, &p.owner).await?;
+            let pending = broker.pending_count().await.map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            // Walking the tree and running builds is blocking work; keep it off
+            // the async worker so the sidecar stays responsive.
+            let run = tokio::task::spawn_blocking(move || harness::run(&root, pending, p.run_tools))
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(run).map_err(|e| e.to_string())
         }
         "broker_activity" => {
             let p: BrokerScopeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;

@@ -93,6 +93,15 @@ export interface EngineService {
     ): Promise<{ awaiting_approval?: boolean; written?: boolean; path?: string }>;
 
     /**
+     * Run the deterministic Layer-0 checks (§4) over a project.
+     *
+     * `runTools` executes the commands declared in `.instrument/checks.json`
+     * and defaults to FALSE — opening or refreshing a project must never run
+     * something a repository file asked for. Asking is a per-call, explicit act.
+     */
+    harnessRun(root: string, owner: string, runTools?: boolean): Promise<HarnessRun>;
+
+    /**
      * Approve ONE pending effect, named by its id.
      *
      * It used to approve "the next pending effect" for the scope, which
@@ -155,6 +164,59 @@ export interface EngineService {
         allow: boolean,
         denyEndsTurn?: boolean
     ): Promise<{ answered: boolean }>;
+}
+
+/** A check's outcome. `unknown` and `not_run` are distinct absences of
+ *  knowledge, and NEITHER is ever an approval. */
+export type CheckState = 'passed' | 'failed' | 'unknown' | 'not_run';
+
+export type CheckSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
+
+/** One evaluated check. `evidence` is the observed fact behind `state` — for a
+ *  tool check it carries the raw command and its exit status. */
+export interface Finding {
+    id: string;
+    /** camelCase because `ide_harness` serializes with `rename_all = "camelCase"`. */
+    checkId: string;
+    layer: number;
+    title: string;
+    state: CheckState;
+    severity: CheckSeverity;
+    /** The assertion being evaluated. */
+    claim: string;
+    /** The observed fact supporting the state. */
+    evidence: string;
+    remediation?: string | null;
+}
+
+export interface HarnessReport {
+    findings: Finding[];
+    passed: number;
+    failed: number;
+    unknown: number;
+    /** camelCase, like the rest of `ide_harness`'s own types. The sidecar's own
+     *  wrapper (`HarnessRun`) is snake_case — the two crates differ, and that
+     *  seam is exactly where a silently-undefined field hides. */
+    notRun: number;
+}
+
+/** A command declared in `.instrument/checks.json`. */
+export interface DeclaredCheck {
+    slug: string;
+    command: string;
+    cwd?: string | null;
+}
+
+export interface HarnessRun {
+    report: HarnessReport;
+    declared: DeclaredCheck[];
+    ran_tools: boolean;
+    /** Why the tool checks are `not_run`. Null when they ran. Rendering this is
+     *  not optional: a `not_run` with no reason reads as unfinished when it is
+     *  usually unconfigured. */
+    not_run_reason?: string | null;
+    files_scanned: number;
+    files_skipped: number;
 }
 
 /**

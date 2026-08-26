@@ -81,8 +81,9 @@ export class PulseWidget extends AbstractInstrumentWidget {
                     </div>
                     <div className="stats">
                         <span>{this.store.resources.length} recursos</span>
-                        {/* No check engine yet (queue item 4) — muted, never green. */}
-                        <span className="none" title="Nenhum motor de checks foi executado ainda">checks não executados</span>
+                        {/* Never green while anything is unknown or not run: an
+                            absence of knowledge is not a small pass. */}
+                        {this.renderChecksStat()}
                         <span className={this.store.pendingIsWarn ? 'warn' : ''}>{this.store.pendingText}</span>
                         {this.store.externalDriftCount > 0 && (
                             <span className="warn" title="Arquivos mudados fora do IDE, aguardando conciliação">
@@ -99,6 +100,42 @@ export class PulseWidget extends AbstractInstrumentWidget {
     }
 
     /** One notch per real broker event, spread across the strand in order. */
+    /** Check summary for the status strip, or an honest "not measured". */
+    protected renderChecksStat(): React.ReactNode {
+        const run = this.store.checks;
+        if (!run) {
+            return (
+                <span className="none" title="Nenhum check foi executado nesta sessão">
+                    checks não executados
+                </span>
+            );
+        }
+        const { failed, unknown, notRun } = run.report;
+        if (failed > 0) {
+            return (
+                <span className="warn" title="Checks determinísticos falhando">
+                    {failed} check(s) falhando
+                </span>
+            );
+        }
+        const missing = unknown + notRun;
+        if (missing > 0) {
+            return (
+                <span
+                    className="none"
+                    title="Sem falhas, mas há checks sem resultado — isso não é aprovação"
+                >
+                    {missing} check(s) sem resultado
+                </span>
+            );
+        }
+        return (
+            <span className="ok" title="Todos os checks determinísticos passaram">
+                checks passando
+            </span>
+        );
+    }
+
     protected renderNotches(): React.ReactNode {
         const trail = (this.store.brokerActivity ?? []).slice(-NOTCH_CAP);
         if (trail.length === 0) {

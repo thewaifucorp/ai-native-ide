@@ -24,6 +24,7 @@ import URI from '@theia/core/lib/common/uri';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
+import { ChecksService } from '../common/checks-protocol';
 import { AgentSessionService } from '../common/agent-session-protocol';
 import { ProductService } from '../common/product-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
@@ -63,6 +64,7 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
+export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
 /** Projeto semântico (§3). */
 export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
@@ -87,6 +89,7 @@ export class InstrumentCapabilityContribution
     @inject(HarnessService) protected readonly harness!: HarnessService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
+    @inject(ChecksService) protected readonly checks!: ChecksService;
     @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
     @inject(AgentSessionService) protected readonly session!: AgentSessionService;
     @inject(ProductService) protected readonly product!: ProductService;
@@ -198,6 +201,13 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
             { execute: () => this.sessionCancel() }
+        );
+        commands.registerCommand(
+            {
+                id: CMD_CHECKS_RUN,
+                label: 'Instrument: rodar checks determinísticos (§4)'
+            },
+            { execute: (runTools?: boolean) => this.runChecks(runTools === true) }
         );
         commands.registerCommand(
             { id: CMD_SESSION_PERMISSION, label: 'Instrument: decidir permissão do agente' },
@@ -545,6 +555,42 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Falha ao decidir permissão: ${this.msg(err)}`);
         } finally {
             this.store.setSessionBusy(false);
+        }
+    }
+
+    /**
+     * Runs the deterministic Layer-0 checks.
+     *
+     * `runTools` executes the commands declared in `.instrument/checks.json`.
+     * It is false unless the person asked for it: a repository file must never
+     * get its commands run just because a panel refreshed.
+     */
+    protected async runChecks(runTools: boolean): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setChecksBusy(true);
+        try {
+            const run = await this.checks.run(root, runTools);
+            this.store.setChecks(run);
+            const { failed, unknown, notRun } = run.report;
+            if (failed > 0) {
+                this.messages.error(`${failed} check(s) falharam.`);
+            } else if (unknown > 0 || notRun > 0) {
+                // Explicitly NOT a success message: nothing here is an approval.
+                this.messages.info(
+                    `Nenhuma falha, mas ${unknown + notRun} check(s) sem resultado — não é aprovação.`
+                );
+            } else {
+                this.messages.info('Todos os checks passaram.');
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao rodar checks: ${this.msg(err)}`);
+            // Never leave a stale report on screen claiming to describe now.
+            this.store.setChecks(undefined);
+        } finally {
+            this.store.setChecksBusy(false);
         }
     }
 

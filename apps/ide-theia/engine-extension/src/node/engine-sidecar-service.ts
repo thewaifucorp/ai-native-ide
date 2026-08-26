@@ -6,7 +6,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { AgentEvent, AgentProbe, BrokerActivity, EngineService, Hunk } from '../common/engine-protocol';
+import { AgentEvent, AgentProbe, BrokerActivity, EngineService, HarnessRun, Hunk } from '../common/engine-protocol';
 
 interface PendingRequest {
     resolve(value: unknown): void;
@@ -158,6 +158,10 @@ export class EngineSidecarService implements EngineService {
             relative_path: relativePath,
             content
         });
+    }
+
+    harnessRun(root: string, owner: string, runTools = false): Promise<HarnessRun> {
+        return this.call('harness_run', { root, owner, run_tools: runTools });
     }
 
     brokerApprove(root: string, owner: string, effectId: string): Promise<{ approved_id: number }> {

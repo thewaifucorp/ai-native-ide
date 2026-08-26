@@ -685,3 +685,12 @@ body.game .iws .strip .lvl-strip { display: inline; }
   white-space: pre-wrap; word-break: break-word;
   font: 400 11px var(--mono); color: var(--text); line-height: 1.45;
 }
+
+/* ---- estados de check (§4) ----
+   `unknown` e `not_run` NUNCA usam --ok. Um estado de ausência de conhecimento
+   pintado de verde é a única coisa que esta superfície não pode fazer. */
+.iws .check-passed { color: var(--ok); }
+.iws .check-failed { color: var(--bad); }
+.iws .check-unknown { color: var(--need); }
+.iws .check-not_run { color: var(--faint); }
+.iws .cap-remediation { color: var(--need); }

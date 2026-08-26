@@ -22,6 +22,8 @@ import { CapabilityRegistryService } from './capability-registry-service';
 import { CapabilitySiteContribution } from './capability-site-contribution';
 import { HarnessRegistryService } from './harness-registry-service';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
+import { CHECKS_SERVICE_PATH, ChecksService } from '../common/checks-protocol';
+import { ChecksServiceImpl } from './checks-service';
 import { ObserverServiceImpl } from './observer-service';
 import { WriteSourceLedger } from './write-source-ledger';
 import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent-session-protocol';
@@ -98,6 +100,15 @@ export default new ContainerModule(bind => {
             ctx =>
                 new RpcConnectionHandler<object>(OBSERVER_SERVICE_PATH, () =>
                     ctx.container.get<ObserverService>(ObserverService)
+                )
+        )
+        .inSingletonScope();
+    bind(ChecksService).to(ChecksServiceImpl).inSingletonScope();
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(CHECKS_SERVICE_PATH, () =>
+                    ctx.container.get<ChecksService>(ChecksService)
                 )
         )
         .inSingletonScope();
