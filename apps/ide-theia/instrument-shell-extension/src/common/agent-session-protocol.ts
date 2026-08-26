@@ -14,6 +14,15 @@
 // worktree against project and proposes each changed file through the governed
 // broker. Nothing reaches the project without a decision.
 //
+// ── O QUE O ISOLAMENTO NÃO É ──────────────────────────────────────────────
+// A worktree NÃO é jaula. `bastion-agent-runtime`'s acpx adapter documenta
+// `policy_coverage.sandbox = None`: o `--cwd` é dica, não confinamento, e nada
+// impede o agente de escrever fora da raiz por caminho absoluto. Então a worktree
+// evita escrita ACIDENTAL no projeto; não evita escrita deliberada. O que cobre
+// esse caso é o OBSERVADOR (vê qualquer escrita externa) mais o broker — não este
+// isolamento. Enforcement de sandbox virá de um adapter que o declare, e o
+// `harvest` continua sendo o único caminho que traz mudança para o projeto.
+//
 // Consequences, stated rather than hidden:
 //  • the project must be a git repository (otherwise the session is refused);
 //  • the broker's approval is positional, so proposals are made ONE AT A TIME;

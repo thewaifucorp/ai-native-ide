@@ -135,6 +135,13 @@ Por construção, não por configuração:
   mescla dois workflows.
 - **Declarar artefatos fora do projeto.** `artifacts.itemsDir` é confinado à raiz.
 
+E o que ele **consegue**, e não deve ser confundido com o de cima:
+
+- **Escrever fora da worktree por caminho absoluto.** O adapter `acpx` do
+  `bastion-agent-runtime` declara `policy_coverage.sandbox = None` — `--cwd` é
+  dica, não jaula. A worktree evita o acidente, não a intenção. Quem cobre esse
+  caso é o observador de escritas externas, não o "isolamento" da sessão.
+
 ## Dívida conhecida (precisa mudar no sidecar Rust)
 
 `broker_approve(root, owner)` autoriza **o efeito pendente mais antigo** daquele

@@ -346,7 +346,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             )}
                             {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
                             <small className="cap-hint">
-                                o agente escreve na worktree; nada entra no projeto sem passar pelo broker
+                                o agente trabalha na worktree e só o broker traz mudança para o projeto ·
+                                não é jaula: o adapter atual não aplica sandbox
                             </small>
                             <div className="cap-actions">
                                 {phase === 'none' || phase === 'failed' ? (

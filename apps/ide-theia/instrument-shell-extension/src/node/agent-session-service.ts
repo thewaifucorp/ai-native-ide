@@ -95,8 +95,11 @@ export class AgentSessionServiceImpl implements AgentSessionService {
 
         try {
             // read_only stays false INSIDE THE WORKTREE: the agent must be able to
-            // work. The worktree is not the project, so this grants it nothing over
-            // the project — every change still has to cross the broker in `harvest`.
+            // work. Isto NÃO é confinamento: o adapter acpx declara
+            // `sandbox = None`, então o agente pode escrever fora da worktree por
+            // caminho absoluto. A worktree evita o acidente e o `harvest` é o único
+            // caminho governado para o projeto; escrita deliberada fora dela cai no
+            // observador, como qualquer escrita externa.
             const started = await this.engine.agentStartSession({
                 agent,
                 owner: 'owner:instrument-ide',
@@ -106,6 +109,13 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             });
             state.sessionId = started.session_id;
             state.phase = 'idle';
+            this.push(
+                state,
+                'aviso',
+                'a worktree evita escrita acidental no projeto, mas não é jaula: o adapter atual ' +
+                'não aplica sandbox, então escrita por caminho absoluto é possível e apareceria ' +
+                'como escrita externa'
+            );
             this.push(state, 'session', `sessão ${started.session_id} aberta em ${path.relative(root, worktree)}`);
         } catch (err) {
             state.phase = 'failed';
