@@ -31,6 +31,7 @@ import { FileUri } from '@theia/core/lib/common/file-uri';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
+import { WriteSourceLedger } from './write-source-ledger';
 import {
     GovernedWriteService,
     WriteProposal,
@@ -104,6 +105,10 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
     // backend module binds it into the same Inversify container.
     @inject(EngineService) protected readonly engine!: EngineService;
 
+    // The observer subtracts the IDE's own writes; a governed write is the most
+    // clearly "ours" there is, so it says so the moment it lands.
+    @inject(WriteSourceLedger) protected readonly ledger!: WriteSourceLedger;
+
     protected readonly records = new Map<string, StoredRecord>();
     protected seq = 1;
 
@@ -172,6 +177,7 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         // bytes are still on disk. Never report `awaiting` for a write that ran.
         let warning: string | undefined;
         if (queued.written === true) {
+            this.ledger.note(rootFsPath, relPath, 'governed', `efeito ${id} executado por autorização pendente`);
             let reverted = false;
             try {
                 const rollback = await this.engine.brokerRollback(rootFsPath, OWNER, id);
@@ -262,6 +268,7 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
                 rec.proposed
             );
             if (written.written === true) {
+                this.ledger.note(rec.rootFsPath, rec.relPath, 'governed', `efeito ${id} aprovado`);
                 rec.proposal.state = 'approved';
                 if (drained > 0) {
                     rec.proposal.warning =
@@ -305,6 +312,7 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
     async rollback(id: string): Promise<WriteProposal> {
         const rec = this.require(id);
         await this.engine.brokerRollback(rec.rootFsPath, OWNER, id);
+        this.ledger.note(rec.rootFsPath, rec.relPath, 'governed', `efeito ${id} revertido`);
         rec.proposal.state = 'rolledback';
         return rec.proposal;
     }

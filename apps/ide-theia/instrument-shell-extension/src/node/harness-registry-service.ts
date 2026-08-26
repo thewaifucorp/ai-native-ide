@@ -51,6 +51,7 @@ import {
     HarnessSnapshot
 } from '../common/harness-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
+import { WriteSourceLedger } from './write-source-ledger';
 
 /**
  * Where harness artifacts live, relative to the project root.
@@ -98,6 +99,10 @@ export class HarnessRegistryService implements HarnessService {
 
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
 
+    // Manifest and item artifacts are project files, so the observer would see
+    // them as external writes unless the registry accounts for them.
+    @inject(WriteSourceLedger) protected readonly ledger!: WriteSourceLedger;
+
     // ── public API ─────────────────────────────────────────────────────────
 
     async snapshot(rootUri: string): Promise<HarnessSnapshot> {
@@ -113,6 +118,7 @@ export class HarnessRegistryService implements HarnessService {
         const manifestPath = path.join(root, PROVIDERS_DIR, `${manifest.id}${MANIFEST_EXT}`);
         fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
         fs.writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2) + '\n', 'utf8');
+        this.ledger.note(root, path.relative(root, manifestPath), 'harness', 'manifesto gravado pelo registry');
         fs.mkdirSync(this.itemsDir(root, manifest), { recursive: true });
 
         const state = this.load(root);
@@ -200,14 +206,15 @@ export class HarnessRegistryService implements HarnessService {
         if (path.resolve(previousItemsDir) !== path.resolve(nextItemsDir)) {
             fs.mkdirSync(nextItemsDir, { recursive: true });
             for (const item of current.items) {
-                fs.renameSync(
-                    path.join(root, item.path),
-                    path.join(nextItemsDir, `${item.id}${manifest.artifacts.itemExtension}`)
-                );
+                const moved = path.join(nextItemsDir, `${item.id}${manifest.artifacts.itemExtension}`);
+                fs.renameSync(path.join(root, item.path), moved);
+                this.ledger.note(root, item.path, 'harness', 'artefato movido pela migração');
+                this.ledger.note(root, path.relative(root, moved), 'harness', 'artefato movido pela migração');
             }
         }
         const manifestPath = path.join(root, PROVIDERS_DIR, `${manifest.id}${MANIFEST_EXT}`);
         fs.writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2) + '\n', 'utf8');
+        this.ledger.note(root, path.relative(root, manifestPath), 'harness', `migrado para ${manifest.version}`);
         record.stateVersion = manifest.version;
 
         if (wasActive) {
@@ -244,6 +251,7 @@ export class HarnessRegistryService implements HarnessService {
                 continue;
             }
             const initial = provider.manifest.workflow?.initial ?? 'aberto';
+            this.ledger.note(root, path.relative(root, file), 'harness', 'item criado pelo registry');
             fs.writeFileSync(
                 file,
                 `# ${title}\n\n` +

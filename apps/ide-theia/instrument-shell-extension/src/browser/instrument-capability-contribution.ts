@@ -19,6 +19,8 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { MonacoWorkspace } from '@theia/monaco/lib/browser/monaco-workspace';
+import URI from '@theia/core/lib/common/uri';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
@@ -71,6 +73,10 @@ export class InstrumentCapabilityContribution
     @inject(HarnessService) protected readonly harness!: HarnessService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
+    @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
+
+    /** Debounce handle for watcher-driven scans. */
+    protected scanTimer: number | undefined;
     @inject(InstrumentStore) protected readonly store!: InstrumentStore;
 
     onStart(): void {
@@ -80,8 +86,7 @@ export class InstrumentCapabilityContribution
             this.brokerTrail();
             this.adoptPendingProposal();
             this.scanExternal();
-            // The person's agent writes whenever it wants; look again periodically.
-            window.setInterval(() => this.scanExternal(), 8000);
+            this.watchForExternalWrites();
             // Agent proposals arrive out of band; ask periodically. A push channel
             // over the RPC connection would be better and is not built yet.
             window.setInterval(() => this.adoptPendingProposal(), 5000);
@@ -288,6 +293,60 @@ export class InstrumentCapabilityContribution
     }
 
     // ── external writes (WORK-05) ───────────────────────────────────────────
+
+    /** React to the REAL filesystem watcher instead of polling.
+     *
+     *  Theia already watches the workspace for the explorer and the editors, so
+     *  the observer rides the same events: a write by the person's agent shows up
+     *  as soon as the watcher reports it, debounced so a burst of writes produces
+     *  one scan. A slow interval stays as a safety net for filesystems where
+     *  watching is unreliable (network mounts, containers). */
+    protected watchForExternalWrites(): void {
+        this.files.onDidFilesChange(event => {
+            const relevant = event.changes.some(change => !this.isIdeState(change.resource));
+            if (relevant) {
+                this.scheduleScan();
+            }
+        });
+        // Editor saves are the person's own writes: report them so they are not
+        // mistaken for something an agent did behind the IDE's back.
+        this.monaco.onDidSaveTextDocument(model => {
+            const uri = new URI(model.uri);
+            const relPath = this.relativize(uri);
+            if (relPath) {
+                this.observer.noteEditorSave(this.root, relPath)
+                    .then(() => this.scheduleScan())
+                    .catch(() => this.scheduleScan());
+            }
+        });
+        window.setInterval(() => this.scanExternal(), 60_000);
+    }
+
+    /** Our own runtime state (baseline, broker db) must not trigger scans. */
+    protected isIdeState(resource: URI): boolean {
+        const raw = resource.toString();
+        return raw.includes('/.instrument/') || raw.includes('/.git/');
+    }
+
+    protected relativize(uri: URI): string | undefined {
+        const roots = this.workspace.tryGetRoots();
+        if (roots.length === 0) {
+            return undefined;
+        }
+        const rel = roots[0].resource.relative(uri);
+        const value = rel?.toString();
+        return value && !value.startsWith('..') ? value : undefined;
+    }
+
+    protected scheduleScan(): void {
+        if (this.scanTimer !== undefined) {
+            window.clearTimeout(this.scanTimer);
+        }
+        this.scanTimer = window.setTimeout(() => {
+            this.scanTimer = undefined;
+            this.scanExternal();
+        }, 900);
+    }
 
     /** Compare disk against the baseline. `loud` reports failures to the user;
      *  the periodic pass stays quiet so a transient error is not a popup storm. */

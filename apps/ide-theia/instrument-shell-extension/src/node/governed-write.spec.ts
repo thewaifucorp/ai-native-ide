@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
+import { WriteSourceLedger } from './write-source-ledger';
 import { GovernedWriteServiceImpl } from './governed-write-service';
 import { EngineService, Hunk } from 'engine-extension';
 
@@ -101,6 +102,7 @@ function fixture(): Fixture {
     const service = new GovernedWriteServiceImpl();
     const engine = new FakeEngine();
     (service as unknown as { engine: unknown }).engine = engine;
+    (service as unknown as { ledger: WriteSourceLedger }).ledger = new WriteSourceLedger();
     return { service, engine, rootUri: FileUri.create(root).toString(), file };
 }
 

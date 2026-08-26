@@ -13,6 +13,7 @@ import { FileUri } from '@theia/core/lib/common/file-uri';
 import { ObserverServiceImpl } from './observer-service';
 import { GovernedWriteService, WriteProposal } from '../common/governed-protocol';
 import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
+import { WriteSourceLedger } from './write-source-ledger';
 
 /** Real-enough diff: one hunk with the added/removed lines counted honestly. */
 class FakeEngine implements Partial<EngineService> {
@@ -50,6 +51,8 @@ class FakeGoverned implements GovernedWriteService {
 interface Fixture {
     service: ObserverServiceImpl;
     governed: FakeGoverned;
+    /** Real ledger — attribution is part of the behaviour under test. */
+    ledger: WriteSourceLedger;
     root: string;
     rootUri: string;
 }
@@ -61,9 +64,11 @@ function fixture(): Fixture {
     fs.writeFileSync(path.join(root, 'README.md'), '# projeto\n', 'utf8');
     const service = new ObserverServiceImpl();
     const governed = new FakeGoverned();
+    const ledger = new WriteSourceLedger();
     (service as unknown as { engine: unknown }).engine = new FakeEngine();
     (service as unknown as { governed: GovernedWriteService }).governed = governed;
-    return { service, governed, root, rootUri: FileUri.create(root).toString() };
+    (service as unknown as { ledger: WriteSourceLedger }).ledger = ledger;
+    return { service, governed, ledger, root, rootUri: FileUri.create(root).toString() };
 }
 
 /** Simulate the person's agent writing with its own tools. */
@@ -146,6 +151,62 @@ describe('ObserverServiceImpl — sees writes the IDE did not make', () => {
         const drift = report.drifts.find(d => d.relPath === 'blob.bin')!;
         assert.strictEqual(drift.revertible, false);
         assert.match(drift.detail ?? '', /não foram guardados/);
+    });
+});
+
+describe('ObserverServiceImpl — subtracts the IDE\'s own writes', () => {
+
+    it('does NOT report a save the person made in the editor', async () => {
+        const { service, root, rootUri } = fixture();
+        await service.baseline(rootUri);
+        // The frontend reports the save, then the file changes — the order the
+        // real IDE produces (save event fires as the bytes land).
+        await service.noteEditorSave(rootUri, path.join('src', 'a.ts'));
+        agentWrites(root, 'src/a.ts', 'const a = 1;\nsalvo pela pessoa\n');
+
+        const report = await service.scan(rootUri);
+        assert.deepStrictEqual(report.drifts, [], 'o próprio save não é escrita externa');
+        assert.deepStrictEqual(report.reconciled.map(r => r.source), ['editor']);
+        // …and the baseline moved, so the next scan is quiet too.
+        const again = await service.scan(rootUri);
+        assert.deepStrictEqual(again.drifts, []);
+        assert.deepStrictEqual(again.reconciled, []);
+    });
+
+    it('attributes a governed write and folds it in', async () => {
+        const { service, root, rootUri, ledger } = fixture();
+        await service.baseline(rootUri);
+        ledger.note(root, path.join('src', 'a.ts'), 'governed', 'efeito w1 aprovado');
+        agentWrites(root, 'src/a.ts', 'const a = 2;\n');
+
+        const report = await service.scan(rootUri);
+        assert.deepStrictEqual(report.drifts, []);
+        assert.strictEqual(report.reconciled[0].source, 'governed');
+        assert.match(report.reconciled[0].sourceDetail ?? '', /w1/);
+        assert.ok(report.receipts.some(r => r.action === 'auto-reconciled'));
+    });
+
+    it('does not let a STALE note claim a later write', async () => {
+        const { service, root, rootUri, ledger } = fixture();
+        await service.baseline(rootUri);
+        // A note from well outside the matching window must not absorb this write.
+        const notes = (ledger as unknown as { byRoot: Map<string, { at: number }[]> });
+        ledger.note(root, path.join('src', 'a.ts'), 'editor', 'salvo no editor');
+        notes.byRoot.get(path.resolve(root))![0].at = Date.now() - 5 * 60_000;
+        agentWrites(root, 'src/a.ts', 'escrito por um agente\n');
+
+        const report = await service.scan(rootUri);
+        assert.strictEqual(report.drifts.length, 1, 'nota velha não pode reivindicar escrita nova');
+        assert.strictEqual(report.drifts[0].source, 'unknown');
+    });
+
+    it('marks a genuinely external write as unknown authorship', async () => {
+        const { service, root, rootUri } = fixture();
+        await service.baseline(rootUri);
+        agentWrites(root, 'src/a.ts', 'agente externo\n');
+        const report = await service.scan(rootUri);
+        assert.strictEqual(report.drifts[0].source, 'unknown');
+        assert.strictEqual(report.drifts[0].sourceDetail, undefined);
     });
 });
 

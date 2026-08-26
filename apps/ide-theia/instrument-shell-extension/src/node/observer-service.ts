@@ -28,8 +28,10 @@ import {
     Drift,
     ObserverReceipt,
     ObserverReport,
-    ObserverService
+    ObserverService,
+    WriteAttribution
 } from '../common/observer-protocol';
+import { WriteSourceLedger } from './write-source-ledger';
 
 /** IDE-owned runtime state (git-ignored), not project content. */
 const BASELINE_DIR = path.join('.instrument', 'baseline');
@@ -81,6 +83,14 @@ export class ObserverServiceImpl implements ObserverService {
 
     @inject(EngineService) protected readonly engine!: EngineService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
+    @inject(WriteSourceLedger) protected readonly ledger!: WriteSourceLedger;
+
+    async noteEditorSave(rootUri: string, relPath: string): Promise<void> {
+        const root = this.rootPath(rootUri);
+        // Confine first: a save report is untrusted input like any other.
+        this.confine(root, relPath);
+        this.ledger.note(root, relPath, 'editor', 'salvo no editor');
+    }
 
     async baseline(rootUri: string): Promise<ObserverReport> {
         const root = this.rootPath(rootUri);
@@ -116,7 +126,8 @@ export class ObserverServiceImpl implements ObserverService {
                     removedLines: 0,
                     revertible: false,
                     observedAt: new Date(now.mtimeMs).toISOString(),
-                    detail: 'arquivo novo — não existia na referência, então não há bytes para restaurar'
+                    detail: 'arquivo novo — não existia na referência, então não há bytes para restaurar',
+                    ...this.attributionFor(root, relPath, now.mtimeMs)
                 });
                 continue;
             }
@@ -137,13 +148,52 @@ export class ObserverServiceImpl implements ObserverService {
                     observedAt: new Date().toISOString(),
                     detail: before.stored
                         ? undefined
-                        : 'os bytes anteriores não foram guardados (arquivo grande ou binário)'
+                        : 'os bytes anteriores não foram guardados (arquivo grande ou binário)',
+                    // A deletion has no mtime to match, so use "now": the ledger
+                    // window still separates our own delete from an outside one.
+                    ...this.attributionFor(root, relPath, Date.now())
                 });
             }
         }
 
         drifts.sort((a, b) => a.relPath.localeCompare(b.relPath));
-        return this.report(root, index, drifts, current.skipped);
+
+        // Subtract the IDE's own writes: anything the ledger can prove we did is
+        // folded into the baseline right here, so `drifts` holds only what the IDE
+        // cannot account for. The folded ones are reported separately — visible,
+        // not silent.
+        const unattributed: Drift[] = [];
+        const reconciled: Drift[] = [];
+        let baselineChanged = false;
+        for (const drift of drifts) {
+            if (drift.source === 'unknown') {
+                unattributed.push(drift);
+                continue;
+            }
+            reconciled.push(drift);
+            const absolute = path.join(root, drift.relPath);
+            if (drift.kind === 'deleted') {
+                delete index.entries[drift.relPath];
+            } else {
+                const entry = this.entryFor(root, absolute, true);
+                if (entry) {
+                    index.entries[drift.relPath] = entry;
+                }
+            }
+            baselineChanged = true;
+            this.appendReceipt(root, {
+                at: new Date().toISOString(),
+                relPath: drift.relPath,
+                action: 'auto-reconciled',
+                detail: `escrita do próprio IDE (${drift.source}): ${drift.sourceDetail ?? '—'}`
+            });
+        }
+        if (baselineChanged) {
+            index.at = new Date().toISOString();
+            this.writeIndex(root, index);
+        }
+
+        return this.report(root, index, unattributed, current.skipped, reconciled);
     }
 
     async accept(rootUri: string, relPath: string): Promise<ObserverReport> {
@@ -302,6 +352,7 @@ export class ObserverServiceImpl implements ObserverService {
         now: BaselineEntry
     ): Promise<Drift> {
         const observedAt = new Date(now.mtimeMs).toISOString();
+        const attribution = this.attributionFor(root, relPath, now.mtimeMs);
         if (!before.stored) {
             return {
                 relPath,
@@ -310,7 +361,8 @@ export class ObserverServiceImpl implements ObserverService {
                 removedLines: 0,
                 revertible: false,
                 observedAt,
-                detail: 'mudou, mas os bytes anteriores não foram guardados — só o hash difere'
+                detail: 'mudou, mas os bytes anteriores não foram guardados — só o hash difere',
+                ...attribution
             };
         }
         try {
@@ -334,7 +386,8 @@ export class ObserverServiceImpl implements ObserverService {
                 addedLines: added,
                 removedLines: removed,
                 revertible: true,
-                observedAt
+                observedAt,
+                ...attribution
             };
         } catch (err) {
             return {
@@ -346,9 +399,22 @@ export class ObserverServiceImpl implements ObserverService {
                 observedAt,
                 detail:
                     'mudou, mas o diff não pôde ser calculado: ' +
-                    (err instanceof Error ? err.message : String(err))
+                    (err instanceof Error ? err.message : String(err)),
+                ...attribution
             };
         }
+    }
+
+    /** Ask the ledger who wrote this, matching against the observed mtime. */
+    protected attributionFor(
+        root: string,
+        relPath: string,
+        mtimeMs: number
+    ): { source: WriteAttribution; sourceDetail?: string } {
+        const note = this.ledger.attribute(root, relPath, mtimeMs);
+        return note
+            ? { source: note.source, sourceDetail: note.detail }
+            : { source: 'unknown' };
     }
 
     protected async countLines(root: string, relPath: string): Promise<number> {
@@ -425,13 +491,15 @@ export class ObserverServiceImpl implements ObserverService {
         root: string,
         index: BaselineIndex,
         drifts: Drift[],
-        skipped = index.skipped
+        skipped = index.skipped,
+        reconciled: Drift[] = []
     ): ObserverReport {
         return {
             baselineExists: true,
             trackedFiles: Object.keys(index.entries).length,
             baselineAt: index.at,
             drifts,
+            reconciled,
             receipts: this.readReceipts(root).slice(-40).reverse(),
             skipped: skipped.slice(0, 40)
         };

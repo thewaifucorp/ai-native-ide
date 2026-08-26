@@ -272,7 +272,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 </span>
                             </div>
                             <small className="cap-hint">
-                                +{d.addedLines} / -{d.removedLines} · visto em {d.observedAt.slice(11, 19)}
+                                +{d.addedLines} / -{d.removedLines} · visto em {d.observedAt.slice(11, 19)} ·
+                                autoria: {d.source === 'unknown' ? 'não identificada' : d.source}
                             </small>
                             {d.detail && <p className="cap-detail">{d.detail}</p>}
                             <div className="cap-actions">
@@ -297,6 +298,19 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             </div>
                         </div>
                     ))}
+                    {report && report.reconciled.length > 0 && (
+                        <div className="cap-card">
+                            <div className="cap-head"><b>Conciliado automaticamente</b></div>
+                            <small>escritas do próprio IDE, absorvidas na referência</small>
+                            {report.reconciled.slice(0, 6).map(r => (
+                                <div className="cap-receipt" key={r.relPath}>
+                                    <span className="cap-receipt-action">{r.source}</span>
+                                    <span className="cap-receipt-detail">{r.relPath}</span>
+                                    <small>{r.sourceDetail ?? ''}</small>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     {report && report.skipped.length > 0 && (
                         <div className="cap-card">
                             <div className="cap-head"><b>Fora da cobertura</b></div>

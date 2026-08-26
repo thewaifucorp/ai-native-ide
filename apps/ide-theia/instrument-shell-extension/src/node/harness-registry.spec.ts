@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { HarnessRegistryService } from './harness-registry-service';
+import { WriteSourceLedger } from './write-source-ledger';
 import { GovernedWriteService, WriteProposal } from '../common/governed-protocol';
 import { BrokerActivity } from 'engine-extension';
 import {
@@ -57,6 +58,8 @@ function fixture(prefix: string): Fixture {
     const service = new HarnessRegistryService();
     const governed = new FakeGovernedWriteService();
     (service as unknown as { governed: GovernedWriteService }).governed = governed;
+    // The registry notes its own artifact writes so the observer can subtract them.
+    (service as unknown as { ledger: WriteSourceLedger }).ledger = new WriteSourceLedger();
     return { service, governed, root };
 }
 
@@ -207,6 +210,7 @@ describe('HarnessRegistryService — state survives the lifecycle', () => {
 
         const reborn = new HarnessRegistryService();
         (reborn as unknown as { governed: GovernedWriteService }).governed = governed;
+        (reborn as unknown as { ledger: WriteSourceLedger }).ledger = new WriteSourceLedger();
         const snapshot = await reborn.snapshot(root);
         const provider = snapshot.providers.find(p => p.manifest.id === TEST_PROVIDER_ID)!;
         assert.strictEqual(provider.status, 'active');

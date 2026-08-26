@@ -23,9 +23,14 @@ import { CapabilitySiteContribution } from './capability-site-contribution';
 import { HarnessRegistryService } from './harness-registry-service';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
 import { ObserverServiceImpl } from './observer-service';
+import { WriteSourceLedger } from './write-source-ledger';
 import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
+    // Shared by every service that writes: the observer subtracts these from
+    // what it reports as an external write.
+    bind(WriteSourceLedger).toSelf().inSingletonScope();
+
     bind(GovernedWriteServiceImpl).toSelf().inSingletonScope();
     bind(GovernedWriteService).toService(GovernedWriteServiceImpl);
 

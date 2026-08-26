@@ -110,8 +110,9 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                 </b>
                                 <small>
                                     {drifts.slice(0, 3).map(d => `${d.relPath} (${d.kind})`).join(' · ')}
-                                    {drifts.length > 3 ? ' …' : ''} — escrita de agente, script ou
-                                    terminal. Aceite como nova referência ou proponha a reversão.
+                                    {drifts.length > 3 ? ' …' : ''} — autoria não identificada pelo IDE:
+                                    agente externo, script ou terminal. Aceite como nova referência ou
+                                    proponha a reversão.
                                 </small>
                             </div>
                             <div className="acts">

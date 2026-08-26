@@ -41,6 +41,7 @@ import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { HarnessManifest, HarnessService } from '../common/harness-protocol';
 import { ObserverService } from '../common/observer-protocol';
+import { WriteSourceLedger } from './write-source-ledger';
 
 /** MCP protocol revision this server implements the tool subset of. */
 const PROTOCOL_VERSION = '2025-06-18';
@@ -104,6 +105,7 @@ export class McpContribution implements BackendApplicationContribution {
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(HarnessService) protected readonly harness!: HarnessService;
     @inject(ObserverService) protected readonly observer!: ObserverService;
+    @inject(WriteSourceLedger) protected readonly ledger!: WriteSourceLedger;
 
     protected token = '';
 
@@ -196,6 +198,7 @@ export class McpContribution implements BackendApplicationContribution {
                 const args = (request.params?.arguments ?? {}) as Record<string, unknown>;
                 try {
                     const value = await tool.run(args);
+                    this.noteWrite(name, args);
                     return this.ok(id, {
                         content: [{ type: 'text', text: JSON.stringify(value, undefined, 2) }]
                     });
@@ -214,6 +217,20 @@ export class McpContribution implements BackendApplicationContribution {
             default:
                 return this.error(id ?? null, -32601, `método não suportado: ${method}`);
         }
+    }
+
+    /** Tell the observer's ledger that a write came from this surface, so an
+     *  agent using these tools is not reported as an untracked external write. */
+    protected noteWrite(tool: string | undefined, args: Record<string, unknown>): void {
+        const root = typeof args.root === 'string' ? args.root : undefined;
+        const relPath = typeof args.relPath === 'string' ? args.relPath : undefined;
+        if (!root || !relPath || !tool) {
+            return;
+        }
+        try {
+            const fsRoot = root.includes('://') ? root.replace(/^file:\/\//, '') : root;
+            this.ledger.note(decodeURIComponent(fsRoot), relPath, 'mcp', `ferramenta ${tool}`);
+        } catch { /* attribution is best-effort; never fail a tool call over it */ }
     }
 
     protected ok(id: unknown, result: object): object {
