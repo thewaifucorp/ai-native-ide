@@ -14,6 +14,8 @@
 //   • propose a write and have it stop at the approval gate like any other —
 //     an agent CANNOT write through here without a human approving;
 //   • read the broker's raw trail;
+//   • see and reconcile writes made OUTSIDE the IDE — including its own, if it
+//     used its own file tools instead of these;
 //   • register a harness provider, take/free slots, migrate versions, and
 //     create work-item artifacts.
 //
@@ -38,6 +40,7 @@ import * as path from 'path';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { HarnessManifest, HarnessService } from '../common/harness-protocol';
+import { ObserverService } from '../common/observer-protocol';
 
 /** MCP protocol revision this server implements the tool subset of. */
 const PROTOCOL_VERSION = '2025-06-18';
@@ -100,6 +103,7 @@ export class McpContribution implements BackendApplicationContribution {
     @inject(CapabilityService) protected readonly capabilities!: CapabilityService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
     @inject(HarnessService) protected readonly harness!: HarnessService;
+    @inject(ObserverService) protected readonly observer!: ObserverService;
 
     protected token = '';
 
@@ -335,6 +339,47 @@ export class McpContribution implements BackendApplicationContribution {
                     'snapshot, executado e revertido. É a evidência de o que realmente aconteceu.',
                 inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
                 run: async a => this.governed.activity(str(a, 'root'))
+            },
+            {
+                name: 'external_scan',
+                description:
+                    'Escritas feitas FORA do IDE (agente, script, terminal) comparadas com a ' +
+                    'referência do projeto: caminho, tipo, linhas +/- pelo engine real e se dá ' +
+                    'para reverter. Cria a referência na primeira chamada.',
+                inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
+                run: async a => this.observer.scan(str(a, 'root'))
+            },
+            {
+                name: 'external_baseline',
+                description:
+                    'Refaz a referência do projeto inteiro: tudo que está no disco agora passa a ' +
+                    'ser o ponto de comparação.',
+                inputSchema: { type: 'object', properties: { ...ROOT_PROP }, required: ['root'] },
+                run: async a => this.observer.baseline(str(a, 'root'))
+            },
+            {
+                name: 'external_accept',
+                description:
+                    'Adota os bytes atuais de um arquivo como nova referência. Não altera o ' +
+                    'arquivo; só registra a decisão.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { ...ROOT_PROP, relPath: { type: 'string' } },
+                    required: ['root', 'relPath']
+                },
+                run: async a => this.observer.accept(str(a, 'root'), str(a, 'relPath'))
+            },
+            {
+                name: 'external_propose_revert',
+                description:
+                    'Propõe restaurar os bytes anteriores de um arquivo pelo broker. Não grava: ' +
+                    'volta como proposta aguardando decisão, com snapshot e rollback próprios.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { ...ROOT_PROP, relPath: { type: 'string' } },
+                    required: ['root', 'relPath']
+                },
+                run: async a => this.observer.proposeRevert(str(a, 'root'), str(a, 'relPath'))
             },
             {
                 name: 'harness_snapshot',

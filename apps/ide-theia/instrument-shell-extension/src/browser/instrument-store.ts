@@ -13,6 +13,7 @@ import { WriteProposal } from '../common/governed-protocol';
 import { CapabilityState } from '../common/capability-protocol';
 import { BrokerActivity } from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
+import { ObserverReport } from '../common/observer-protocol';
 import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build';
@@ -70,6 +71,11 @@ export class InstrumentStore {
 
     /** Which capability the (generic) surface tab is currently showing. */
     surfaceCapabilityId: string | undefined;
+
+    // ── REAL observation of writes the IDE did not make (WORK-05): the person's
+    //    own agent, a script or the terminal. `undefined` = not scanned yet.
+    observer: ObserverReport | undefined;
+    observerBusy = false;
 
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
     collapsedSections: string[] = ['workbench', 'broker', 'harness'];
@@ -202,6 +208,21 @@ export class InstrumentStore {
             ? this.collapsedSections.filter(s => s !== id)
             : [...this.collapsedSections, id];
         this.emit();
+    }
+
+    setObserver(report: ObserverReport | undefined): void {
+        this.observer = report;
+        this.emit();
+    }
+
+    setObserverBusy(busy: boolean): void {
+        this.observerBusy = busy;
+        this.emit();
+    }
+
+    /** Count of files changed outside the IDE, awaiting reconciliation. */
+    get externalDriftCount(): number {
+        return this.observer ? this.observer.drifts.length : 0;
     }
 
     setBrokerActivity(activity: BrokerActivity[] | undefined): void {

@@ -25,6 +25,10 @@ import { HarnessProviderState, HarnessSnapshot } from '../../common/harness-prot
 import { CONFLICT_PROVIDER_ID, TEST_PROVIDER_ID } from '../../common/harness-test-provider';
 import {
     CMD_BROKER_TRAIL,
+    CMD_EXT_ACCEPT,
+    CMD_EXT_BASELINE,
+    CMD_EXT_REVERT,
+    CMD_EXT_SCAN,
     CMD_CAP_DETECT,
     CMD_CAP_INSTALL,
     CMD_CAP_KATSUI,
@@ -76,6 +80,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     </div>
                 </div>
                 {this.renderCapabilities()}
+                {this.renderExternal()}
                 {this.renderWorkbench()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
@@ -225,6 +230,101 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                         </button>
                     )}
                 </div>
+            </div>
+        );
+    }
+
+    /** Writes the IDE did not make — the person's agent, a script, the terminal.
+     *  This is the normal case in agent-driven work, so it sits right under the
+     *  capabilities instead of being buried. */
+    protected renderExternal(): React.ReactNode {
+        const report = this.store.observer;
+        const summary = this.store.observerBusy
+            ? 'olhando…'
+            : !report
+                ? 'não observado'
+                : report.drifts.length === 0
+                    ? `${report.trackedFiles} arquivos em dia`
+                    : `${report.drifts.length} para conciliar`;
+        return this.section(
+            'external',
+            'Escritas fora do IDE',
+            summary,
+            () => (
+                <>
+                    {!report && (
+                        <div className="cap-card"><small>a referência do projeto ainda não foi lida</small></div>
+                    )}
+                    {report && report.drifts.length === 0 && (
+                        <div className="cap-card">
+                            <small>
+                                nenhuma diferença contra a referência · {report.trackedFiles} arquivos
+                                acompanhados{report.baselineAt ? ` · referência de ${report.baselineAt.slice(11, 19)}` : ''}
+                            </small>
+                        </div>
+                    )}
+                    {report && report.drifts.map(d => (
+                        <div className="cap-card" key={d.relPath}>
+                            <div className="cap-head">
+                                <b>{d.relPath}</b>
+                                <span className={`cap-pill ${d.kind === 'deleted' ? 'tool-missing' : d.kind === 'created' ? 'not-installed' : 'degraded'}`}>
+                                    {d.kind}
+                                </span>
+                            </div>
+                            <small className="cap-hint">
+                                +{d.addedLines} / -{d.removedLines} · visto em {d.observedAt.slice(11, 19)}
+                            </small>
+                            {d.detail && <p className="cap-detail">{d.detail}</p>}
+                            <div className="cap-actions">
+                                <button
+                                    className="cap-btn primary"
+                                    disabled={this.store.observerBusy}
+                                    title="Adota os bytes atuais como referência. Não altera o arquivo."
+                                    onClick={() => this.commands.executeCommand(CMD_EXT_ACCEPT, d.relPath)}
+                                >
+                                    Aceitar
+                                </button>
+                                {d.revertible && (
+                                    <button
+                                        className="cap-btn"
+                                        disabled={this.store.observerBusy}
+                                        title="Propõe restaurar os bytes anteriores pelo broker — você decide no dock."
+                                        onClick={() => this.commands.executeCommand(CMD_EXT_REVERT, d.relPath)}
+                                    >
+                                        Propor reversão
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                    {report && report.skipped.length > 0 && (
+                        <div className="cap-card">
+                            <div className="cap-head"><b>Fora da cobertura</b></div>
+                            <ul className="cap-degr">
+                                {report.skipped.slice(0, 6).map(sk => (
+                                    <li key={sk.relPath}>{sk.relPath} — {sk.reason}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={this.store.observerBusy}
+                    onClick={() => this.commands.executeCommand(CMD_EXT_SCAN)}
+                >
+                    Procurar agora
+                </button>
+                <button
+                    className="cap-btn"
+                    disabled={this.store.observerBusy}
+                    title="Tudo que está no disco agora passa a ser a referência"
+                    onClick={() => this.commands.executeCommand(CMD_EXT_BASELINE)}
+                >
+                    Refazer referência
+                </button>
             </div>
         );
     }

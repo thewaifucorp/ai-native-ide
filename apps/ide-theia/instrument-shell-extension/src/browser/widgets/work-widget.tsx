@@ -97,11 +97,34 @@ export class WorkWidget extends AbstractInstrumentWidget {
     protected renderNeedsYou(): React.ReactNode {
         const proposal = this.store.proposal;
         const awaiting = proposal && proposal.state === 'awaiting' ? proposal : undefined;
+        const drifts = this.store.observer?.drifts ?? [];
         return (
             <div className="h-sec">
                 <span className="tag">Precisa de você</span>
                 <div className="need">
-                    {!awaiting && (
+                    {drifts.length > 0 && (
+                        <div className="need-item">
+                            <div className="txt">
+                                <b>
+                                    {drifts.length} arquivo(s) mudaram fora do IDE
+                                </b>
+                                <small>
+                                    {drifts.slice(0, 3).map(d => `${d.relPath} (${d.kind})`).join(' · ')}
+                                    {drifts.length > 3 ? ' …' : ''} — escrita de agente, script ou
+                                    terminal. Aceite como nova referência ou proponha a reversão.
+                                </small>
+                            </div>
+                            <div className="acts">
+                                <button
+                                    className="btn"
+                                    onClick={() => this.commands.executeCommand('instrument.mode.ferramentas')}
+                                >
+                                    Conciliar
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {!awaiting && drifts.length === 0 && (
                         <div className="need-item">
                             <div className="txt">
                                 <b>Nada aguardando decisão</b>

@@ -21,6 +21,8 @@ import { GovernedWriteServiceImpl } from './governed-write-service';
 import { CapabilityRegistryService } from './capability-registry-service';
 import { CapabilitySiteContribution } from './capability-site-contribution';
 import { HarnessRegistryService } from './harness-registry-service';
+import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
+import { ObserverServiceImpl } from './observer-service';
 import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
@@ -32,6 +34,11 @@ export default new ContainerModule(bind => {
 
     bind(HarnessRegistryService).toSelf().inSingletonScope();
     bind(HarnessService).toService(HarnessRegistryService);
+
+    // Observation of writes the IDE did not perform (the person's own agent, a
+    // script, the terminal) — WORK-05.
+    bind(ObserverServiceImpl).toSelf().inSingletonScope();
+    bind(ObserverService).toService(ObserverServiceImpl);
 
     // Same-origin, per-project, allow-listed serving of capability artifacts
     // (today: `<root>/.aag/graph.html` for the Grafo capability).
@@ -64,6 +71,14 @@ export default new ContainerModule(bind => {
             ctx =>
                 new RpcConnectionHandler<object>(HARNESS_SERVICE_PATH, () =>
                     ctx.container.get<HarnessService>(HarnessService)
+                )
+        )
+        .inSingletonScope();
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(OBSERVER_SERVICE_PATH, () =>
+                    ctx.container.get<ObserverService>(ObserverService)
                 )
         )
         .inSingletonScope();

@@ -21,6 +21,7 @@ import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
+import { ObserverService } from '../common/observer-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
 import {
     CONFLICT_PROVIDER,
@@ -46,6 +47,12 @@ export const CMD_HARNESS_EFFECT = 'instrument.harness.effect';
 /** Reads the broker's own raw audit trail for this project, on demand. */
 export const CMD_BROKER_TRAIL = 'instrument.broker.trail';
 
+/** Observation of writes made outside the IDE (WORK-05). */
+export const CMD_EXT_SCAN = 'instrument.external.scan';
+export const CMD_EXT_BASELINE = 'instrument.external.baseline';
+export const CMD_EXT_ACCEPT = 'instrument.external.accept';
+export const CMD_EXT_REVERT = 'instrument.external.revert';
+
 /** Items the proof provider seeds, so slot lifecycle has state to preserve. */
 const SEED_ITEMS = ['prova/marco-1', 'prova/fase-1', 'prova/tarefa-1'];
 
@@ -63,6 +70,7 @@ export class InstrumentCapabilityContribution
     @inject(CapabilityService) protected readonly capabilities!: CapabilityService;
     @inject(HarnessService) protected readonly harness!: HarnessService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
+    @inject(ObserverService) protected readonly observer!: ObserverService;
     @inject(InstrumentStore) protected readonly store!: InstrumentStore;
 
     onStart(): void {
@@ -71,6 +79,9 @@ export class InstrumentCapabilityContribution
             this.refreshHarness();
             this.brokerTrail();
             this.adoptPendingProposal();
+            this.scanExternal();
+            // The person's agent writes whenever it wants; look again periodically.
+            window.setInterval(() => this.scanExternal(), 8000);
             // Agent proposals arrive out of band; ask periodically. A push channel
             // over the RPC connection would be better and is not built yet.
             window.setInterval(() => this.adoptPendingProposal(), 5000);
@@ -130,6 +141,22 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_BROKER_TRAIL, label: 'Instrument: ler a trilha raw do broker' },
             { execute: () => this.brokerTrail() }
+        );
+        commands.registerCommand(
+            { id: CMD_EXT_SCAN, label: 'Instrument: procurar escritas externas' },
+            { execute: () => this.scanExternal(true) }
+        );
+        commands.registerCommand(
+            { id: CMD_EXT_BASELINE, label: 'Instrument: refazer a referência do projeto' },
+            { execute: () => this.rebaseline() }
+        );
+        commands.registerCommand(
+            { id: CMD_EXT_ACCEPT, label: 'Instrument: aceitar uma escrita externa' },
+            { execute: (relPath?: string) => (relPath ? this.acceptExternal(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_EXT_REVERT, label: 'Instrument: propor reverter uma escrita externa' },
+            { execute: (relPath?: string) => (relPath ? this.revertExternal(relPath) : undefined) }
         );
     }
 
@@ -257,6 +284,92 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Falha ao ler a trilha do broker: ${this.msg(err)}`);
         } finally {
             this.store.setBrokerActivityBusy(false);
+        }
+    }
+
+    // ── external writes (WORK-05) ───────────────────────────────────────────
+
+    /** Compare disk against the baseline. `loud` reports failures to the user;
+     *  the periodic pass stays quiet so a transient error is not a popup storm. */
+    async scanExternal(loud = false): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            this.store.setObserver(undefined);
+            return;
+        }
+        if (this.store.observerBusy) {
+            return;
+        }
+        this.store.setObserverBusy(true);
+        try {
+            const before = this.store.externalDriftCount;
+            const report = await this.observer.scan(root);
+            this.store.setObserver(report);
+            if (report.drifts.length > before) {
+                const fresh = report.drifts.length - before;
+                this.store.toast(
+                    `${fresh} escrita(s) fora do IDE detectada(s) · ${report.drifts.length} aguardando conciliação`
+                );
+            }
+        } catch (err) {
+            if (loud) {
+                this.messages.error(`Falha ao observar escritas externas: ${this.msg(err)}`);
+            }
+        } finally {
+            this.store.setObserverBusy(false);
+        }
+    }
+
+    protected async rebaseline(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setObserverBusy(true);
+        try {
+            this.store.setObserver(await this.observer.baseline(root));
+            this.store.toast('Referência refeita: o disco de agora é o ponto de comparação');
+        } catch (err) {
+            this.messages.error(`Falha ao refazer a referência: ${this.msg(err)}`);
+        } finally {
+            this.store.setObserverBusy(false);
+        }
+    }
+
+    protected async acceptExternal(relPath: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setObserverBusy(true);
+        try {
+            this.store.setObserver(await this.observer.accept(root, relPath));
+            this.store.toast(`Escrita externa aceita · ${relPath}`);
+        } catch (err) {
+            this.messages.error(`Falha ao aceitar '${relPath}': ${this.msg(err)}`);
+        } finally {
+            this.store.setObserverBusy(false);
+        }
+    }
+
+    /** Reverting an external write is a governed effect: it lands on the dock. */
+    protected async revertExternal(relPath: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setObserverBusy(true);
+        try {
+            const result = await this.observer.proposeRevert(root, relPath);
+            this.messages.info(
+                `Restauração de ${result.relPath} proposta ao broker — decida no dock. ` +
+                'Nada foi escrito ainda.'
+            );
+            await this.adoptPendingProposal();
+        } catch (err) {
+            this.messages.error(`Falha ao propor reversão de '${relPath}': ${this.msg(err)}`);
+        } finally {
+            this.store.setObserverBusy(false);
         }
     }
 

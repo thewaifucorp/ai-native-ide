@@ -84,6 +84,11 @@ export class PulseWidget extends AbstractInstrumentWidget {
                         {/* No check engine yet (queue item 4) — muted, never green. */}
                         <span className="none" title="Nenhum motor de checks foi executado ainda">checks não executados</span>
                         <span className={this.store.pendingIsWarn ? 'warn' : ''}>{this.store.pendingText}</span>
+                        {this.store.externalDriftCount > 0 && (
+                            <span className="warn" title="Arquivos mudados fora do IDE, aguardando conciliação">
+                                {this.store.externalDriftCount} fora do IDE
+                            </span>
+                        )}
                         <span className="open-hint">trilha ▴</span>
                     </div>
                 </footer>

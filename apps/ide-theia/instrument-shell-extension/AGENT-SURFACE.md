@@ -1,7 +1,17 @@
 # Superfície de agente
 
-Tudo que a casca faz por clique também é alcançável por um agente. Duas portas,
-nenhuma delas privilegiada em relação à outra.
+Desenvolvimento dirigido por agente não significa duas interfaces (uma pra pessoa,
+uma pra máquina). Significa que **pessoa e agente escrevem no mesmo lugar**: os
+arquivos do projeto. O IDE precisa valer para os dois.
+
+Três portas, nenhuma privilegiada:
+
+1. **O disco** — o agente escreve com as ferramentas dele; o IDE observa,
+   diferencia e concilia (seção "Escritas fora do IDE", abaixo).
+2. **Artefatos em arquivo** — harness, trabalho e configuração são arquivos
+   versionados que pessoa e agente editam igualmente.
+3. **MCP** — quando o agente quer as garantias *antes* de escrever (proposta com
+   aprovação, snapshot, recibo) em vez de depois.
 
 ## 1. Artefatos em arquivo
 
@@ -73,6 +83,42 @@ curl -s localhost:3010/mcp -H "Authorization: Bearer $TOKEN" \
 | `harness_migrate` | troca a versão do manifesto preservando artefatos |
 | `harness_add_items` | cria artefatos de trabalho |
 | `harness_provider_effect` | propõe escrita em nome de um provider ativo |
+| `external_scan` | escritas feitas fora do IDE, com diff real e se dá para reverter |
+| `external_baseline` | refaz a referência do projeto |
+| `external_accept` | adota os bytes atuais como referência (não altera arquivo) |
+| `external_propose_revert` | propõe restaurar os bytes anteriores pelo broker |
+
+## Escritas fora do IDE (o caso normal)
+
+O agente que a pessoa já usa escreve com o `Write`/`Edit` dele. Não passa por
+`governed_propose`, não conhece o broker. Antes isso era invisível para o IDE —
+sem snapshot, sem recibo, sem rollback. Exigir que todo agente adote uma API
+específica não é solução; a interface comum é o filesystem, então o IDE observa o
+filesystem.
+
+Como funciona:
+
+- o IDE mantém uma **referência** dos arquivos de texto do projeto em
+  `.instrument/baseline/` (estado de runtime, gitignored);
+- a cada poucos segundos compara o disco com a referência e mostra o que mudou
+  fora dele: caminho, tipo (`modified` / `created` / `deleted`), linhas +/- pelo
+  engine Rust real, e se dá para restaurar;
+- aparece em "Precisa de você" no Overview, na faixa inferior (`N fora do IDE`) e
+  na seção "Escritas fora do IDE" da view Ferramentas;
+- duas conciliações: **Aceitar** (os bytes atuais viram a nova referência; nenhum
+  arquivo é tocado) ou **Propor reversão** (os bytes anteriores vão ao broker como
+  proposta — com snapshot da versão do agente, aprovação e rollback próprios).
+
+O observador **nunca** bloqueia uma escrita e **nunca** edita um arquivo por conta
+própria. Ele torna visível o que era invisível e devolve a decisão para a pessoa.
+
+Cobertura declarada, não presumida: binários, arquivos acima de 512 KB, symlinks e
+diretórios de build/dependência aparecem em `skipped` com o motivo. Um binário que
+muda é detectado, mas não é restaurável pelo IDE — isso é dito, não escondido.
+
+Pelo MCP as mesmas operações são `external_scan`, `external_baseline`,
+`external_accept` e `external_propose_revert` — ou seja, o agente pode conciliar o
+que ele mesmo escreveu por fora.
 
 ## O que o agente NÃO consegue
 
