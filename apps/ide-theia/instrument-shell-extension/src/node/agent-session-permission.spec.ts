@@ -35,6 +35,34 @@ class FakeEngine {
     /** When set, the next `agentRespondPermission` rejects with this message. */
     failNextAnswer?: string;
 
+    /**
+     * §14 policy answer for the agent's gate. Default is the safe side: the
+     * project asks, so the card stays on screen.
+     */
+    policyAnswer: Record<string, unknown> | Error = {
+        mode: 'hybrid',
+        permissions: 'balanced',
+        scoped: false,
+        class: 'durable',
+        effect: 'require_approval',
+        interruption: 'require_checkpoint',
+        explain: 'exige aprovação'
+    };
+
+    readonly policyAsked: { resource?: string; tool?: string }[] = [];
+
+    async policyDecide(
+        _root: string,
+        _class: string,
+        scope: { resource?: string; tool?: string } = {}
+    ): Promise<Record<string, unknown>> {
+        this.policyAsked.push(scope);
+        if (this.policyAnswer instanceof Error) {
+            throw this.policyAnswer;
+        }
+        return this.policyAnswer;
+    }
+
     async agentStartSession(): Promise<{ session_id: string }> {
         return { session_id: 'sess-1' };
     }
@@ -221,6 +249,64 @@ describe('AgentSessionServiceImpl — permissão é decisão, não aviso', () =>
 
         assert.strictEqual(engine.answered.length, 0);
         assert.ok(snapshot.lastError?.includes('99'));
+    });
+
+    // §14 no portão do agente: só Yolo explícito responde sozinho, e responder
+    // sozinho tem de deixar rastro. Classificar pedido de agente como protótipo
+    // faria até Cautious auto-responder, que é o contrário do que Cautious diz.
+    it('yolo responde o pedido sozinho e registra a regra que decidiu', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = {
+            mode: 'full_vibes',
+            permissions: 'yolo',
+            scoped: false,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'proceed',
+            explain: 'yolo'
+        };
+        engine.events = [permissionEvent(7)];
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.pending.length, 0);
+        assert.strictEqual(engine.answered[0]?.allow, true);
+        const note = snapshot.events.find(e => e.text.includes('aprovado automaticamente'));
+        assert.ok(note, 'decisão que ninguém tomou ainda precisa estar visível');
+        assert.ok(note!.text.includes('COMANDO não tem recibo'));
+    });
+
+    it('a política é perguntada com a ferramenta e o arquivo do pedido', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [
+            permissionEvent(7, [{ path: 'src/main.rs', old_text: 'a', new_text: 'b', truncated: false }])
+        ];
+
+        await service.poll(rootUri);
+
+        assert.deepStrictEqual(engine.policyAsked, [{ resource: 'src/main.rs', tool: 'write-file' }]);
+    });
+
+    it('política padrão (balanced) NÃO responde sozinha: o card fica de pé', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [permissionEvent(7)];
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.pending.length, 1);
+        assert.strictEqual(engine.answered.length, 0);
+    });
+
+    it('política indisponível deixa o pedido pendente, nunca aprovado', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = new Error('sidecar fora do ar');
+        engine.events = [permissionEvent(7)];
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.pending.length, 1);
+        assert.strictEqual(engine.answered.length, 0);
+        assert.ok(snapshot.events.some(e => e.text.includes('política de efeito indisponível')));
     });
 
     it('turno que termina leva os pedidos sem resposta, e diz que não respondido é negado', async () => {

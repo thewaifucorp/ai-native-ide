@@ -375,6 +375,26 @@ describe('GovernedWriteServiceImpl — §14: o modo decide quando perguntar', ()
         assert.ok(!engine.calls.some(c => c.startsWith('approve:')));
     });
 
+    // A classe throwaway existia no motor e nenhuma chamada a produzia. Quem
+    // produz é o destino: `.instrument/` é estado de runtime do IDE, não conteúdo
+    // do projeto — mesma linha que §4/§5/§13 já desenham.
+    it('escrita em .instrument/ é protótipo; conteúdo do projeto é durável', async () => {
+        const { service, engine, rootUri } = fixture();
+        const classes: string[] = [];
+        (engine as unknown as { policyDecide: unknown }).policyDecide = async (
+            _root: string,
+            effectClass: string
+        ) => {
+            classes.push(effectClass);
+            return { ...(engine.policyAnswer as PolicyDecision), class: effectClass };
+        };
+
+        await service.proposeWrite(rootUri, '.instrument/checks.json', '{}\n');
+        await service.proposeWrite(rootUri, 'alvo.md', 'x\n');
+
+        assert.deepStrictEqual(classes, ['prototype', 'durable']);
+    });
+
     it('regra com escopo próprio chega ao card como escopada', async () => {
         const { service, engine, rootUri } = fixture();
         engine.policyAnswer = {

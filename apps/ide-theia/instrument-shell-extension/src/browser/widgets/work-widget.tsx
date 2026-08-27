@@ -1259,7 +1259,9 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                 rollback: só o portão de permissão o cobre, e só nos bridges que perguntam ·
                                 exclusão é vista mas não é proposta (o broker não tem efeito de exclusão) ·
                                 não é jaula: o adapter não aplica sandbox · permissão do agente é
-                                decidida aqui, e o agente fica parado até a decisão
+                                decidida aqui, e o agente fica parado até a decisão — a menos que a
+                                permissão do projeto seja Yolo, e aí o IDE responde sozinho e
+                                registra o pedido e a regra que decidiu
                             </small>
                             <div className="cap-actions">
                                 {phase === 'none' || phase === 'failed' ? (

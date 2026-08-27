@@ -212,7 +212,61 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             }
             this.absorb(state, event);
         }
+        await this.applyPolicyToPending(rootUri, root, state);
         return this.view(state);
+    }
+
+    /**
+     * §14 at the agent's gate: the mode decides WHETHER the IDE stops to ask.
+     *
+     * An agent request is classified `durable` on purpose. The worktree is not a
+     * jail — the agent can write outside it by absolute path, and a command it
+     * runs has real effects — so treating agent requests as throwaway would make
+     * `Cautious` auto-answer everything, which is the opposite of what it means.
+     * Only an explicit Yolo (globally or scoped to that tool) answers by itself.
+     *
+     * Two honesty rules hold here. The auto-answer is recorded as an event naming
+     * the rule that produced it, so a decision nobody took is still visible. And
+     * a policy that cannot be reached leaves the request PENDING — the agent
+     * stays blocked, which is the side that cannot cause an effect.
+     */
+    protected async applyPolicyToPending(
+        rootUri: string,
+        root: string,
+        state: SessionState
+    ): Promise<void> {
+        if (state.pending.length === 0) {
+            return;
+        }
+        for (const request of [...state.pending]) {
+            let decision;
+            try {
+                decision = await this.engine.policyDecide(root, 'durable', {
+                    resource: request.edits[0]?.path,
+                    tool: request.action
+                });
+            } catch (err) {
+                this.push(
+                    state,
+                    'permissão',
+                    `política de efeito indisponível (${this.msg(err)}) — o pedido continua ` +
+                    'esperando você, que é o lado que não causa efeito'
+                );
+                return;
+            }
+            if (decision.effect !== 'auto_approve_recorded') {
+                continue;
+            }
+            this.push(
+                state,
+                'permissão',
+                `${request.action}: ${request.detail} — aprovado automaticamente ` +
+                `(modo ${decision.mode}, permissões ${decision.permissions}` +
+                `${decision.scoped ? ', regra com escopo próprio' : ''}). ` +
+                'Escrita colhida ainda passa pelo broker; COMANDO não tem recibo nem rollback'
+            );
+            await this.respondPermission(rootUri, request.requestId, true);
+        }
     }
 
     async harvest(rootUri: string): Promise<AgentSessionSnapshot> {

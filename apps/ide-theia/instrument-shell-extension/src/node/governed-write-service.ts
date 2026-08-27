@@ -215,10 +215,8 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
 
         // ── §14: the MODE decides whether this stops here ──────────────────
-        // A write into the project is a DURABLE effect by definition — the
-        // prototype class belongs to throwaway state (worktree, preview), not to
-        // the project's own files. The engine answers with the project's mode and
-        // the permission that actually applies to this path.
+        // The engine answers with the project's mode and the permission that
+        // actually applies to this path, for the class this write belongs to.
         const policy = await this.policyFor(rootFsPath, relPath);
         proposal.policy = policy;
         if (policy?.decision === 'auto_approve_recorded') {
@@ -234,6 +232,25 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
     }
 
     /**
+     * Which effect class a write belongs to, decided by WHERE it lands.
+     *
+     * `ide-modes` has always had two classes and nothing produced the throwaway
+     * one, so `prototype` was a branch no call could reach. The line already
+     * drawn everywhere else in this repo is the honest producer: `.instrument/`
+     * is IDE runtime state for the project (checks, previews, the agent's
+     * worktree) — it is not reviewed as a diff and it is not the project's
+     * content. A write there is throwaway by construction, so it does not stop
+     * to ask in any mode; it is still proposed, snapshotted and recorded, and it
+     * is still reversible.
+     *
+     * Everything else is the project itself: durable, and it follows the mode.
+     */
+    protected classOf(relPath: string): 'durable' | 'prototype' {
+        const first = relPath.split(/[\\/]/).filter(Boolean)[0];
+        return first === '.instrument' ? 'prototype' : 'durable';
+    }
+
+    /**
      * Asks `ide-modes` (through the sidecar) what this effect requires.
      *
      * A failure here is NOT a reason to auto-approve: `undefined` leaves the
@@ -245,7 +262,7 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         relPath: string
     ): Promise<EffectPolicy | undefined> {
         try {
-            const decision = await this.engine.policyDecide(rootFsPath, 'durable', {
+            const decision = await this.engine.policyDecide(rootFsPath, this.classOf(relPath), {
                 resource: relPath
             });
             return {
