@@ -16,6 +16,7 @@ import {
     PolicyDecision,
     ProjectSnapshot,
     PublishAttempt,
+    ReferencesSnapshot,
     WorkItem,
     WorkSnapshot,
     SettingsPatch,
@@ -389,6 +390,24 @@ export class EngineSidecarService implements EngineService {
     }
 
     // ── §13 config ────────────────────────────────────────────────────────────
+
+    referencesSnapshot(root: string): Promise<ReferencesSnapshot> {
+        return this.call('references_snapshot', { root });
+    }
+
+    referencesLink(
+        root: string,
+        id: string,
+        kind: 'service' | 'environment',
+        name: string,
+        endpoint: string
+    ): Promise<ReferencesSnapshot> {
+        return this.call('references_link', { root, id, kind, name, endpoint });
+    }
+
+    referencesUnlink(root: string, id: string): Promise<ReferencesSnapshot> {
+        return this.call('references_unlink', { root, id });
+    }
 
     workSnapshot(root: string): Promise<WorkSnapshot> {
         return this.call('work_snapshot', { root });

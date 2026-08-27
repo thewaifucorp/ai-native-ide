@@ -1,0 +1,19 @@
+{
+  "decisions": [
+    {
+      "findingId": "layer1:auction-concurrency:leilão",
+      "state": "accepted",
+      "note": "aceita na revisão da intenção",
+      "intentHash": "45e44747bcb5ec5d",
+      "atMs": 1787860587914,
+      "artifact": "guidance-000001"
+    },
+    {
+      "findingId": "layer1:payment-decisions:pagamento",
+      "state": "dismissed",
+      "note": "não vai ter upload nesta versão",
+      "intentHash": "45e44747bcb5ec5d",
+      "atMs": 1787860612450
+    }
+  ]
+}

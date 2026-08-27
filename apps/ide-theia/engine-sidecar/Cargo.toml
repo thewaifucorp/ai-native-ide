@@ -57,6 +57,11 @@ ide-lifecycle = { path = "../../../crates/ide-lifecycle" }
 #    implementation and evidence freshness — the artifact has no status field to
 #    write, which is what makes "status é calculado" true instead of a habit.
 ide-work = { path = "../../../crates/ide-work" }
+#  - ide-references: serviço e ambiente como REFERÊNCIA (§13). É o tipo que o
+#    `project.rs` declarava faltar: recurso durável é diretório canônico, e um
+#    serviço não tem diretório. Não é a "referência" do §5, que é material do
+#    projeto com procedência e passa pelo broker.
+ide-references = { path = "../../../crates/ide-references" }
 #  - ide-semantic: the REAL Layer-1 evaluators (§8). Findings are HYPOTHESES —
 #    they never block and never enter agent context.
 ide-semantic = { path = "../../../crates/ide-semantic" }

@@ -443,7 +443,7 @@ mod tests {
         let snapshot = create(dir.path(), request("decision", "desempate", "algo")).expect("nota");
         let id = snapshot.notes[0].id.clone();
 
-        assert!(merge(dir.path(), &[id.clone()], "t", "s", "x", "motivo").is_err());
+        assert!(merge(dir.path(), std::slice::from_ref(&id), "t", "s", "x", "motivo").is_err());
         assert!(merge(dir.path(), &[id.clone(), "note-999".to_string()], "t", "s", "x", "m").is_err());
         assert!(merge(dir.path(), &[id, "note-999".to_string()], "t", "s", "x", "  ").is_err());
     }

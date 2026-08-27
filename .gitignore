@@ -15,4 +15,13 @@ dist/
 # Test-automation output + runtime artifacts
 .playwright-mcp/
 **/.instrument/
+
+# EXCEÇÃO: o workspace de demonstração é a prova, e prova que não viaja no clone
+# não é prova de nada. Vão só os arquivos DECLARATIVOS — checks, preview, config,
+# harness, reconciliação e revisão de intenção. Ficam de fora, de propósito, os
+# bancos (`*.sqlite3`, estado do broker e do store semântico), o `preview.log` e
+# a `agent-worktree/` — que é uma worktree git de verdade dentro do projeto.
+!apps/ide-theia/workspace/.instrument/
+apps/ide-theia/workspace/.instrument/*
+!apps/ide-theia/workspace/.instrument/*.json
 apps/desktop/src-tauri/gen/

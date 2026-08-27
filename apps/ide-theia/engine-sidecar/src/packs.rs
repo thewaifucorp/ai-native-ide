@@ -153,7 +153,7 @@ pub fn snapshot(root: &Path, passed: &[String], failed: &[String]) -> Result<Pac
     let applied = registry.applied();
     let readiness = installed
         .iter()
-        .filter(|pack| applied.iter().any(|id| *id == pack.id))
+        .filter(|pack| applied.contains(&pack.id))
         .map(|pack| registry.readiness_for(pack, passed, failed))
         .collect();
 

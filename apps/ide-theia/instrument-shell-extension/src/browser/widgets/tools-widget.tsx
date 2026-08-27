@@ -36,6 +36,9 @@ import {
     CMD_LIFECYCLE_EXPORT,
     CMD_LIFECYCLE_PUBLISH,
     CMD_LIFECYCLE_READ,
+    CMD_REFS_LINK,
+    CMD_REFS_READ,
+    CMD_REFS_UNLINK,
     CMD_WORK_ADD,
     CMD_WORK_PROVIDER,
     CMD_WORK_READ,
@@ -1056,6 +1059,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             </div>
                         </>
                     )}
+                    {durable?.project && this.renderReferences()}
                     {durable?.gaps.map((gap, index) => (
                         <small className="cap-remediation" key={`gap:${index}`}>
                             ainda não: {gap}
@@ -1072,6 +1076,117 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     {busy ? 'lendo…' : 'Ler projeto'}
                 </button>
             </div>
+        );
+    }
+
+    /**
+     * REFERÊNCIAS (§13), dentro do projeto durável porque é onde elas vivem.
+     *
+     * Serviço e ambiente não são recurso: recurso do motor é diretório canônico,
+     * e um serviço não tem diretório. Eles têm ENDEREÇO. Ligar declara que este
+     * projeto depende deles — e é só isso: nada aqui chama o endpoint, então não
+     * existe (e não deve existir) selo de "no ar" nesta lista.
+     */
+    protected renderReferences(): React.ReactNode {
+        const refs = this.store.references;
+        const busy = this.store.referencesBusy;
+        return (
+            <>
+                <div className="cap-head">
+                    <b>Referências</b>
+                    <span className="cap-pill ready">
+                        {refs ? `${refs.references.length}` : 'não lidas'}
+                    </span>
+                </div>
+                <small className="cap-hint">
+                    {refs?.note ??
+                        'serviço e ambiente entram por endereço, não por caminho — ligar declara dependência, não verifica nada'}
+                </small>
+                {refs?.blockedReason && <p className="cap-detail">{refs.blockedReason}</p>}
+                {refs?.references.map(reference => (
+                    <div className="cap-receipt" key={reference.id}>
+                        <span className="cap-receipt-action">{reference.kind}</span>
+                        <span className="cap-receipt-detail">
+                            {reference.name} · {reference.endpoint}
+                        </span>
+                        <small>
+                            {reference.projects.length > 1
+                                ? `compartilhada com ${reference.projects.length - 1} outro(s) projeto(s)`
+                                : 'só deste projeto'}
+                        </small>
+                        <button
+                            className="cap-btn"
+                            disabled={busy}
+                            title="Desliga daqui; outros projetos que a usam continuam com ela"
+                            onClick={() =>
+                                this.commands.executeCommand(CMD_REFS_UNLINK, reference.id)
+                            }
+                        >
+                            Desligar
+                        </button>
+                    </div>
+                ))}
+                <div className="cap-actions">
+                    {this.input('ref-id', 'id (ex.: svc:api)')}
+                    {this.input('ref-name', 'nome')}
+                </div>
+                <div className="cap-actions">
+                    {this.input('ref-endpoint', 'endpoint ou rótulo do ambiente')}
+                    <button
+                        className="cap-btn"
+                        disabled={
+                            busy ||
+                            this.draft('ref-id').trim().length === 0 ||
+                            this.draft('ref-name').trim().length === 0 ||
+                            this.draft('ref-endpoint').trim().length === 0
+                        }
+                        onClick={() => {
+                            this.commands.executeCommand(
+                                CMD_REFS_LINK,
+                                this.draft('ref-id').trim(),
+                                'service',
+                                this.draft('ref-name').trim(),
+                                this.draft('ref-endpoint').trim()
+                            );
+                            this.setDraft('ref-id', '');
+                            this.setDraft('ref-name', '');
+                            this.setDraft('ref-endpoint', '');
+                        }}
+                    >
+                        Ligar serviço
+                    </button>
+                    <button
+                        className="cap-btn"
+                        disabled={
+                            busy ||
+                            this.draft('ref-id').trim().length === 0 ||
+                            this.draft('ref-name').trim().length === 0 ||
+                            this.draft('ref-endpoint').trim().length === 0
+                        }
+                        onClick={() => {
+                            this.commands.executeCommand(
+                                CMD_REFS_LINK,
+                                this.draft('ref-id').trim(),
+                                'environment',
+                                this.draft('ref-name').trim(),
+                                this.draft('ref-endpoint').trim()
+                            );
+                            this.setDraft('ref-id', '');
+                            this.setDraft('ref-name', '');
+                            this.setDraft('ref-endpoint', '');
+                        }}
+                    >
+                        Ligar ambiente
+                    </button>
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_REFS_READ)}
+                    >
+                        {busy ? 'lendo…' : 'Ler referências'}
+                    </button>
+                </div>
+            </>
         );
     }
 

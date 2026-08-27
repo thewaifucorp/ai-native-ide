@@ -77,6 +77,9 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_DISCARD = 'instrument.session.discard';
+export const CMD_REFS_READ = 'instrument.references.read';
+export const CMD_REFS_LINK = 'instrument.references.link';
+export const CMD_REFS_UNLINK = 'instrument.references.unlink';
 export const CMD_WORK_READ = 'instrument.work.read';
 export const CMD_WORK_ADD = 'instrument.work.add';
 export const CMD_WORK_PROVIDER = 'instrument.work.useDefaultProvider';
@@ -277,6 +280,23 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_DISCARD, label: 'Instrument: descartar a worktree do agente' },
             { execute: () => this.sessionDiscard() }
+        );
+        commands.registerCommand(
+            { id: CMD_REFS_READ, label: 'Instrument: ler referências do projeto (§13)' },
+            { execute: () => this.readReferences() }
+        );
+        commands.registerCommand(
+            { id: CMD_REFS_LINK, label: 'Instrument: ligar serviço ou ambiente (§13)' },
+            {
+                execute: (id?: string, kind?: string, name?: string, endpoint?: string) =>
+                    id && name && endpoint
+                        ? this.linkReference(id, kind === 'environment' ? 'environment' : 'service', name, endpoint)
+                        : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_REFS_UNLINK, label: 'Instrument: desligar referência deste projeto (§13)' },
+            { execute: (id?: string) => (id ? this.unlinkReference(id) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_WORK_READ, label: 'Instrument: ler trabalho e status calculado (§9)' },
@@ -1816,6 +1836,66 @@ export class InstrumentCapabilityContribution
             this.store.setSession(await this.session.discard(root));
         } catch (err) {
             this.messages.error(`Falha ao descartar a worktree: ${this.msg(err)}`);
+        }
+    }
+
+    // ── §13 referências: serviço e ambiente ─────────────────────────────────
+
+    protected async readReferences(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReferencesBusy(true);
+        try {
+            this.store.setReferences(await this.engine.referencesSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler as referências: ${this.msg(err)}`);
+            this.store.setReferences(undefined);
+        } finally {
+            this.store.setReferencesBusy(false);
+        }
+    }
+
+    /** Linking declares a dependency. It does not reach the endpoint, and the
+     *  panel says so instead of showing a health badge nobody measured. */
+    protected async linkReference(
+        id: string,
+        kind: 'service' | 'environment',
+        name: string,
+        endpoint: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReferencesBusy(true);
+        try {
+            this.store.setReferences(
+                await this.engine.referencesLink(root, id, kind, name, endpoint)
+            );
+        } catch (err) {
+            this.messages.error(`Referência não foi ligada: ${this.msg(err)}`);
+        } finally {
+            this.store.setReferencesBusy(false);
+        }
+    }
+
+    protected async unlinkReference(id: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReferencesBusy(true);
+        try {
+            this.store.setReferences(await this.engine.referencesUnlink(root, id));
+            this.messages.info(
+                `${id} desligado deste projeto — outros projetos que o usam continuam com ele.`
+            );
+        } catch (err) {
+            this.messages.error(`Referência não foi desligada: ${this.msg(err)}`);
+        } finally {
+            this.store.setReferencesBusy(false);
         }
     }
 

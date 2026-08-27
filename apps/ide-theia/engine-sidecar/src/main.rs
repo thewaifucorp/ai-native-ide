@@ -46,6 +46,7 @@ mod notes;
 mod packs;
 mod policy;
 mod project;
+mod references;
 mod settings;
 mod preview;
 mod reconcile;
@@ -708,6 +709,51 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             })
             .await
             .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §13 — serviços e ambientes: referência tem endereço, não caminho.
+        "references_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || references::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "references_link" => {
+            #[derive(Deserialize)]
+            struct LinkParams {
+                root: String,
+                id: String,
+                kind: String,
+                name: String,
+                endpoint: String,
+            }
+            let p: LinkParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                references::link(&root, &p.id, &p.kind, &p.name, &p.endpoint)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "references_unlink" => {
+            #[derive(Deserialize)]
+            struct UnlinkParams {
+                root: String,
+                id: String,
+            }
+            let p: UnlinkParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || references::unlink(&root, &p.id))
+                    .await
+                    .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §9 — trabalho e status. Ler calcula; gravar grava FATO (critério,

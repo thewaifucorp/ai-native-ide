@@ -1,0 +1,18 @@
+{
+  "reconciliations": [
+    {
+      "divergenceId": "preview-responde::observed:preview-failure:exit:1",
+      "choice": {
+        "kind": "accept_scoped_exception",
+        "scope": {
+          "preview": {
+            "preview_id": "preview"
+          }
+        },
+        "justification": "derrubei o processo à mão para exercitar a evidência"
+      },
+      "status": "accepted_scoped_exception",
+      "atMs": 1787857442644
+    }
+  ]
+}

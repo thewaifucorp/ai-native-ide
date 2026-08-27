@@ -255,6 +255,20 @@ export interface EngineService {
 
     // ── §13 config: one schema for the panel and the file ─────────────────────
 
+    // ── §13 referências: serviço e ambiente ───────────────────────────────────
+
+    referencesSnapshot(root: string): Promise<ReferencesSnapshot>;
+    /** Links a service/environment to this project, reusing an existing id. */
+    referencesLink(
+        root: string,
+        id: string,
+        kind: 'service' | 'environment',
+        name: string,
+        endpoint: string
+    ): Promise<ReferencesSnapshot>;
+    /** Unlinks it from THIS project; other projects keep theirs. */
+    referencesUnlink(root: string, id: string): Promise<ReferencesSnapshot>;
+
     // ── §9 trabalho e status calculado ────────────────────────────────────────
 
     /** Reads the items and COMPUTES every status over material measured now. */
@@ -858,6 +872,36 @@ export interface SettingRow {
     explain: string;
     /** True when nothing consumes this value yet — marked, never hidden. */
     declaredNotWired: boolean;
+}
+
+// ── §13 references: a service has an address, not a path ─────────────────────
+
+/**
+ * A service or environment this project depends on.
+ *
+ * NOT the §5 "references" (`.product/references/*.json`), which are project
+ * MATERIAL with provenance and go through the broker. These are addresses: no
+ * path, no bytes to version, and no status — nothing here calls the endpoint, so
+ * any health claim would be invented.
+ */
+export interface ProjectReference {
+    id: string;
+    /** `service` | `environment`. */
+    kind: string;
+    name: string;
+    endpoint: string;
+    /** Projects linking this reference — it is shared, never duplicated. */
+    projects: string[];
+}
+
+export interface ReferencesSnapshot {
+    references: ProjectReference[];
+    projectId?: string;
+    /** Why linking is unavailable (no durable project yet), when it is. */
+    blockedReason?: string;
+    registryPath: string;
+    /** Said in the payload: registering declares a dependency, it verifies nothing. */
+    note: string;
 }
 
 // ── §9 work: Features, Tasks and a status nobody can type ────────────────────

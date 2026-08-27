@@ -1,0 +1,5 @@
+{
+  "command": "node src/server.ts",
+  "url": "http://127.0.0.1:8787/health",
+  "readyTimeoutMs": 8000
+}

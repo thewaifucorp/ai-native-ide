@@ -19,6 +19,7 @@ import {
     LibrarySnapshot,
     LifecycleSnapshot,
     PublishAttempt,
+    ReferencesSnapshot,
     WorkSnapshot,
     NotesSnapshot,
     ProjectSnapshot,
@@ -153,6 +154,11 @@ export class InstrumentStore {
     //    Abrir pasta não é registrar projeto.
     durable: ProjectSnapshot | undefined;
     durableBusy = false;
+
+    // ── REAL referências (§13): serviço e ambiente do projeto durável. Elas
+    //    têm endereço, não caminho — e nada aqui chama o endpoint.
+    references: ReferencesSnapshot | undefined;
+    referencesBusy = false;
 
     // ── REAL trabalho (§9): itens em arquivo e status CALCULADO. Nenhum campo
     //    aqui é escrito por alguém: o motor derivou tudo do que os artefatos
@@ -443,6 +449,16 @@ export class InstrumentStore {
 
     setSettingsBusy(busy: boolean): void {
         this.settingsBusy = busy;
+        this.emit();
+    }
+
+    setReferences(snapshot: ReferencesSnapshot | undefined): void {
+        this.references = snapshot;
+        this.emit();
+    }
+
+    setReferencesBusy(busy: boolean): void {
+        this.referencesBusy = busy;
         this.emit();
     }
 

@@ -73,9 +73,10 @@ fn id_for(root: &Path) -> ProjectId {
 
 fn gaps() -> Vec<String> {
     vec![
-        "serviços e ambientes não são recursos duráveis: o recurso do motor é um \
-         diretório local canônico, e dar um diretório a um serviço para caber no schema \
-         seria inventar fato — o §5 já os detecta com evidência"
+        "serviço e ambiente não são RECURSO durável — recurso do motor é diretório \
+         canônico. Eles entram como REFERÊNCIA (endereço, sem caminho), no registro \
+         de referências deste projeto; registrar declara dependência e não verifica \
+         nada"
             .to_string(),
     ]
 }
