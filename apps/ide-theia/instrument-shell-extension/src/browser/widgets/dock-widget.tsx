@@ -156,8 +156,19 @@ export class DockWidget extends AbstractInstrumentWidget {
         return (
             <div className="decision" id="iws-decision-card">
                 <div className="st-row">AGUARDANDO VOCÊ</div>
-                <h4>Gravar mudança em {p.relPath}?</h4>
-                <p>Escrita governada sobre um arquivo real. Diff calculado pelo engine Rust ide-diff · {summary}. Um snapshot reversível é tirado antes — nada foi escrito ainda.</p>
+                {/* "Criar" e "gravar" são decisões diferentes, e o diff não as
+                    distingue: criar arquivo produz o mesmo todo-adicionado que
+                    reescrever apagando tudo. Quem decide tem de ver qual é. */}
+                <h4>
+                    {p.creating ? 'Criar arquivo' : 'Gravar mudança em'} {p.relPath}?
+                </h4>
+                <p>
+                    Escrita governada sobre um arquivo real. Diff calculado pelo engine Rust
+                    ide-diff · {summary}.{' '}
+                    {p.creating
+                        ? 'O arquivo ainda não existe: reverter apaga o que foi criado.'
+                        : 'Um snapshot reversível é tirado antes — nada foi escrito ainda.'}
+                </p>
                 {p.warning && <p style={{ color: 'var(--need)' }}>{p.warning}</p>}
                 {diff}
                 <div className="acts">

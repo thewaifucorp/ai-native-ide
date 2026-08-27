@@ -44,6 +44,15 @@ export interface WriteProposal {
     /** A capped slice of the real diff, for the dock decision card. */
     preview: DiffLinePreview[];
     /**
+     * True when the file does not exist yet and this write would create it.
+     *
+     * The card has to be able to say "criar" instead of "gravar": a diff that is
+     * all-added over an empty pre-image looks identical to a rewrite that deleted
+     * everything, and those are different decisions. Rollback of a creation
+     * REMOVES the file (the broker snapshots "did not exist").
+     */
+    creating?: boolean;
+    /**
      * Set when the adapter had to recover from a governance anomaly while
      * producing this proposal. Shown to the user verbatim — a recovered anomaly
      * is still an anomaly, and hiding it would be the whole problem again.

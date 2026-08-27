@@ -121,7 +121,14 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
             throw new Error(`path '${relPath}' escapes the workspace root`);
         }
-        const probe = fs.existsSync(absPath) ? absPath : path.dirname(absPath);
+        // Walk up to the nearest ancestor that EXISTS. A write that creates a
+        // file — and, with it, the directory it lives in — still has to be
+        // confined, and `dirname` alone throws ENOENT for a nested new path
+        // instead of checking anything.
+        let probe = fs.existsSync(absPath) ? absPath : path.dirname(absPath);
+        while (!fs.existsSync(probe) && path.dirname(probe) !== probe) {
+            probe = path.dirname(probe);
+        }
         const real = fs.realpathSync(probe);
         const realRel = path.relative(root, real);
         if (realRel !== '' && (realRel.startsWith('..') || path.isAbsolute(realRel))) {
@@ -137,10 +144,16 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         const rootFsPath = FileUri.fsPath(new URI(rootUri));
 
         const absPath = this.confine(rootFsPath, relPath);
-        if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
-            throw new Error(`no such workspace file: ${relPath}`);
+        if (fs.existsSync(absPath) && !fs.statSync(absPath).isFile()) {
+            throw new Error(`not a workspace file: ${relPath}`);
         }
-        const original = fs.readFileSync(absPath, 'utf8');
+        // A file that does not exist yet has an EMPTY pre-image, and the diff is
+        // all-added — which is exactly what a creation is. Refusing new files
+        // here would push §5's adoptions (guidance, references) outside the
+        // broker, and the point of routing them through it is that project
+        // content only ever appears as a reviewed diff.
+        const creating = !fs.existsSync(absPath);
+        const original = creating ? '' : fs.readFileSync(absPath, 'utf8');
 
         // Real diff via the Rust ide-diff engine — same round trip as the demo.
         const hunks = await this.engine.diff(original, newContent);
@@ -196,6 +209,7 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         }
 
         const proposal = this.summarize(hunks, id, relPath, 'awaiting');
+        proposal.creating = creating;
         proposal.warning = warning;
         this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
         return proposal;
@@ -240,6 +254,16 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         // it and snapshots the pre-image. No draining and no ordering assumption —
         // the grant names the effect, so other pending decisions are untouched.
         await this.engine.brokerApprove(rec.rootFsPath, OWNER, id);
+        // The broker confines by canonicalizing the PARENT, and it never creates
+        // directories — deliberately. So a creation inside a directory that does
+        // not exist yet needs the directory made here, at approval time and not
+        // at proposal time: a proposal that is denied must leave no trace in the
+        // project. Rollback still removes the created file (the broker snapshots
+        // "did not exist"); the now-empty directory stays, and that is why this
+        // happens only after a decision.
+        if (rec.proposal.creating === true) {
+            fs.mkdirSync(path.dirname(path.join(rec.rootFsPath, rec.relPath)), { recursive: true });
+        }
         const written = await this.engine.brokerPropose(
             rec.rootFsPath,
             OWNER,

@@ -22,6 +22,9 @@ import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
     CMD_BROKER_TRAIL,
     CMD_ADOPT_COMMAND,
+    CMD_ADOPT_CONFIG,
+    CMD_PROPOSE_GUIDANCE,
+    CMD_REGISTER_REFERENCE,
     CMD_CHECKS_RUN,
     CMD_MATERIALS_ANALYZE,
     CMD_PREVIEW_START,
@@ -177,7 +180,10 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     {awaiting && (
                         <div className="need-item">
                             <div className="txt">
-                                <b>Gravar mudança em {awaiting.relPath}?</b>
+                                <b>
+                                    {awaiting.creating ? 'Criar arquivo' : 'Gravar mudança em'}{' '}
+                                    {awaiting.relPath}?
+                                </b>
                                 <small>
                                     +{awaiting.addedLines} / -{awaiting.removedLines} · {awaiting.hunkCount} hunk(s),
                                     calculados pelo engine Rust. Nada foi escrito ainda.
@@ -790,6 +796,144 @@ export class WorkWidget extends AbstractInstrumentWidget {
                         {evidence(i.provenance)}
                     </div>
                 ))}
+
+                {analysis.instructions.length > 0 && (
+                    <>
+                        <small className="cap-hint">Instruções que o projeto mantém</small>
+                        {analysis.instructions.map(i => (
+                            <div className="cap-receipt" key={i.id}>
+                                <span className="cap-receipt-action">{i.kind}</span>
+                                <span className="cap-receipt-detail">{i.label}</span>
+                                <small>
+                                    {i.bytes} byte(s) lidos ·{' '}
+                                    {i.headings.length > 0
+                                        ? `seções: ${i.headings.join(' · ')}`
+                                        : 'sem seções'}
+                                </small>
+                                {evidence(i.provenance)}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.guidance.length > 0 && (
+                    <>
+                        <small className="cap-hint">
+                            Orientações candidatas — sempre como <b>sugestão</b>: detector não sabe
+                            que uma frase é bloqueante, quem escreveu sabe
+                        </small>
+                        {analysis.guidance.map(g => (
+                            <div className="cap-receipt" key={g.id}>
+                                <span className="cap-receipt-action">{g.strength}</span>
+                                <span className="cap-receipt-detail">{g.title}</span>
+                                <small>{g.text}</small>
+                                {evidence(g.provenance)}
+                                {g.alreadyDeclared ? (
+                                    <small>já existe em {g.target}</small>
+                                ) : (
+                                    <div className="cap-actions">
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title={`Propõe escrever ${g.target} — .product/ é conteúdo do projeto, então passa pelo broker`}
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_PROPOSE_GUIDANCE, g.id)
+                                            }
+                                        >
+                                            Propor guidance (vai ao broker)
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.config.length > 0 && (
+                    <>
+                        <small className="cap-hint">Configuração do IDE que o projeto já declara</small>
+                        {analysis.config.map(c => (
+                            <div className="cap-receipt" key={c.id}>
+                                <span className="cap-receipt-action">
+                                    {c.alreadyDeclared ? 'declarado' : 'candidato'}
+                                </span>
+                                <span className="cap-receipt-detail">
+                                    {c.label} → {c.target}
+                                </span>
+                                <small>{JSON.stringify(c.proposed)}</small>
+                                {c.provenance.map((p, index) => (
+                                    <React.Fragment key={`${c.id}:${index}`}>{evidence(p)}</React.Fragment>
+                                ))}
+                                {c.gap && <small className="cap-remediation">{c.gap}</small>}
+                                <div className="cap-actions">
+                                    <button
+                                        className="cap-btn"
+                                        disabled={busy}
+                                        title="Grava direto: .instrument/ é estado de runtime do IDE, não conteúdo do projeto"
+                                        onClick={() =>
+                                            this.commands.executeCommand(CMD_ADOPT_CONFIG, c.id)
+                                        }
+                                    >
+                                        {c.alreadyDeclared ? 'Regravar' : 'Adotar configuração'}
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.references.length > 0 && (
+                    <>
+                        <small className="cap-hint">
+                            Referências citadas · URL não é baixada, e arquivo do projeto já é asset
+                            versionado aqui
+                        </small>
+                        {analysis.references.map(r => (
+                            <div className="cap-receipt" key={r.id}>
+                                <span className="cap-receipt-action">{r.kind}</span>
+                                <span className="cap-receipt-detail">{r.label}</span>
+                                {evidence(r.provenance)}
+                                {r.assetNote && <small className="cap-remediation">{r.assetNote}</small>}
+                                {r.alreadyRegistered ? (
+                                    <small>já registrada em .product/references/</small>
+                                ) : (
+                                    <div className="cap-actions">
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_REGISTER_REFERENCE, r.id)
+                                            }
+                                        >
+                                            Registrar (vai ao broker)
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.relations.length > 0 && (
+                    <>
+                        <small className="cap-hint">
+                            Relações literais entre materiais — nada de semântica adivinhada
+                        </small>
+                        {analysis.relations.map(r => (
+                            <div className="cap-receipt" key={r.id}>
+                                <span className="cap-receipt-action">{r.kind}</span>
+                                <span className="cap-receipt-detail">
+                                    {r.from} → {r.to}
+                                </span>
+                                {evidence(r.provenance)}
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {analysis.limits.length > 0 && (
+                    <small className="cap-hint">limites da varredura: {analysis.limits.join(' · ')}</small>
+                )}
 
                 <div className="cap-actions">
                     <button

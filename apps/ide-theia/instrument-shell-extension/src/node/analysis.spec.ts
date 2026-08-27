@@ -23,13 +23,35 @@ interface Fixture {
     rootUri: string;
 }
 
-function fixture(): Fixture {
+/** Propostas que o broker teria recebido, para conferir o REGIME de escrita:
+ *  `.instrument/` é gravado direto (estado de runtime do IDE) e `.product/` só
+ *  atravessa o broker. Trocar os dois transformaria configuração do IDE em
+ *  mudança de código para revisar, ou pior, o contrário. */
+interface RecordedProposal {
+    relPath: string;
+    content: string;
+}
+
+function fixture(): Fixture & { proposals: RecordedProposal[] } {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'analysis-'));
-    return {
-        service: new AnalysisServiceImpl(),
-        root,
-        rootUri: FileUri.create(root).toString()
+    const service = new AnalysisServiceImpl();
+    const proposals: RecordedProposal[] = [];
+    // Duplo do broker: registra a proposta sem escrever nada, que é exatamente o
+    // que o broker real faz na primeira chamada.
+    (service as unknown as { governed: unknown }).governed = {
+        proposeWrite: async (_rootUri: string, relPath: string, content: string) => {
+            proposals.push({ relPath, content });
+            return {
+                id: `proposta-${proposals.length}`,
+                relPath,
+                state: 'awaiting',
+                addedLines: 0,
+                removedLines: 0,
+                hunkCount: 1
+            };
+        }
     };
+    return { service, root, rootUri: FileUri.create(root).toString(), proposals };
 }
 
 function write(root: string, rel: string, body: string): void {
@@ -234,5 +256,201 @@ describe('AnalysisServiceImpl — candidato só existe com evidência', () => {
         const analysis = await service.analyze(rootUri);
 
         assert.ok(analysis.skipped.includes('node_modules'));
+    });
+});
+
+describe('AnalysisServiceImpl — instruções, guidance, configuração, referências, relações', () => {
+    it('arquivo de instrução é detectado por nome, com o que foi lido dele', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'AGENTS.md', '# Como trabalhar aqui\n\nNunca rode migração em produção.\n');
+
+        const analysis = await service.analyze(rootUri);
+
+        assert.strictEqual(analysis.instructions.length, 1);
+        const found = analysis.instructions[0];
+        assert.strictEqual(found.kind, 'agent');
+        assert.strictEqual(found.provenance.path, 'AGENTS.md');
+        assert.deepStrictEqual(found.headings, ['Como trabalhar aqui']);
+        assert.ok(found.bytes > 0, 'tamanho lido é medido, não afirmado');
+    });
+
+    it('guidance sai sempre como sugestão — força é decisão humana', async () => {
+        const { service, root, rootUri } = fixture();
+        write(
+            root,
+            'AGENTS.md',
+            '# Desempate\n\nO lance precisa exceder estritamente o atual.\n' +
+                '\n# Sem conteúdo\n'
+        );
+
+        const analysis = await service.analyze(rootUri);
+
+        assert.strictEqual(analysis.guidance.length, 1, 'seção sem texto não vira orientação');
+        const guidance = analysis.guidance[0];
+        assert.strictEqual(guidance.strength, 'suggestion');
+        assert.strictEqual(guidance.title, 'Desempate');
+        assert.strictEqual(guidance.text, 'O lance precisa exceder estritamente o atual.');
+        assert.strictEqual(guidance.provenance.path, 'AGENTS.md');
+        assert.strictEqual(guidance.provenance.line, 1);
+        assert.ok(guidance.target.startsWith('.product/guidance/'));
+    });
+
+    it('adotar guidance vai ao broker, porque .product/ é conteúdo do projeto', async () => {
+        const { service, root, rootUri, proposals } = fixture();
+        write(root, 'AGENTS.md', '# Desempate\n\nExceder estritamente.\n');
+        const analysis = await service.analyze(rootUri);
+
+        const result = await service.proposeGuidance(rootUri, analysis.guidance[0].id);
+
+        assert.strictEqual(proposals.length, 1, 'passou pelo broker');
+        assert.ok(result.relPath.startsWith('.product/guidance/'));
+        // E NADA foi escrito: proposta é proposta.
+        assert.strictEqual(
+            fs.existsSync(path.join(root, result.relPath)),
+            false,
+            'proposta não escreve arquivo'
+        );
+        const body = JSON.parse(proposals[0].content) as { provenance: { path: string } };
+        assert.strictEqual(body.provenance.path, 'AGENTS.md', 'a procedência viaja com a adoção');
+    });
+
+    it('config de preview traz a porta quando existe linha para apontar', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'package.json', '{\n  "scripts": {\n    "start": "node src/server.ts"\n  }\n}\n');
+        write(root, 'src/server.ts', 'const PORT = Number(process.env.PORT ?? 8787);\n');
+
+        const analysis = await service.analyze(rootUri);
+
+        const config = analysis.config.find(c => c.id === 'config:preview');
+        assert.ok(config, 'candidato de preview emitido');
+        assert.strictEqual(config!.target, '.instrument/preview.json');
+        assert.strictEqual(config!.proposed.url, 'http://127.0.0.1:8787/');
+        assert.strictEqual(config!.gap, undefined);
+        assert.ok(
+            config!.provenance.some(p => p.path === 'src/server.ts' && p.line === 1),
+            'a porta aponta a linha que a declara'
+        );
+    });
+
+    it('sem porta literal, a config sai com o buraco declarado', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'package.json', '{\n  "scripts": {\n    "start": "node src/main.ts"\n  }\n}\n');
+        write(root, 'src/main.ts', 'console.log("sem servidor");\n');
+
+        const analysis = await service.analyze(rootUri);
+
+        const config = analysis.config[0];
+        assert.strictEqual(config.proposed.url, undefined, 'url inventada seria palpite');
+        assert.ok(config.gap!.includes('nunca vai poder afirmar'), config.gap ?? 'sem gap');
+    });
+
+    it('adotar config grava direto em .instrument/, preservando o que já estava lá', async () => {
+        const { service, root, rootUri, proposals } = fixture();
+        write(root, 'package.json', '{\n  "scripts": {\n    "start": "node src/server.ts"\n  }\n}\n');
+        write(root, 'src/server.ts', 'server.listen(9000);\n');
+        write(root, '.instrument/preview.json', '{\n  "readyTimeoutMs": 3000\n}\n');
+
+        const after = await service.adoptConfig(rootUri, 'config:preview');
+
+        const written = JSON.parse(
+            fs.readFileSync(path.join(root, '.instrument/preview.json'), 'utf8')
+        ) as Record<string, unknown>;
+        assert.strictEqual(written.command, 'npm run start');
+        assert.strictEqual(written.url, 'http://127.0.0.1:9000/');
+        assert.strictEqual(written.readyTimeoutMs, 3000, 'o que estava à mão sobrevive');
+        assert.strictEqual(proposals.length, 0, '.instrument/ não vai ao broker');
+        assert.strictEqual(after.config[0].alreadyDeclared, true);
+    });
+
+    it('URL citada é referência sem cópia local, e diz que não baixou', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'README.md', 'Regras em https://exemplo.test/spec e nada mais.\n');
+
+        const analysis = await service.analyze(rootUri);
+
+        assert.strictEqual(analysis.references.length, 1);
+        const reference = analysis.references[0];
+        assert.strictEqual(reference.kind, 'url');
+        assert.strictEqual(reference.presentInWorkspace, false);
+        assert.ok(reference.assetNote!.includes('não baixada'), reference.assetNote ?? 'sem nota');
+        assert.strictEqual(reference.provenance.line, 1);
+    });
+
+    it('link para arquivo que existe é asset já versionado; link quebrado não é referência', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'docs/intent.md', 'conteúdo\n');
+        write(
+            root,
+            'README.md',
+            'Ver [intenção](docs/intent.md) e [fantasma](docs/nao-existe.md).\n'
+        );
+
+        const analysis = await service.analyze(rootUri);
+
+        const files = analysis.references.filter(r => r.kind === 'file');
+        assert.strictEqual(files.length, 1, 'link quebrado não vira linha morta');
+        assert.strictEqual(files[0].target, 'docs/intent.md');
+        assert.strictEqual(files[0].presentInWorkspace, true);
+    });
+
+    it('registrar referência atravessa o broker e leva a procedência', async () => {
+        const { service, root, rootUri, proposals } = fixture();
+        write(root, 'README.md', 'Spec em https://exemplo.test/spec\n');
+        const analysis = await service.analyze(rootUri);
+
+        const result = await service.registerReference(rootUri, analysis.references[0].id);
+
+        assert.strictEqual(proposals.length, 1);
+        assert.ok(result.relPath.startsWith('.product/references/'));
+        const body = JSON.parse(proposals[0].content) as {
+            asset: string | null;
+            provenance: { path: string };
+        };
+        assert.strictEqual(body.asset, null, 'URL não tem asset local');
+        assert.strictEqual(body.provenance.path, 'README.md');
+    });
+
+    it('relação só existe quando o documento cita literalmente o material', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'package.json', '{\n  "scripts": {\n    "test": "node --test"\n  }\n}\n');
+        write(root, 'src/auction.ts', 'export const rank = () => [];\n');
+        write(
+            root,
+            'docs/intent.md',
+            'O ranking vive em src/auction.ts e roda com npm run test.\n' +
+                'Este parágrafo fala de leilão sem citar arquivo nenhum.\n'
+        );
+
+        const analysis = await service.analyze(rootUri);
+
+        const kinds = analysis.relations.map(r => `${r.kind}:${r.to}`);
+        assert.ok(kinds.includes('menciona-arquivo:file:src/auction.ts'), kinds.join(', '));
+        assert.ok(kinds.includes('menciona-comando:command:test'), kinds.join(', '));
+        assert.ok(
+            analysis.relations.every(r => r.provenance.excerpt.length > 0),
+            'relação sem trecho lido não sustenta nada'
+        );
+        assert.ok(
+            !analysis.relations.some(r => r.provenance.line === 2),
+            'parágrafo sem citação literal não gera relação'
+        );
+    });
+
+    it('adotar configuração fora de .instrument/ é recusado', async () => {
+        const { service, root, rootUri } = fixture();
+        write(root, 'package.json', '{\n  "scripts": {\n    "start": "node src/server.ts"\n  }\n}\n');
+        const analysis = await service.analyze(rootUri);
+        // Um candidato adulterado é a única forma de chegar aqui, e é justamente
+        // contra isso que a guarda existe.
+        const tampered = { ...analysis.config[0], target: 'src/auction.ts' };
+        (service as unknown as { analyze: unknown }).analyze = async () => ({
+            ...analysis,
+            config: [tampered]
+        });
+
+        await assert.rejects(
+            () => service.adoptConfig(rootUri, 'config:preview'),
+            /não é estado de runtime do IDE/
+        );
     });
 });

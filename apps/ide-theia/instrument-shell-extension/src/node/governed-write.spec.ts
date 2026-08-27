@@ -90,6 +90,7 @@ interface Fixture {
     service: GovernedWriteServiceImpl;
     engine: FakeEngine;
     rootUri: string;
+    root: string;
     file: string;
 }
 
@@ -101,7 +102,7 @@ function fixture(): Fixture {
     const engine = new FakeEngine();
     (service as unknown as { engine: unknown }).engine = engine;
     (service as unknown as { ledger: WriteSourceLedger }).ledger = new WriteSourceLedger();
-    return { service, engine, rootUri: FileUri.create(root).toString(), file };
+    return { service, engine, rootUri: FileUri.create(root).toString(), root, file };
 }
 
 describe('GovernedWriteServiceImpl — propose never leaves a write applied', () => {
@@ -219,11 +220,32 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         );
     });
 
-    it('refuses a target that is not an existing file', async () => {
-        const { service, rootUri } = fixture();
+    /** Criar arquivo é proposta como qualquer outra: pré-imagem vazia, diff todo
+     *  adicionado, e a marca `creating` — porque "criar" e "reescrever apagando
+     *  tudo" produzem o mesmo diff e são decisões diferentes. */
+    it('propõe criação de arquivo que ainda não existe, sem escrever nada', async () => {
+        const { service, root, rootUri } = fixture();
+
+        const proposal = await service.proposeWrite(
+            rootUri,
+            '.product/guidance/desempate.json',
+            '{"id":"desempate"}\n'
+        );
+
+        assert.strictEqual(proposal.state, 'awaiting');
+        assert.strictEqual(proposal.creating, true);
+        assert.strictEqual(proposal.removedLines, 0, 'não há linha anterior para remover');
+        // Nem o arquivo nem a pasta aparecem: proposta recusada não deixa rastro.
+        assert.strictEqual(fs.existsSync(path.join(root, '.product/guidance')), false);
+    });
+
+    it('recusa alvo que existe e não é arquivo', async () => {
+        const { service, root, rootUri } = fixture();
+        fs.mkdirSync(path.join(root, 'uma-pasta'));
+
         await assert.rejects(
-            () => service.proposeWrite(rootUri, 'nao-existe.md', 'x'),
-            /no such workspace file/
+            () => service.proposeWrite(rootUri, 'uma-pasta', 'x'),
+            /not a workspace file/
         );
     });
 });

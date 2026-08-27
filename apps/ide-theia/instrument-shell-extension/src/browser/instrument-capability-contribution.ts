@@ -81,6 +81,9 @@ export const CMD_PACKS_APPLY = 'instrument.packs.apply';
 export const CMD_PACKS_REVERT = 'instrument.packs.revert';
 export const CMD_MATERIALS_ANALYZE = 'instrument.project.materials';
 export const CMD_ADOPT_COMMAND = 'instrument.project.adoptCommand';
+export const CMD_ADOPT_CONFIG = 'instrument.project.adoptConfig';
+export const CMD_PROPOSE_GUIDANCE = 'instrument.project.proposeGuidance';
+export const CMD_REGISTER_REFERENCE = 'instrument.project.registerReference';
 
 /** Projeto semântico (§3). */
 export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
@@ -234,6 +237,18 @@ export class InstrumentCapabilityContribution
                 label: 'Instrument: rodar checks determinísticos (§4)'
             },
             { execute: (runTools?: boolean) => this.runChecks(runTools === true) }
+        );
+        commands.registerCommand(
+            { id: CMD_ADOPT_CONFIG, label: 'Instrument: adotar configuração detectada (§5)' },
+            { execute: (id?: string) => (id ? this.adoptConfig(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_PROPOSE_GUIDANCE, label: 'Instrument: propor guidance detectada (§5)' },
+            { execute: (id?: string) => (id ? this.proposeGuidance(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_REGISTER_REFERENCE, label: 'Instrument: registrar referência detectada (§5)' },
+            { execute: (id?: string) => (id ? this.registerReference(id) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_PREVIEW_START, label: 'Instrument: iniciar preview declarado (§4)' },
@@ -686,6 +701,71 @@ export class InstrumentCapabilityContribution
      * It is false unless the person asked for it: a repository file must never
      * get its commands run just because a panel refreshed.
      */
+    // ── §5 adoção de configuração, guidance e referência ──────────────────
+    //
+    // Dois regimes de escrita, e a diferença é o ponto: `.instrument/` é estado
+    // de runtime do IDE e é gravado direto; `.product/` é conteúdo do projeto e
+    // só entra por proposta no broker, com diff para revisar.
+
+    protected async adoptConfig(id: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setAnalysisBusy(true);
+        try {
+            const after = await this.analysis.adoptConfig(root, id);
+            this.store.setAnalysis(after);
+            const adopted = after.config.find(c => c.id === id);
+            if (adopted?.alreadyDeclared) {
+                this.messages.info(`Gravado em ${adopted.target}.`);
+            }
+        } catch (err) {
+            this.messages.error(`Configuração não adotada: ${this.msg(err)}`);
+        } finally {
+            this.store.setAnalysisBusy(false);
+        }
+    }
+
+    protected async proposeGuidance(id: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setAnalysisBusy(true);
+        try {
+            const { relPath } = await this.analysis.proposeGuidance(root, id);
+            // Proposta, não escrita: quem confirma é a decisão no dock.
+            this.messages.info(
+                `Guidance proposta em ${relPath} — nada foi escrito: decida no dock.`
+            );
+            this.adoptPendingProposal();
+        } catch (err) {
+            this.messages.error(`Guidance não proposta: ${this.msg(err)}`);
+        } finally {
+            this.store.setAnalysisBusy(false);
+        }
+    }
+
+    protected async registerReference(id: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setAnalysisBusy(true);
+        try {
+            const { relPath } = await this.analysis.registerReference(root, id);
+            this.messages.info(
+                `Referência proposta em ${relPath} — nada foi escrito: decida no dock.`
+            );
+            this.adoptPendingProposal();
+        } catch (err) {
+            this.messages.error(`Referência não registrada: ${this.msg(err)}`);
+        } finally {
+            this.store.setAnalysisBusy(false);
+        }
+    }
+
     // ── §4 preview ────────────────────────────────────────────────────────
     //
     // Three separate commands because they are three different acts. `status`

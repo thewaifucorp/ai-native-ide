@@ -102,14 +102,127 @@ export interface IntegrationCandidate {
     provenance: Provenance;
 }
 
+/**
+ * Um arquivo de instruções que o projeto mantém para quem trabalha nele.
+ *
+ * Detectado por NOME, que é a convenção pública dessas ferramentas — não por
+ * heurística de conteúdo. `bytes` e `headings` existem para "eu li isto" ser
+ * mensurável em vez de afirmado.
+ */
+export interface InstructionCandidate {
+    id: string;
+    label: string;
+    /** `agent` (AGENTS.md, CLAUDE.md, .cursorrules…), `contribution`, `editor`. */
+    kind: 'agent' | 'contribution' | 'editor';
+    bytes: number;
+    /** Títulos de seção lidos, na ordem do arquivo. */
+    headings: string[];
+    provenance: Provenance;
+}
+
+/**
+ * Uma orientação candidata, extraída de um arquivo de instruções.
+ *
+ * `strength` é SEMPRE `suggestion`. Um detector não tem como saber que uma frase
+ * é bloqueante — quem escreveu sabe, e quem revisa decide. Emitir `blocking`
+ * por detecção transformaria palpite em regra que trava trabalho.
+ *
+ * Adotar grava em `.product/guidance/`, que é CONTEÚDO DO PROJETO — e por isso
+ * passa pelo broker, ao contrário de `.instrument/`, que é estado de runtime do
+ * IDE.
+ */
+export interface GuidanceCandidate {
+    id: string;
+    title: string;
+    strength: 'suggestion';
+    /** Trecho lido do arquivo, verbatim (cortado no comprimento). */
+    text: string;
+    provenance: Provenance;
+    /** Caminho que a adoção propõe escrever. */
+    target: string;
+    /** Já existe arquivo de guidance com este id. */
+    alreadyDeclared: boolean;
+}
+
+/**
+ * Uma configuração do IDE que o projeto já tem como declarar.
+ *
+ * `proposed` é exatamente o objeto que a adoção grava — nada é montado depois,
+ * então o que está na tela é o que vai para o disco. `gap` diz o que a
+ * configuração ainda não tem, quando falta algo, em vez de gravar um buraco
+ * silencioso.
+ */
+export interface ConfigCandidate {
+    id: string;
+    /** Arquivo relativo à raiz, sempre dentro de `.instrument/`. */
+    target: string;
+    label: string;
+    proposed: Record<string, unknown>;
+    /** Uma por afirmação dentro de `proposed`. */
+    provenance: Provenance[];
+    alreadyDeclared: boolean;
+    gap?: string;
+}
+
+/**
+ * Uma referência que o projeto cita: URL externa ou arquivo do próprio projeto.
+ *
+ * O item §5 pede que "assets fiquem no workspace". Um arquivo citado que existe
+ * no projeto JÁ é um asset versionado, e `presentInWorkspace` diz isso. Uma URL
+ * externa não é baixada: este serviço não tem rede, e inventar um asset local a
+ * partir de um link seria afirmar conteúdo que ninguém buscou. `assetNote` diz
+ * qual dos dois casos é.
+ */
+export interface ReferenceCandidate {
+    id: string;
+    kind: 'url' | 'file';
+    /** URL, ou caminho relativo à raiz. */
+    target: string;
+    label: string;
+    provenance: Provenance;
+    presentInWorkspace: boolean;
+    assetNote?: string;
+    /** Já registrada em `.product/references/`. */
+    alreadyRegistered: boolean;
+}
+
+/**
+ * Uma relação entre dois materiais, e o trecho que a sustenta.
+ *
+ * Só relação LITERAL: um arquivo cita um caminho que existe, um script, ou o
+ * nome de uma variável de serviço detectada. Não há inferência semântica aqui —
+ * seria a mesma confiança inventada que o resto do §5 recusa.
+ */
+export interface RelationCandidate {
+    id: string;
+    /** Material de origem, ex. `instruction:AGENTS.md`. */
+    from: string;
+    /** Material de destino, ex. `file:src/main.ts` ou `command:test`. */
+    to: string;
+    kind: 'menciona-arquivo' | 'menciona-comando' | 'menciona-servico';
+    provenance: Provenance;
+}
+
 export interface ProjectAnalysis {
     stack: StackCandidate[];
     commands: CommandCandidate[];
     git: GitFacts;
     services: ServiceCandidate[];
     integrations: IntegrationCandidate[];
+    instructions: InstructionCandidate[];
+    guidance: GuidanceCandidate[];
+    config: ConfigCandidate[];
+    references: ReferenceCandidate[];
+    relations: RelationCandidate[];
     /** Diretórios que a varredura não abriu, ditos para a cobertura ser honesta. */
     skipped: string[];
+    /**
+     * Limites que a varredura atingiu (arquivos lidos, candidatos cortados).
+     *
+     * Uma lista truncada em silêncio parece cobertura completa. Cada corte é
+     * dito aqui, com o número.
+     */
+    limits: string[];
 }
 
 export interface AnalysisService {
@@ -133,4 +246,31 @@ export interface AnalysisService {
      * pedidos, preservando o que já estava declarado à mão.
      */
     adoptCommands(rootUri: string, slugs: string[]): Promise<ProjectAnalysis>;
+
+    /**
+     * Adota uma configuração candidata, gravando o `proposed` dela.
+     *
+     * Mesmo regime de `adoptCommands`: destino em `.instrument/`, escrita direta,
+     * porque é estado de runtime do IDE e não conteúdo do projeto. Preserva as
+     * chaves que já estavam no arquivo.
+     */
+    adoptConfig(rootUri: string, id: string): Promise<ProjectAnalysis>;
+
+    /**
+     * Propõe adotar uma guidance, escrevendo em `.product/guidance/`.
+     *
+     * Aqui o regime é o OUTRO: `.product/` é conteúdo do projeto, versionado e
+     * revisável, então a escrita atravessa o broker e vira decisão no dock — não
+     * um arquivo que apareceu. Devolve a proposta, não o arquivo.
+     */
+    proposeGuidance(rootUri: string, id: string): Promise<{ proposalId: string; relPath: string }>;
+
+    /**
+     * Propõe registrar uma referência em `.product/references/`.
+     *
+     * Também via broker, e pelo mesmo motivo. O registro guarda a procedência —
+     * onde a referência foi citada — e, para arquivo do projeto, o caminho do
+     * asset que já está versionado aqui. URL externa não é baixada.
+     */
+    registerReference(rootUri: string, id: string): Promise<{ proposalId: string; relPath: string }>;
 }
