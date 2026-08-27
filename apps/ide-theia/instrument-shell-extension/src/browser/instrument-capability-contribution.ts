@@ -39,6 +39,8 @@ import {
 import {
     CaptureRequest,
     EngineService,
+    NoteLink,
+    NoteRequest,
     GuidanceState,
     ReconciliationChoice,
     SettingsPatch
@@ -84,6 +86,14 @@ export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
 export const CMD_CONTEXT_COMPILE = 'instrument.context.compile';
 
 // §13 — biblioteca de guidance, truth registry, configuração e projeto durável.
+// §7 — notas por tema e reconciliação.
+export const CMD_NOTES_READ = 'instrument.notes.read';
+export const CMD_NOTES_CREATE = 'instrument.notes.create';
+export const CMD_NOTES_RESOLVE = 'instrument.notes.resolve';
+export const CMD_NOTES_MERGE = 'instrument.notes.merge';
+export const CMD_NOTES_LINK = 'instrument.notes.link';
+export const CMD_NOTES_PROMOTE = 'instrument.notes.promote';
+
 // §8 — composer de intenção guiada.
 export const CMD_INTENT_REVIEW = 'instrument.intent.review';
 export const CMD_INTENT_DECIDE = 'instrument.intent.decide';
@@ -159,6 +169,7 @@ export class InstrumentCapabilityContribution
             this.watchForExternalWrites();
             this.refreshProduct();
             this.readLibrary();
+            this.readNotes();
             this.readSettings();
             this.readDurable();
             // Agent proposals arrive out of band; ask periodically. A push channel
@@ -309,6 +320,47 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_CONTEXT_COMPILE, label: 'Instrument: compilar contexto do agente (§6)' },
             { execute: (budget?: number) => this.compileContext(budget) }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_READ, label: 'Instrument: ler notas do projeto (§7)' },
+            { execute: () => this.readNotes() }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_CREATE, label: 'Instrument: escrever nota (§7)' },
+            { execute: (note?: NoteRequest) => (note ? this.createNote(note) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_RESOLVE, label: 'Instrument: fechar nota com motivo (§7)' },
+            {
+                execute: (id?: string, reason?: string) =>
+                    id ? this.resolveNote(id, reason ?? '') : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_MERGE, label: 'Instrument: conciliar notas em uma nova (§7)' },
+            {
+                execute: (
+                    ids?: string[],
+                    theme?: string,
+                    subject?: string,
+                    text?: string,
+                    reason?: string
+                ) =>
+                    ids && theme && subject && text
+                        ? this.mergeNotes(ids, theme, subject, text, reason ?? '')
+                        : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_LINK, label: 'Instrument: ligar nota a um material (§7)' },
+            {
+                execute: (id?: string, link?: NoteLink) =>
+                    id && link ? this.linkNote(id, link) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_NOTES_PROMOTE, label: 'Instrument: promover nota a guidance candidata (§7)' },
+            { execute: (id?: string) => (id ? this.promoteNote(id) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_INTENT_REVIEW, label: 'Instrument: avaliar a intenção escrita (§8)' },
@@ -1028,6 +1080,143 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Decisão recusada: ${this.msg(err)}`);
         } finally {
             this.store.setReconcileBusy(false);
+        }
+    }
+
+    // ── §7 notas e reconciliação ──────────────────────────────────────────
+    //
+    // O motor compara e não decide. Promover, conciliar e descartar são atos
+    // separados, e cada um grava o motivo. Conciliar escreve uma nota NOVA que
+    // substitui as originais — nada é editado no lugar, para a história ler.
+
+    protected async readNotes(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            this.store.setNotes(await this.engine.notesSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler as notas: ${this.msg(err)}`);
+            this.store.setNotes(undefined);
+        } finally {
+            this.store.setNotesBusy(false);
+        }
+    }
+
+    protected async createNote(note: NoteRequest): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            const after = await this.engine.notesCreate(root, note);
+            this.store.setNotes(after);
+            const conflicts = after.conflicts.length;
+            if (conflicts > 0) {
+                // Conflito novo é fato, não erro: aparece na hora em vez de
+                // esperar alguém procurar.
+                this.messages.info(
+                    `Nota escrita · ${conflicts} conflito(s) na comparação — reconciliar é ato seu.`
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Nota não escrita: ${this.msg(err)}`);
+        } finally {
+            this.store.setNotesBusy(false);
+        }
+    }
+
+    protected async resolveNote(id: string, reason: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            this.store.setNotes(await this.engine.notesResolve(root, id, reason));
+        } catch (err) {
+            this.messages.error(`Nota não fechada: ${this.msg(err)}`);
+        } finally {
+            this.store.setNotesBusy(false);
+        }
+    }
+
+    protected async mergeNotes(
+        ids: string[],
+        theme: string,
+        subject: string,
+        text: string,
+        reason: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            const after = await this.engine.notesMerge(root, ids, theme, subject, text, reason);
+            this.store.setNotes(after);
+            this.messages.info(
+                `Conciliadas em uma nota nova · as originais ficaram como substituídas, com o motivo.`
+            );
+        } catch (err) {
+            this.messages.error(`Notas não conciliadas: ${this.msg(err)}`);
+        } finally {
+            this.store.setNotesBusy(false);
+        }
+    }
+
+    protected async linkNote(id: string, link: NoteLink): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            this.store.setNotes(await this.engine.notesLink(root, id, link));
+        } catch (err) {
+            this.messages.error(`Ligação não registrada: ${this.msg(err)}`);
+        } finally {
+            this.store.setNotesBusy(false);
+        }
+    }
+
+    /** Promove uma nota a guidance CANDIDATA (§13) e liga a nota ao artefato. */
+    protected async promoteNote(id: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        const note = this.store.notes?.notes.find(entry => entry.id === id);
+        if (!note) {
+            return;
+        }
+        this.store.setNotesBusy(true);
+        try {
+            const imported = await this.engine.libraryImport(
+                root,
+                note.subject,
+                note.text,
+                `nota ${note.id} (${note.theme})`,
+                'pessoa'
+            );
+            // A ligação fecha o rastro nos dois sentidos: a guidance aponta a nota
+            // na procedência, e a nota aponta a guidance.
+            this.store.setNotes(
+                await this.engine.notesLink(root, id, { kind: 'guidance', id: imported.id })
+            );
+            this.messages.info(
+                `Nota promovida a guidance candidata (${imported.id}) — promover na biblioteca é ` +
+                    'o que a coloca no contexto do agente.'
+            );
+            this.readLibrary();
+        } catch (err) {
+            this.messages.error(`Nota não promovida: ${this.msg(err)}`);
+        } finally {
+            this.store.setNotesBusy(false);
         }
     }
 

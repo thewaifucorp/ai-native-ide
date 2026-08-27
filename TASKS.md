@@ -519,6 +519,43 @@ Notas por tema para propostas, decisões, perguntas, alternativas e itens substi
 
 **Pronto:** conflito entre notas pode ser encontrado e reconciliado explicitamente.
 
+**PROVADO (2026-08-27, app Theia ativo).** Único dos três itens desta sessão que
+não tinha motor: `crates/ide-notes` é novo.
+
+- **Nota** = tema + tipo (proposta, decisão, pergunta, alternativa) + **assunto**
+  + texto + ligações. `substituída` é ESTADO, não tipo: uma decisão trocada
+  continua sendo decisão, e perder isso tornaria a história ilegível. Assunto é
+  obrigatório — é ele que permite comparar duas notas, e nota sem assunto não
+  entra no store.
+- **Conflitos que o motor prova** (cada um dá para refazer lendo duas notas):
+  duas decisões ABERTAS sobre o mesmo assunto com textos diferentes; nota que diz
+  literalmente o que um SoT proíbe (mesma fonte `absent-in-file` que o §8 usa);
+  pergunta aberta sobre assunto já decidido; ligação apontando para o que o host
+  não observou; e nota apoiada em guidance que existe mas deixou de ser ativa —
+  obsoleta é diferente de quebrada.
+- **Nada é inferido:** duas notas só "discordam" quando são decisões do mesmo
+  assunto com texto diferente. Decidir que dois parágrafos querem dizer o mesmo
+  pede modelo, e palpite de modelo vestido de conflito mandaria gente reconciliar
+  o que nunca discordou.
+- **Promover, conciliar e descartar são atos separados, com motivo.** Conciliar
+  escreve uma nota NOVA e marca as originais como substituídas por ela — nada é
+  editado no lugar. Fechar exige dizer como. Promover cria guidance CANDIDATA no
+  §13, e o rastro fecha nos dois sentidos.
+- **Nota resolvida ou substituída sai da comparação:** história não conflita com
+  o presente, e reportar isso mandaria gente reconciliar o que já reconciliou.
+- Ligação a `message` nunca é quebrada: nota durável não pode depender de um
+  transcript estar por perto. Ligação a `feature`/`task` é quebrada HOJE porque o
+  §9 não existe — verdade agora, e deixa de ser quando ele chegar.
+
+**Medido na tela** (aba Notas, nova na Work Surface): duas decisões sobre "como
+resolver empate" produziram `decisions_disagree · note-000000 × note-000001` e
+`contradicts_declaration · note-000001 diz "a.createdAt - b.createdAt", que
+docs/product-intent.md proíbe`, com a base da comparação dita (`20 arquivos, 1
+SoT, 1 guidance ativa, 1 declaração com texto proibido`); conciliar escreveu
+`note-000002` e deixou as duas como `superseded` apontando para ela, com o motivo;
+os conflitos fecharam; promover criou `guidance-000002` candidata com procedência
+`nota note-000002 (desempate)`, e a nota ficou ligada a ela.
+
 ### 8. Intenção guiada e ajuda contextual
 
 Composer sugere ambiguidades, decisões, requisitos esquecidos, contradições e consequências como candidates editáveis. Só após revisão viram artefatos. Ajuda explica escolhas/riscos sem virar instrução do agente ou bloqueio padrão.

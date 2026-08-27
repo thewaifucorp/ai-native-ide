@@ -43,7 +43,29 @@
       "text": "Dois lances simultâneos são serializados por transação, e o desempate é por valor selado — nunca por ordem de criação.",
       "state": "candidate",
       "lastUsedMs": 0
+    },
+    {
+      "id": "guidance-000002",
+      "name": "como resolver empate",
+      "guidanceType": "convention",
+      "scope": {
+        "kind": "project",
+        "project_id": "/home/mario/Área de trabalho/waifucorp/ai-native-ide/apps/ide-theia/workspace"
+      },
+      "application": "general",
+      "strength": "suggestion",
+      "origin": "imported",
+      "duration": {
+        "kind": "permanent"
+      },
+      "priority": 0,
+      "owner": "pessoa",
+      "provenance": "nota note-000002 (desempate)",
+      "set": "imported",
+      "text": "Vence o maior valor selado. Empate exato é recusado, e ordem de criação nunca decide.",
+      "state": "candidate",
+      "lastUsedMs": 0
     }
   ],
-  "next_seq": 2
+  "next_seq": 3
 }

@@ -17,6 +17,7 @@ import {
     HarnessRun,
     IntentReview,
     LibrarySnapshot,
+    NotesSnapshot,
     ProjectSnapshot,
     SettingsSnapshot,
     PacksSnapshot,
@@ -30,7 +31,7 @@ import { AgentSessionSnapshot } from '../common/agent-session-protocol';
 import { ProductModel } from '../common/product-protocol';
 import { AgentProbe } from 'engine-extension';
 
-export type WorkView = 'home' | 'build';
+export type WorkView = 'home' | 'build' | 'notas';
 
 /** Which real (or bespoke) view-container the navigator "modes" row is showing. */
 export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'depuracao' | 'grafo' | 'ferramentas';
@@ -120,6 +121,12 @@ export class InstrumentStore {
     //    estados distintos de propósito.
     packs: PacksSnapshot | undefined;
     packsBusy = false;
+
+    // ── REAL notas por tema (§7): propostas, decisões, perguntas e
+    //    alternativas, com as ligações e os conflitos que o motor prova.
+    //    `undefined` = nem lidas.
+    notes: NotesSnapshot | undefined;
+    notesBusy = false;
 
     // ── REAL composer de intenção (§8): o texto que a PESSOA escreveu (nunca
     //    reescrito por nós) e as hipóteses de camada 1 sobre ele, com a decisão
@@ -369,6 +376,21 @@ export class InstrumentStore {
     setIntentDraft(text: string): void {
         this.intentDraft = text;
         this.emit();
+    }
+
+    setNotes(snapshot: NotesSnapshot | undefined): void {
+        this.notes = snapshot;
+        this.emit();
+    }
+
+    setNotesBusy(busy: boolean): void {
+        this.notesBusy = busy;
+        this.emit();
+    }
+
+    /** Conflitos abertos entre notas, guidance e SoTs. */
+    get noteConflictCount(): number {
+        return this.notes ? this.notes.conflicts.length : 0;
     }
 
     setIntentReview(review: IntentReview | undefined): void {

@@ -291,6 +291,25 @@ export interface EngineService {
         note: string,
         artifact?: string
     ): Promise<IntentReview>;
+
+    // ── §7 notas e reconciliação (ide-notes) ──────────────────────────────────
+
+    notesSnapshot(root: string): Promise<NotesSnapshot>;
+    notesCreate(root: string, note: NoteRequest): Promise<NotesSnapshot>;
+    /** Closing a note requires saying how. */
+    notesResolve(root: string, id: string, reason: string): Promise<NotesSnapshot>;
+    /** Superseding requires naming the replacement AND a reason. */
+    notesSupersede(root: string, id: string, by: string, reason: string): Promise<NotesSnapshot>;
+    notesLink(root: string, id: string, link: NoteLink): Promise<NotesSnapshot>;
+    /** Writes a NEW note that supersedes the originals — nothing edited in place. */
+    notesMerge(
+        root: string,
+        ids: string[],
+        theme: string,
+        subject: string,
+        text: string,
+        reason: string
+    ): Promise<NotesSnapshot>;
 }
 
 /** A check's outcome. `unknown` and `not_run` are distinct absences of
@@ -915,4 +934,89 @@ export interface IntentReview {
     /** Facts about what these findings do — not advice, not a threat. */
     consequences: string[];
     nothingFound?: string | null;
+}
+
+// ── §7 NOTAS E RECONCILIAÇÃO (ide-notes) ────────────────────────────────────
+//
+// Mirrors `engine-sidecar/src/notes.rs`. Every conflict is a comparison anybody
+// can redo by reading two notes; promotion, merge and discard are separate,
+// explicit acts, and each records its reason.
+
+export type NoteKind = 'proposal' | 'decision' | 'question' | 'alternative';
+
+/** `superseded` is a STATE, not a kind: a replaced decision is still a decision. */
+export type NoteState = 'open' | 'resolved' | 'superseded';
+
+/** Externally tagged with `kind`/`id`, as the crate declares. */
+export type NoteLink =
+    | { kind: 'message'; id: string }
+    | { kind: 'reference'; id: string }
+    | { kind: 'file'; id: string }
+    | { kind: 'sot'; id: string }
+    | { kind: 'guidance'; id: string }
+    | { kind: 'feature'; id: string }
+    | { kind: 'task'; id: string };
+
+export interface Note {
+    id: string;
+    theme: string;
+    kind: NoteKind;
+    /** What the note is about. Two decisions sharing it are comparable. */
+    subject: string;
+    text: string;
+    links: NoteLink[];
+    state: NoteState;
+    /** Set only when superseded, and never empty then. */
+    supersededBy?: string | null;
+    /** Why it was resolved or superseded. Required for both. */
+    stateReason?: string | null;
+    createdAtMs: number;
+    updatedAtMs: number;
+}
+
+export type NoteConflict =
+    | { kind: 'decisions_disagree'; subject: string; note_ids: string[] }
+    | {
+          kind: 'contradicts_declaration';
+          note_id: string;
+          source: string;
+          forbidden: string;
+          statement: string;
+      }
+    | {
+          kind: 'question_on_decided_subject';
+          subject: string;
+          question_id: string;
+          decision_id: string;
+      }
+    | { kind: 'dangling_link'; note_id: string; link: string }
+    | { kind: 'stale_guidance_link'; note_id: string; guidance_id: string };
+
+/** What the conflict check ran against — an empty conflict list only means
+ *  something if you can see what was compared. */
+export interface KnownWorld {
+    files: string[];
+    sots: string[];
+    references: string[];
+    activeGuidance: string[];
+    knownGuidance: string[];
+    features: string[];
+    tasks: string[];
+    forbidden: { source: string; statement: string; forbidden: string }[];
+}
+
+export interface NotesSnapshot {
+    notes: Note[];
+    conflicts: NoteConflict[];
+    themes: string[];
+    known: KnownWorld;
+    notesPath: string;
+}
+
+export interface NoteRequest {
+    theme: string;
+    kind: NoteKind;
+    subject: string;
+    text: string;
+    links?: NoteLink[];
 }

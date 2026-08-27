@@ -30,6 +30,11 @@ import {
     CMD_INTENT_DECIDE,
     CMD_INTENT_REVIEW,
     CMD_MATERIALS_ANALYZE,
+    CMD_NOTES_CREATE,
+    CMD_NOTES_MERGE,
+    CMD_NOTES_PROMOTE,
+    CMD_NOTES_READ,
+    CMD_NOTES_RESOLVE,
     CMD_PREVIEW_START,
     CMD_PREVIEW_STATUS,
     CMD_PREVIEW_STOP,
@@ -96,9 +101,18 @@ export class WorkWidget extends AbstractInstrumentWidget {
                 <div className="tabs">
                     <button className={`tab${view === 'home' ? ' on' : ''}`} onClick={() => this.store.setView('home')}>Overview</button>
                     <button className={`tab${view === 'build' ? ' on' : ''}`} onClick={() => this.store.setView('build')}><span className="mod" />Build</button>
+                    <button
+                        className={`tab${view === 'notas' ? ' on' : ''}`}
+                        onClick={() => this.store.setView('notas')}
+                        title="Notas por tema, e os conflitos entre elas, guidance e SoTs"
+                    >
+                        Notas
+                        {this.store.noteConflictCount > 0 && ` (${this.store.noteConflictCount})`}
+                    </button>
                 </div>
                 {this.renderHome(view === 'home')}
                 {this.renderBuild(view === 'build')}
+                {this.renderNotes(view === 'notas')}
             </main>
         );
     }
@@ -1448,6 +1462,311 @@ export class WorkWidget extends AbstractInstrumentWidget {
 
     protected findingDraft(id: string, fallback: string): string {
         return this.findingDrafts[id] ?? fallback;
+    }
+
+    /** Campos em digitação da view Notas. */
+    protected noteDrafts: Record<string, string> = {};
+
+    protected noteDraft(key: string, fallback = ''): string {
+        return this.noteDrafts[key] ?? fallback;
+    }
+
+    protected noteInput(key: string, placeholder: string): React.ReactNode {
+        return (
+            <input
+                className="cap-input"
+                placeholder={placeholder}
+                value={this.noteDraft(key)}
+                onChange={event => {
+                    this.noteDrafts[key] = event.target.value;
+                    this.update();
+                }}
+            />
+        );
+    }
+
+    /**
+     * NOTAS E RECONCILIAÇÃO (§7) — a Work Surface das notas.
+     *
+     * O motor compara e não decide. Cada conflito é uma comparação que dá para
+     * refazer lendo duas notas: duas decisões abertas sobre o mesmo assunto com
+     * textos diferentes, uma nota que diz literalmente o que um SoT proíbe, uma
+     * pergunta aberta sobre assunto já decidido, ligação apontando para o que não
+     * existe, e nota apoiada em guidance que deixou de ser ativa.
+     *
+     * Promover, conciliar e descartar são atos separados, cada um com motivo.
+     * Conciliar escreve uma nota NOVA que substitui as originais — nada é editado
+     * no lugar, então a história continua legível.
+     */
+    protected renderNotes(on: boolean): React.ReactNode {
+        const snapshot = this.store.notes;
+        const busy = this.store.notesBusy;
+        const kind = this.noteDraft('note-kind', 'decision');
+
+        return (
+            <section className={`view${on ? ' on' : ''}`} id="view-notas">
+                <div className="home-main">
+                    <div className="cap-card">
+                        <div className="cap-head">
+                            <b>Notas</b>
+                            <span
+                                className={`cap-pill ${
+                                    !snapshot
+                                        ? 'not-installed'
+                                        : snapshot.conflicts.length > 0
+                                            ? 'unavailable'
+                                            : 'ready'
+                                }`}
+                            >
+                                {!snapshot
+                                    ? 'não lidas'
+                                    : snapshot.conflicts.length > 0
+                                        ? `${snapshot.conflicts.length} conflito(s)`
+                                        : 'sem conflito'}
+                            </span>
+                        </div>
+                        <small className="cap-hint">
+                            {snapshot
+                                ? `versionadas em ${snapshot.notesPath}/ · o motor compara e não decide: promover, conciliar e descartar são atos seus, cada um com motivo`
+                                : 'notas por tema — proposta, decisão, pergunta, alternativa'}
+                        </small>
+
+                        <div className="cap-actions">
+                            {this.noteInput('note-theme', 'tema')}
+                            {this.noteInput('note-subject', 'assunto — o que a nota decide ou pergunta')}
+                        </div>
+                        <div className="cap-actions">
+                            <select
+                                className="cap-input"
+                                value={kind}
+                                onChange={event => {
+                                    this.noteDrafts['note-kind'] = event.target.value;
+                                    this.update();
+                                }}
+                            >
+                                <option value="decision">decisão</option>
+                                <option value="proposal">proposta</option>
+                                <option value="question">pergunta</option>
+                                <option value="alternative">alternativa</option>
+                            </select>
+                            {this.noteInput('note-text', 'texto da nota')}
+                            <button
+                                className="cap-btn primary"
+                                disabled={
+                                    busy ||
+                                    this.noteDraft('note-theme').trim().length === 0 ||
+                                    this.noteDraft('note-subject').trim().length === 0 ||
+                                    this.noteDraft('note-text').trim().length === 0
+                                }
+                                onClick={() => {
+                                    this.commands.executeCommand(CMD_NOTES_CREATE, {
+                                        theme: this.noteDraft('note-theme'),
+                                        kind,
+                                        subject: this.noteDraft('note-subject'),
+                                        text: this.noteDraft('note-text')
+                                    });
+                                    this.noteDrafts['note-text'] = '';
+                                    this.update();
+                                }}
+                            >
+                                Escrever nota
+                            </button>
+                            <button
+                                className="cap-btn"
+                                disabled={busy}
+                                onClick={() => this.commands.executeCommand(CMD_NOTES_READ)}
+                            >
+                                {busy ? 'lendo…' : 'Reler'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {snapshot && snapshot.conflicts.length > 0 && (
+                        <div className="cap-card">
+                            <div className="cap-head">
+                                <b>Conciliar</b>
+                                <span className="cap-pill unavailable">
+                                    {snapshot.conflicts.length} para decidir
+                                </span>
+                            </div>
+                            {snapshot.conflicts.map((conflict, index) => (
+                                <div className="cap-receipt" key={`conf:${index}`}>
+                                    <span className="cap-receipt-action check-failed">
+                                        {conflict.kind}
+                                    </span>
+                                    <span className="cap-receipt-detail">
+                                        {conflict.kind === 'decisions_disagree' &&
+                                            `duas decisões abertas sobre "${conflict.subject}": ${conflict.note_ids.join(' × ')}`}
+                                        {conflict.kind === 'contradicts_declaration' &&
+                                            `${conflict.note_id} diz "${conflict.forbidden}", que ${conflict.source} proíbe`}
+                                        {conflict.kind === 'question_on_decided_subject' &&
+                                            `pergunta ${conflict.question_id} sobre "${conflict.subject}", já decidido em ${conflict.decision_id}`}
+                                        {conflict.kind === 'dangling_link' &&
+                                            `${conflict.note_id} aponta ${conflict.link}, que não existe aqui`}
+                                        {conflict.kind === 'stale_guidance_link' &&
+                                            `${conflict.note_id} se apoia em ${conflict.guidance_id}, que não está ativa`}
+                                    </span>
+                                    {conflict.kind === 'contradicts_declaration' && (
+                                        <small>{conflict.statement}</small>
+                                    )}
+                                    {conflict.kind === 'decisions_disagree' && (
+                                        <>
+                                            <div className="cap-actions">
+                                                {this.noteInput(
+                                                    `merge-text:${conflict.subject}`,
+                                                    'texto da nota conciliada'
+                                                )}
+                                            </div>
+                                            <div className="cap-actions">
+                                                {this.noteInput(
+                                                    `merge-reason:${conflict.subject}`,
+                                                    'motivo da conciliação (obrigatório)'
+                                                )}
+                                                <button
+                                                    className="cap-btn primary"
+                                                    disabled={
+                                                        busy ||
+                                                        this.noteDraft(
+                                                            `merge-text:${conflict.subject}`
+                                                        ).trim().length === 0 ||
+                                                        this.noteDraft(
+                                                            `merge-reason:${conflict.subject}`
+                                                        ).trim().length === 0
+                                                    }
+                                                    title="Escreve uma nota NOVA e marca as originais como substituídas por ela"
+                                                    onClick={() =>
+                                                        this.commands.executeCommand(
+                                                            CMD_NOTES_MERGE,
+                                                            conflict.note_ids,
+                                                            snapshot.notes.find(
+                                                                n => n.id === conflict.note_ids[0]
+                                                            )?.theme ?? 'geral',
+                                                            conflict.subject,
+                                                            this.noteDraft(
+                                                                `merge-text:${conflict.subject}`
+                                                            ),
+                                                            this.noteDraft(
+                                                                `merge-reason:${conflict.subject}`
+                                                            )
+                                                        )
+                                                    }
+                                                >
+                                                    Conciliar em nota nova
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+                            <small className="cap-hint">
+                                comparado contra: {snapshot.known.files.length} arquivo(s),{' '}
+                                {snapshot.known.sots.length} SoT(s),{' '}
+                                {snapshot.known.activeGuidance.length} guidance ativa(s),{' '}
+                                {snapshot.known.forbidden.length} declaração(ões) com texto proibido
+                            </small>
+                        </div>
+                    )}
+
+                    {snapshot && snapshot.themes.map(theme => (
+                        <div className="cap-card" key={`theme:${theme}`}>
+                            <div className="cap-head">
+                                <b>{theme}</b>
+                                <span className="cap-pill not-installed">
+                                    {snapshot.notes.filter(n => n.theme === theme).length} nota(s)
+                                </span>
+                            </div>
+                            {snapshot.notes
+                                .filter(note => note.theme === theme)
+                                .map(note => (
+                                    <div className="cap-receipt" key={note.id}>
+                                        <span
+                                            className={`cap-receipt-action ${
+                                                note.state === 'open'
+                                                    ? ''
+                                                    : note.state === 'resolved'
+                                                        ? 'check-not_run'
+                                                        : 'check-unknown'
+                                            }`}
+                                        >
+                                            {note.kind} · {note.state}
+                                        </span>
+                                        <span className="cap-receipt-detail">{note.subject}</span>
+                                        <small>{note.text}</small>
+                                        {note.links.length > 0 && (
+                                            <small className="cap-evidence">
+                                                ligada a:{' '}
+                                                {note.links
+                                                    .map(link => `${link.kind}:${link.id}`)
+                                                    .join(', ')}
+                                            </small>
+                                        )}
+                                        {note.stateReason && (
+                                            <small>
+                                                {note.state === 'superseded'
+                                                    ? `substituída por ${note.supersededBy}: `
+                                                    : 'fechada: '}
+                                                {note.stateReason}
+                                            </small>
+                                        )}
+                                        {note.state === 'open' && (
+                                            <>
+                                                <div className="cap-actions">
+                                                    <button
+                                                        className="cap-btn"
+                                                        disabled={busy}
+                                                        title="Vira guidance CANDIDATA na biblioteca — ainda precisa ser promovida lá"
+                                                        onClick={() =>
+                                                            this.commands.executeCommand(
+                                                                CMD_NOTES_PROMOTE,
+                                                                note.id
+                                                            )
+                                                        }
+                                                    >
+                                                        Promover a guidance
+                                                    </button>
+                                                </div>
+                                                <div className="cap-actions">
+                                                    {this.noteInput(
+                                                        `close:${note.id}`,
+                                                        'motivo para fechar (obrigatório)'
+                                                    )}
+                                                    <button
+                                                        className="cap-btn"
+                                                        disabled={
+                                                            busy ||
+                                                            this.noteDraft(
+                                                                `close:${note.id}`
+                                                            ).trim().length === 0
+                                                        }
+                                                        onClick={() =>
+                                                            this.commands.executeCommand(
+                                                                CMD_NOTES_RESOLVE,
+                                                                note.id,
+                                                                this.noteDraft(`close:${note.id}`)
+                                                            )
+                                                        }
+                                                    >
+                                                        Fechar com motivo
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                        </div>
+                    ))}
+
+                    {snapshot && snapshot.notes.length === 0 && (
+                        <div className="cap-card">
+                            <small>
+                                nenhuma nota ainda · nota sem assunto não existe aqui: é o assunto
+                                que permite comparar duas notas
+                            </small>
+                        </div>
+                    )}
+                </div>
+            </section>
+        );
     }
 
     /**

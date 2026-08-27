@@ -23,6 +23,9 @@ import {
     ContextPackage,
     Hunk,
     IntentReview,
+    NoteLink,
+    NoteRequest,
+    NotesSnapshot,
     PacksSnapshot,
     PreviewSnapshot,
     ReconciliationChoice,
@@ -451,5 +454,43 @@ export class EngineSidecarService implements EngineService {
             note,
             artifact
         });
+    }
+
+    // ── §7 notas e reconciliação ──────────────────────────────────────────────
+
+    notesSnapshot(root: string): Promise<NotesSnapshot> {
+        return this.call('notes_snapshot', { root });
+    }
+
+    notesCreate(root: string, note: NoteRequest): Promise<NotesSnapshot> {
+        return this.call('notes_create', { root, ...note });
+    }
+
+    notesResolve(root: string, id: string, reason: string): Promise<NotesSnapshot> {
+        return this.call('notes_resolve', { root, id, reason });
+    }
+
+    notesSupersede(
+        root: string,
+        id: string,
+        by: string,
+        reason: string
+    ): Promise<NotesSnapshot> {
+        return this.call('notes_supersede', { root, id, by, reason });
+    }
+
+    notesLink(root: string, id: string, link: NoteLink): Promise<NotesSnapshot> {
+        return this.call('notes_link', { root, id, link });
+    }
+
+    notesMerge(
+        root: string,
+        ids: string[],
+        theme: string,
+        subject: string,
+        text: string,
+        reason: string
+    ): Promise<NotesSnapshot> {
+        return this.call('notes_merge', { root, ids, theme, subject, text, reason });
     }
 }

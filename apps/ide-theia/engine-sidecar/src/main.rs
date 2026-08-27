@@ -29,6 +29,7 @@
 //!   - `settings_*`  the §13 config (one schema for the panel and the file)
 //!   - `project_*`   the §13 durable project (identity, intent, resources)
 //!   - `intent_review` / `intent_decide` the §8 guided intent (Layer-1 hypotheses)
+//!   - `notes_*`      the §7 notes by theme and their reconciliation
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -40,6 +41,7 @@ mod context;
 mod harness;
 mod intent;
 mod library;
+mod notes;
 mod packs;
 mod project;
 mod settings;
@@ -389,6 +391,102 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(package).map_err(|e| e.to_string())
+        }
+        // §7 — notes by theme, and the comparison between them. Nothing here
+        // promotes, merges or discards on its own: each is an explicit call.
+        "notes_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootParams {
+                root: String,
+            }
+            let p: RootParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || notes::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "notes_create" => {
+            #[derive(Deserialize)]
+            struct CreateParams {
+                root: String,
+                #[serde(flatten)]
+                note: notes::NoteRequest,
+            }
+            let p: CreateParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || notes::create(&root, p.note))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "notes_resolve" => {
+            #[derive(Deserialize)]
+            struct ResolveParams {
+                root: String,
+                id: String,
+                #[serde(default)]
+                reason: String,
+            }
+            let p: ResolveParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || notes::resolve(&root, &p.id, &p.reason))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "notes_supersede" => {
+            #[derive(Deserialize)]
+            struct SupersedeParams {
+                root: String,
+                id: String,
+                by: String,
+                #[serde(default)]
+                reason: String,
+            }
+            let p: SupersedeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                notes::supersede(&root, &p.id, &p.by, &p.reason)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "notes_link" => {
+            #[derive(Deserialize)]
+            struct LinkParams {
+                root: String,
+                id: String,
+                link: ide_notes::NoteLink,
+            }
+            let p: LinkParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || notes::link(&root, &p.id, p.link))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "notes_merge" => {
+            #[derive(Deserialize)]
+            struct MergeParams {
+                root: String,
+                ids: Vec<String>,
+                theme: String,
+                subject: String,
+                text: String,
+                #[serde(default)]
+                reason: String,
+            }
+            let p: MergeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                notes::merge(&root, &p.ids, &p.theme, &p.subject, &p.text, &p.reason)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §8 — guided intent. Layer-1 findings are hypotheses: they do not block
         // and they never reach the agent context. Nothing here writes the intent.
