@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "task/**"]
+    branches: [main, "task/**", "feat/**", "fix/**"]
   pull_request:
 
 concurrency:
