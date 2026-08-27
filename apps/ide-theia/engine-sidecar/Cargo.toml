@@ -44,6 +44,9 @@ ide-context = { path = "../../../crates/ide-context" }
 ide-guidance = { path = "../../../crates/ide-guidance" }
 #  - ide-config: the REAL config schema shared by the simple UI and the file (§13)
 ide-config = { path = "../../../crates/ide-config" }
+#  - ide-semantic: the REAL Layer-1 evaluators (§8). Findings are HYPOTHESES —
+#    they never block and never enter agent context.
+ide-semantic = { path = "../../../crates/ide-semantic" }
 ide-packs = { path = "../../../crates/ide-packs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

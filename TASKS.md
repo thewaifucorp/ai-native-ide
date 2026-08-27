@@ -525,6 +525,47 @@ Composer sugere ambiguidades, decisões, requisitos esquecidos, contradições e
 
 **Pronto:** intenção melhora sem rewrite oculto ou estado silencioso.
 
+**PROVADO (2026-08-27, app Theia ativo).**
+
+- **O composer existe.** Antes o prompt era um `window.prompt`: a intenção vivia
+  por um modal e desaparecia — nada podia avaliá-la e nada mostrava o que foi
+  enviado. Agora o texto fica num campo na view Build, e é exatamente ele que vai
+  ao agente.
+- **Nada reescreve o texto.** Não existe caminho no código que escreva a intenção
+  da pessoa; a hipótese fica ao lado dela. `intent_review` só lê.
+- **Camada 1 é hipótese, e a tela diz o que isso significa:** não bloqueia efeito
+  (o que bloqueia é check de camada 0 falhando) e não entra em contexto de agente
+  (o §6 compila guidance ATIVA e autoridade declarada, nunca finding).
+- **Contradição** (`ide-semantic::contradictions`, nova): só literal. Uma
+  afirmação `absent-in-file` do `.product/sot` nomeia um texto proibido; se a
+  intenção o contém, as duas não podem valer, e o finding cita os dois lados.
+  Confiança 0.9 — não 1.0, porque a intenção pode estar citando o proibido para
+  recusá-lo, e esta camada não distingue. Decidir que duas frases discordam em
+  geral pede modelo, e palpite de modelo vestido de contradição bloquearia
+  trabalho por achismo.
+- **Candidato editável:** o texto que vira artefato é a versão da pessoa, não a
+  remediação crua do avaliador.
+- **Aceitar cria guidance CANDIDATA** na biblioteca do §13 — que ainda precisa da
+  promoção para dirigir agente. Dois atos explícitos, nenhum automático.
+- **Dispensar exige motivo**, e a decisão guarda o hash da intenção sobre a qual
+  foi tomada. Editar o texto não faz a decisão valer em silêncio: ela aparece
+  marcada `DECIDIDA SOBRE OUTRA VERSÃO DO TEXTO`.
+
+**Medido na tela:** intenção com leilão, pagamento e `a.createdAt - b.createdAt`
+produziu `contradiction · confiança 90% · A intenção diz "a.createdAt -
+b.createdAt", que docs/product-intent.md declara proibido`, na frente das
+hipóteses de palavra-chave; aceitar a de concorrência com texto editado criou
+`guidance-000001` (candidata, procedência `revisão de intenção ·
+layer1:auction-concurrency:leilão`); dispensar gravou o motivo; e ao acrescentar
+"recuperação de senha" na intenção as duas decisões passaram a aparecer marcadas
+como tomadas sobre outra versão, com um finding novo (`account-enumeration`)
+aberto.
+
+**O que ficou fora, dito:** "consequências" aqui são as do SISTEMA (o que a
+hipótese faz e não faz), não previsões sobre o projeto — inventar consequência de
+domínio é o palpite que o item proíbe. Requisito esquecido continua sob
+`missing_decision`, que é o vocabulário do motor.
+
 ### 9. Features, Tasks e Status
 
 Feature → Task → Subtask opcional; Task direta e multi-Feature são válidas. Critérios/evidências versionados; agente propõe verificação. Status calcula: não iniciado, em andamento, implementado não verificado, parcialmente verificado, verificado, bloqueado ou evidência desatualizada.

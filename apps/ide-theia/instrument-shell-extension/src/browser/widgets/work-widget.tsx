@@ -27,6 +27,8 @@ import {
     CMD_REGISTER_REFERENCE,
     CMD_CHECKS_RUN,
     CMD_CONTEXT_COMPILE,
+    CMD_INTENT_DECIDE,
+    CMD_INTENT_REVIEW,
     CMD_MATERIALS_ANALYZE,
     CMD_PREVIEW_START,
     CMD_PREVIEW_STATUS,
@@ -1210,7 +1212,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
             <section className={`view${on ? ' on' : ''}`} id="view-build">
                 <div className="conv">
                     <div className="conv-scroll">
-                        <h2 className="goal">Sessão de agente</h2>
+                        <h2 className="goal">Intenção e sessão de agente</h2>
+                        {this.renderComposer()}
                         <div className="cap-card">
                             <div className="cap-head">
                                 <b>{session?.agent ?? agent?.agent ?? 'claude'}</b>
@@ -1422,15 +1425,194 @@ export class WorkWidget extends AbstractInstrumentWidget {
         );
     }
 
-    /** Ask for the prompt with the platform dialog — the composer is next. */
+    /**
+     * Submits what the COMPOSER holds — the person's own text, verbatim.
+     *
+     * It used to be a `window.prompt`, which meant the intent existed for one
+     * modal and then vanished: nothing could evaluate it, and nothing could show
+     * what was sent. The composer keeps it, and §8 evaluates it WITHOUT editing
+     * it. If the box is empty there is nothing to send, and saying so beats
+     * sending an empty prompt to an agent.
+     */
     protected submitPrompt(codeChange: boolean): void {
-        const prompt = window.prompt(
-            codeChange
-                ? 'O que o agente deve mudar no projeto?'
-                : 'O que você quer perguntar ao agente?'
-        );
-        if (prompt) {
-            this.commands.executeCommand(CMD_SESSION_SUBMIT, prompt, codeChange);
+        const intent = this.store.intentDraft.trim();
+        if (intent.length === 0) {
+            this.store.toast('Escreva a intenção no composer antes de enviar.');
+            return;
         }
+        this.commands.executeCommand(CMD_SESSION_SUBMIT, intent, codeChange);
+    }
+
+    /** Texto editado por hipótese, antes de virar artefato, e o motivo de dispensa. */
+    protected findingDrafts: Record<string, string> = {};
+
+    protected findingDraft(id: string, fallback: string): string {
+        return this.findingDrafts[id] ?? fallback;
+    }
+
+    /**
+     * O COMPOSER (§8): a intenção da pessoa, e o que ela esconde.
+     *
+     * Três regras visíveis na tela, porque são elas que fazem "a intenção melhora
+     * sem rewrite oculto ou estado silencioso":
+     *  • o texto é da pessoa — nada aqui reescreve o campo, e o que é enviado ao
+     *    agente é exatamente o que está nele.
+     *  • cada hipótese é editável antes de virar artefato, e o que vira artefato é
+     *    a versão dela, não a remediação crua do avaliador.
+     *  • dispensar exige motivo, e decisão tomada sobre OUTRA versão do texto
+     *    aparece marcada em vez de valer em silêncio.
+     */
+    protected renderComposer(): React.ReactNode {
+        const review = this.store.intentReview;
+        const busy = this.store.intentBusy;
+
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Intenção</b>
+                    <span className={`cap-pill ${review ? (this.store.openFindingCount > 0 ? 'not-installed' : 'ready') : 'not-installed'}`}>
+                        {!review
+                            ? 'não avaliada'
+                            : this.store.openFindingCount > 0
+                                ? `${this.store.openFindingCount} hipótese(s) aberta(s)`
+                                : 'sem hipótese aberta'}
+                    </span>
+                </div>
+                <textarea
+                    className="cap-textarea"
+                    placeholder="o que este projeto tem de fazer — com as suas palavras"
+                    value={this.store.intentDraft}
+                    onChange={event => this.store.setIntentDraft(event.target.value)}
+                />
+                <small className="cap-hint">
+                    este texto é seu · o que vai ao agente é exatamente ele, e avaliar não o
+                    reescreve
+                </small>
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy || this.store.intentDraft.trim().length === 0}
+                        onClick={() => this.commands.executeCommand(CMD_INTENT_REVIEW)}
+                    >
+                        {busy ? 'avaliando…' : 'Avaliar intenção'}
+                    </button>
+                </div>
+
+                {review?.nothingFound && <p className="cap-detail">{review.nothingFound}</p>}
+
+                {review && review.reviewed.map(entry => {
+                    const finding = entry.finding;
+                    const decision = entry.decision;
+                    const draftKey = `finding:${finding.id}`;
+                    const noteKey = `note:${finding.id}`;
+                    return (
+                        <div className="cap-receipt" key={finding.id}>
+                            <span
+                                className={`cap-receipt-action ${
+                                    decision?.state === 'accepted'
+                                        ? ''
+                                        : decision?.state === 'dismissed'
+                                            ? 'check-not_run'
+                                            : finding.category === 'contradiction'
+                                                ? 'check-failed'
+                                                : 'check-unknown'
+                                }`}
+                            >
+                                {decision?.state ?? finding.category}
+                            </span>
+                            <span className="cap-receipt-detail">{finding.claim}</span>
+                            <small>
+                                {finding.evaluator} · severidade {finding.severity} · confiança{' '}
+                                {Math.round(finding.confidence * 100)}%
+                            </small>
+                            <small className="cap-evidence">{finding.evidence}</small>
+                            <small className="cap-remediation">{finding.remediation}</small>
+                            {decision && (
+                                <small>
+                                    decidida: {decision.note || 'sem nota'}
+                                    {decision.artifact && ` · virou ${decision.artifact}`}
+                                    {entry.decidedOnOtherIntent &&
+                                        ' · DECIDIDA SOBRE OUTRA VERSÃO DO TEXTO'}
+                                </small>
+                            )}
+                            {!decision && (
+                                <>
+                                    <div className="cap-actions">
+                                        <input
+                                            className="cap-input"
+                                            value={this.findingDraft(draftKey, finding.remediation)}
+                                            onChange={event => {
+                                                this.findingDrafts[draftKey] = event.target.value;
+                                                this.update();
+                                            }}
+                                        />
+                                        <button
+                                            className="cap-btn primary"
+                                            disabled={busy}
+                                            title="Vira guidance CANDIDATA na biblioteca — ainda precisa ser promovida para dirigir agente"
+                                            onClick={() =>
+                                                this.commands.executeCommand(
+                                                    CMD_INTENT_DECIDE,
+                                                    finding.id,
+                                                    'accepted',
+                                                    'aceita na revisão da intenção',
+                                                    this.findingDraft(draftKey, finding.remediation)
+                                                )
+                                            }
+                                        >
+                                            Aceitar como guidance
+                                        </button>
+                                    </div>
+                                    <div className="cap-actions">
+                                        <input
+                                            className="cap-input"
+                                            placeholder="motivo da dispensa (obrigatório)"
+                                            value={this.findingDraft(noteKey, '')}
+                                            onChange={event => {
+                                                this.findingDrafts[noteKey] = event.target.value;
+                                                this.update();
+                                            }}
+                                        />
+                                        <button
+                                            className="cap-btn"
+                                            disabled={
+                                                busy ||
+                                                this.findingDraft(noteKey, '').trim().length === 0
+                                            }
+                                            onClick={() =>
+                                                this.commands.executeCommand(
+                                                    CMD_INTENT_DECIDE,
+                                                    finding.id,
+                                                    'dismissed',
+                                                    this.findingDraft(noteKey, '')
+                                                )
+                                            }
+                                        >
+                                            Dispensar
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    );
+                })}
+
+                {review && (
+                    <>
+                        <small className="cap-hint">
+                            {review.report.evaluatorsRun.length} avaliador(es) ·{' '}
+                            {review.report.withheldForBudget} retido(s) pelo orçamento ·{' '}
+                            {review.declared.length} declaração(ões) usada(s) na checagem de
+                            contradição
+                        </small>
+                        {review.consequences.map((line, index) => (
+                            <small className="cap-hint" key={`cons:${index}`}>
+                                {line}
+                            </small>
+                        ))}
+                    </>
+                )}
+            </div>
+        );
     }
 }

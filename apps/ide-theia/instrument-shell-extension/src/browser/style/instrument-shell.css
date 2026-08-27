@@ -727,3 +727,19 @@ body.game .iws .strip .lvl-strip { display: inline; }
     font: 400 11px var(--ui);
     color: var(--text);
 }
+
+/* Composer da intenção (§8). O texto é da pessoa: campo grande, monospace não —
+   é prosa, não código — e nada o reescreve. */
+.iws .cap-textarea {
+    display: block;
+    width: 100%;
+    min-height: 76px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: 400 12px/1.5 var(--ui);
+    color: var(--text);
+    resize: vertical;
+}

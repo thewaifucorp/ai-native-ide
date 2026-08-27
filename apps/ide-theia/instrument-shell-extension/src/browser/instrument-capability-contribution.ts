@@ -84,6 +84,10 @@ export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
 export const CMD_CONTEXT_COMPILE = 'instrument.context.compile';
 
 // §13 — biblioteca de guidance, truth registry, configuração e projeto durável.
+// §8 — composer de intenção guiada.
+export const CMD_INTENT_REVIEW = 'instrument.intent.review';
+export const CMD_INTENT_DECIDE = 'instrument.intent.decide';
+
 export const CMD_LIBRARY_READ = 'instrument.library.read';
 export const CMD_LIBRARY_CAPTURE = 'instrument.library.capture';
 export const CMD_LIBRARY_LIFECYCLE = 'instrument.library.lifecycle';
@@ -305,6 +309,24 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_CONTEXT_COMPILE, label: 'Instrument: compilar contexto do agente (§6)' },
             { execute: (budget?: number) => this.compileContext(budget) }
+        );
+        commands.registerCommand(
+            { id: CMD_INTENT_REVIEW, label: 'Instrument: avaliar a intenção escrita (§8)' },
+            { execute: () => this.reviewIntent() }
+        );
+        commands.registerCommand(
+            { id: CMD_INTENT_DECIDE, label: 'Instrument: decidir uma hipótese da intenção (§8)' },
+            {
+                execute: (
+                    findingId?: string,
+                    state?: 'accepted' | 'dismissed',
+                    note?: string,
+                    text?: string
+                ) =>
+                    findingId && state
+                        ? this.decideFinding(findingId, state, note ?? '', text)
+                        : undefined
+            }
         );
         commands.registerCommand(
             { id: CMD_LIBRARY_READ, label: 'Instrument: ler biblioteca de guidance (§13)' },
@@ -1006,6 +1028,89 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Decisão recusada: ${this.msg(err)}`);
         } finally {
             this.store.setReconcileBusy(false);
+        }
+    }
+
+    // ── §8 intenção guiada ────────────────────────────────────────────────
+    //
+    // Nenhum caminho aqui escreve a intenção da pessoa. Avaliar lê o texto e
+    // devolve hipóteses; aceitar cria uma guidance CANDIDATA (que ainda precisa
+    // da promoção do §13 para dirigir qualquer agente); dispensar exige motivo.
+
+    protected async reviewIntent(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setIntentBusy(true);
+        try {
+            this.store.setIntentReview(
+                await this.engine.intentReview(root, this.store.intentDraft)
+            );
+        } catch (err) {
+            this.messages.error(`Falha ao avaliar a intenção: ${this.msg(err)}`);
+            this.store.setIntentReview(undefined);
+        } finally {
+            this.store.setIntentBusy(false);
+        }
+    }
+
+    /**
+     * Decide uma hipótese.
+     *
+     * `text` é o texto EDITADO pela pessoa quando ela aceita — o candidato é
+     * editável, e o que vira artefato é a versão dela, não a remediação crua do
+     * avaliador. O artefato é uma guidance candidata, e o id dela fica no
+     * registro da decisão para o rastro fechar.
+     */
+    protected async decideFinding(
+        findingId: string,
+        state: 'accepted' | 'dismissed',
+        note: string,
+        text?: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setIntentBusy(true);
+        try {
+            let artifact: string | undefined;
+            if (state === 'accepted') {
+                const body = (text ?? '').trim();
+                if (body.length === 0) {
+                    this.messages.error('Aceitar precisa do texto que vai virar guidance.');
+                    return;
+                }
+                const imported = await this.engine.libraryImport(
+                    root,
+                    `Intenção · ${findingId.split(':').slice(1).join(':')}`,
+                    body,
+                    `revisão de intenção · ${findingId}`,
+                    'pessoa'
+                );
+                artifact = imported.id;
+            }
+            const after = await this.engine.intentDecide(
+                root,
+                this.store.intentDraft,
+                findingId,
+                state,
+                note,
+                artifact
+            );
+            this.store.setIntentReview(after);
+            if (artifact) {
+                this.messages.info(
+                    `Aceita: virou guidance candidata (${artifact}) — promover em Ferramentas é ` +
+                        'o que a coloca no contexto do agente.'
+                );
+                this.readLibrary();
+            }
+        } catch (err) {
+            this.messages.error(`Decisão não registrada: ${this.msg(err)}`);
+        } finally {
+            this.store.setIntentBusy(false);
         }
     }
 

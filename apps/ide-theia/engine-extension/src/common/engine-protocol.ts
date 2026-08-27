@@ -274,6 +274,23 @@ export interface EngineService {
     projectRegister(root: string, title: string, intent: string): Promise<ProjectSnapshot>;
     projectAttach(root: string, path: string, kind?: 'directory' | 'repository'): Promise<ProjectSnapshot>;
     projectIntent(root: string, intent: string): Promise<ProjectSnapshot>;
+
+    // ── §8 intenção guiada (ide-semantic) ─────────────────────────────────────
+
+    /** Evaluates the intent and merges the recorded review decisions. Reads
+     *  only; the intent text is never rewritten by this call. */
+    intentReview(root: string, intent: string, maxFindings?: number): Promise<IntentReview>;
+
+    /** Records one decision. A dismissal requires a reason; accepting may name
+     *  the artifact it produced. */
+    intentDecide(
+        root: string,
+        intent: string,
+        findingId: string,
+        state: 'accepted' | 'dismissed',
+        note: string,
+        artifact?: string
+    ): Promise<IntentReview>;
 }
 
 /** A check's outcome. `unknown` and `not_run` are distinct absences of
@@ -822,4 +839,80 @@ export interface ProjectSnapshot {
     notRegisteredReason?: string | null;
     /** Capabilities this surface deliberately does not have yet. */
     gaps: string[];
+}
+
+// ── §8 INTENÇÃO GUIADA (ide-semantic) ───────────────────────────────────────
+//
+// Mirrors `engine-sidecar/src/intent.rs`. Layer-1 findings are HYPOTHESES: each
+// carries the text that triggered it, a calibrated confidence and a review
+// state. They never block an effect (only a failing Layer-0 check does) and they
+// never enter the agent context (§6 compiles active guidance and declared
+// authority, never a finding).
+
+export type SemanticCategory = 'ambiguity' | 'missing_decision' | 'risk' | 'contradiction';
+
+export type SemanticReviewState = 'open' | 'accepted' | 'dismissed';
+
+export interface SemanticFinding {
+    id: string;
+    evaluator: string;
+    evaluatorVersion: string;
+    layer: number;
+    category: SemanticCategory;
+    /** What the finding asserts. A contradiction quotes the declaration too. */
+    claim: string;
+    /** The exact text that triggered it — never a bare guess. */
+    evidence: string;
+    /** Calibrated 0–1. Keyword rules stay modest; a literal contradiction is high. */
+    confidence: number;
+    severity: CheckSeverity;
+    remediation: string;
+    reviewState: SemanticReviewState;
+}
+
+export interface SemanticReport {
+    findings: SemanticFinding[];
+    /** Findings the budget held back — least severe first. */
+    withheldForBudget: number;
+    evaluatorsRun: string[];
+    /** Stable hash of the evaluated intent. */
+    contentHash: string;
+}
+
+/** A statement the project declared, plus the literal text it forbids. */
+export interface DeclaredStatement {
+    id: string;
+    source: string;
+    statement: string;
+    forbidden: string;
+}
+
+export interface ReviewDecision {
+    findingId: string;
+    state: 'accepted' | 'dismissed';
+    /** Why. Required for a dismissal. */
+    note: string;
+    /** The intent hash this decision was taken on. */
+    intentHash: string;
+    atMs: number;
+    /** The artifact accepting produced, when it produced one. */
+    artifact?: string | null;
+}
+
+export interface ReviewedFinding {
+    finding: SemanticFinding;
+    /** Null means nobody decided yet. */
+    decision?: ReviewDecision | null;
+    /** True when the decision was taken on a DIFFERENT intent text. */
+    decidedOnOtherIntent: boolean;
+}
+
+export interface IntentReview {
+    report: SemanticReport;
+    reviewed: ReviewedFinding[];
+    /** The declarations the contradiction check ran against. */
+    declared: DeclaredStatement[];
+    /** Facts about what these findings do — not advice, not a threat. */
+    consequences: string[];
+    nothingFound?: string | null;
 }

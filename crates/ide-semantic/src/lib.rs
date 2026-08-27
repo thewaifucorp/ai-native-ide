@@ -17,6 +17,10 @@ pub enum FindingCategory {
     Ambiguity,
     MissingDecision,
     Risk,
+    /// The intent literally says something a declared statement forbids. Not an
+    /// inference: the forbidden text is found in the intent, and the finding
+    /// names the file that forbids it.
+    Contradiction,
 }
 
 /// A finding is a hypothesis until a human reviews it. It is never auto-accepted.
@@ -36,13 +40,16 @@ pub struct SemanticFinding {
     pub evaluator_version: &'static str,
     pub layer: u8,
     pub category: FindingCategory,
-    pub claim: &'static str,
+    /// What the finding asserts. `String` rather than `&'static str` because a
+    /// contradiction has to quote the declaration it collides with — a claim
+    /// that cannot name the other side is not checkable.
+    pub claim: String,
     /// The exact text that triggered the finding, so it is never a bare guess.
     pub evidence: String,
     /// Calibrated 0.0–1.0. Deterministic keyword rules stay deliberately modest.
     pub confidence: f64,
     pub severity: Severity,
-    pub remediation: &'static str,
+    pub remediation: String,
     pub review_state: ReviewState,
 }
 
@@ -160,11 +167,11 @@ pub fn evaluate(intent: &str, budget: EvaluationBudget) -> SemanticReport {
                 evaluator_version: "1",
                 layer: 1,
                 category: rule.category,
-                claim: rule.claim,
+                claim: rule.claim.to_owned(),
                 evidence: format!("intenção menciona \"{term}\""),
                 confidence: rule.confidence,
                 severity: rule.severity,
-                remediation: rule.remediation,
+                remediation: rule.remediation.to_owned(),
                 review_state: ReviewState::Open,
             });
         }
@@ -186,6 +193,75 @@ pub fn evaluate(intent: &str, budget: EvaluationBudget) -> SemanticReport {
         evaluators_run,
         content_hash: format!("{:016x}", djb2(intent)),
     }
+}
+
+/// A statement the project already declared, and the literal text it forbids.
+///
+/// The host supplies these — from a source-of-truth claim, a policy, a decision
+/// record. This crate does not read files and does not interpret the statement;
+/// it only checks whether the forbidden text is literally present in the intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredStatement {
+    pub id: String,
+    /// The file that declares it, for the finding's evidence.
+    pub source: String,
+    /// What the declaration says, quoted in the finding's claim.
+    pub statement: String,
+    /// The literal text this declaration forbids.
+    pub forbidden: String,
+}
+
+/// Finds intents that literally say what a declaration forbids.
+///
+/// # Why this is literal and nothing more
+///
+/// Deciding that two sentences disagree in general needs a model, and a model's
+/// guess dressed as a contradiction would block work over a hunch. So the only
+/// contradiction this layer reports is the one anybody can verify by reading two
+/// lines: the declaration names a forbidden string, and the intent contains it.
+///
+/// A declaration with an empty `forbidden` is skipped rather than matched
+/// against everything — an empty needle "found" in every intent would flag every
+/// project.
+///
+/// Confidence is deliberately high (0.9), unlike the keyword rules: the match is
+/// textual and checkable. It is not 1.0 because the intent may be quoting the
+/// forbidden text in order to reject it, and this layer cannot tell.
+pub fn contradictions(intent: &str, declared: &[DeclaredStatement]) -> Vec<SemanticFinding> {
+    let haystack = intent.to_lowercase();
+    declared
+        .iter()
+        .filter(|statement| !statement.forbidden.trim().is_empty())
+        .filter_map(|statement| {
+            let needle = statement.forbidden.to_lowercase();
+            if !haystack.contains(&needle) {
+                return None;
+            }
+            Some(SemanticFinding {
+                id: format!("layer1:declared-contradiction:{}", statement.id),
+                evaluator: "declared-contradiction",
+                evaluator_version: "1",
+                layer: 1,
+                category: FindingCategory::Contradiction,
+                claim: format!(
+                    "A intenção diz \"{}\", que {} declara proibido: {}",
+                    statement.forbidden, statement.source, statement.statement
+                ),
+                evidence: format!(
+                    "intenção contém \"{}\" · proibido em {}",
+                    statement.forbidden, statement.source
+                ),
+                confidence: 0.9,
+                severity: Severity::High,
+                remediation: format!(
+                    "Reescreva a intenção, ou mude a declaração em {} — as duas não podem valer.",
+                    statement.source
+                ),
+                review_state: ReviewState::Open,
+            })
+        })
+        .collect()
 }
 
 /// Stable content hash the host can compare to skip re-evaluating unchanged
@@ -214,6 +290,59 @@ mod tests {
         assert!(risk.confidence > 0.0 && risk.confidence <= 1.0);
         assert!(risk.evidence.contains("leilão"));
         assert_eq!(risk.review_state, ReviewState::Open);
+    }
+
+    /// A contradiction is literal: the declaration names forbidden text and the
+    /// intent contains it. Both sides are quoted, so anybody can check it.
+    #[test]
+    fn a_declared_forbidden_phrase_in_the_intent_is_a_contradiction() {
+        let declared = vec![DeclaredStatement {
+            id: "desempate-nao-por-criacao".to_owned(),
+            source: "docs/product-intent.md".to_owned(),
+            statement: "Empate não pode ser resolvido por ordem de criação.".to_owned(),
+            forbidden: "ordem de criação".to_owned(),
+        }];
+
+        let findings = contradictions(
+            "O desempate usa a ordem de criação do lance",
+            &declared,
+        );
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.category, FindingCategory::Contradiction);
+        assert_eq!(finding.severity, Severity::High);
+        assert!(finding.claim.contains("docs/product-intent.md"));
+        assert!(finding.evidence.contains("ordem de criação"));
+        assert_eq!(finding.review_state, ReviewState::Open);
+        assert!(
+            finding.confidence < 1.0,
+            "a intenção pode estar citando o proibido para recusá-lo"
+        );
+    }
+
+    /// No match, no finding — and an empty `forbidden` never matches, instead of
+    /// matching every intent.
+    #[test]
+    fn contradictions_need_a_literal_match_and_a_real_needle() {
+        let declared = vec![
+            DeclaredStatement {
+                id: "a".to_owned(),
+                source: "docs/a.md".to_owned(),
+                statement: "algo".to_owned(),
+                forbidden: "ordem de criação".to_owned(),
+            },
+            DeclaredStatement {
+                id: "vazia".to_owned(),
+                source: "docs/b.md".to_owned(),
+                statement: "declaração sem proibição literal".to_owned(),
+                forbidden: "   ".to_owned(),
+            },
+        ];
+
+        let findings = contradictions("O desempate usa o maior valor selado", &declared);
+
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]

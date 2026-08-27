@@ -15,6 +15,7 @@ import {
     BrokerActivity,
     ContextPackage,
     HarnessRun,
+    IntentReview,
     LibrarySnapshot,
     ProjectSnapshot,
     SettingsSnapshot,
@@ -119,6 +120,13 @@ export class InstrumentStore {
     //    estados distintos de propósito.
     packs: PacksSnapshot | undefined;
     packsBusy = false;
+
+    // ── REAL composer de intenção (§8): o texto que a PESSOA escreveu (nunca
+    //    reescrito por nós) e as hipóteses de camada 1 sobre ele, com a decisão
+    //    registrada de cada uma. `undefined` = nem avaliado.
+    intentDraft = '';
+    intentReview: IntentReview | undefined;
+    intentBusy = false;
 
     // ── REAL biblioteca de Guidance + Truth Registry (§13): o que existe, o
     //    que está ATIVO e aplicável agora, a higiene e os conflitos de
@@ -354,6 +362,29 @@ export class InstrumentStore {
     get openDivergenceCount(): number {
         return this.reconciliation
             ? this.reconciliation.divergences.filter(d => !d.reconciliation).length
+            : 0;
+    }
+
+    /** O texto é da pessoa: guardar sem tocar é o ponto do item 8. */
+    setIntentDraft(text: string): void {
+        this.intentDraft = text;
+        this.emit();
+    }
+
+    setIntentReview(review: IntentReview | undefined): void {
+        this.intentReview = review;
+        this.emit();
+    }
+
+    setIntentBusy(busy: boolean): void {
+        this.intentBusy = busy;
+        this.emit();
+    }
+
+    /** Hipóteses ainda sem decisão nesta intenção. */
+    get openFindingCount(): number {
+        return this.intentReview
+            ? this.intentReview.reviewed.filter(r => !r.decision).length
             : 0;
     }
 

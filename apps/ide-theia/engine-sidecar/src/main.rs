@@ -28,6 +28,7 @@
 //!   - `library_*`   the §13 Guidance Library + Truth Registry
 //!   - `settings_*`  the §13 config (one schema for the panel and the file)
 //!   - `project_*`   the §13 durable project (identity, intent, resources)
+//!   - `intent_review` / `intent_decide` the §8 guided intent (Layer-1 hypotheses)
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -37,6 +38,7 @@
 
 mod context;
 mod harness;
+mod intent;
 mod library;
 mod packs;
 mod project;
@@ -387,6 +389,55 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(package).map_err(|e| e.to_string())
+        }
+        // §8 — guided intent. Layer-1 findings are hypotheses: they do not block
+        // and they never reach the agent context. Nothing here writes the intent.
+        "intent_review" => {
+            #[derive(Deserialize)]
+            struct ReviewParams {
+                root: String,
+                #[serde(default)]
+                intent: String,
+                #[serde(default)]
+                max_findings: Option<usize>,
+            }
+            let p: ReviewParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                intent::review_snapshot(&root, &p.intent, p.max_findings)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "intent_decide" => {
+            #[derive(Deserialize)]
+            struct DecideParams {
+                root: String,
+                intent: String,
+                finding_id: String,
+                /// `accepted` or `dismissed`. There is no stored `open`.
+                state: String,
+                #[serde(default)]
+                note: String,
+                #[serde(default)]
+                artifact: Option<String>,
+            }
+            let p: DecideParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                intent::review(
+                    &root,
+                    &p.intent,
+                    &p.finding_id,
+                    &p.state,
+                    &p.note,
+                    p.artifact.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §13 — Guidance Library and Truth Registry. `ide_guidance` owns its own
         // files (`.guidance/`), so these arms are thin: resolve the root, carry

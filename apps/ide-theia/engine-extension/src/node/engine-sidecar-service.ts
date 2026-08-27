@@ -22,6 +22,7 @@ import {
     HarnessRun,
     ContextPackage,
     Hunk,
+    IntentReview,
     PacksSnapshot,
     PreviewSnapshot,
     ReconciliationChoice,
@@ -426,5 +427,29 @@ export class EngineSidecarService implements EngineService {
 
     projectIntent(root: string, intent: string): Promise<ProjectSnapshot> {
         return this.call('project_intent', { root, intent });
+    }
+
+    // ── §8 intenção guiada ────────────────────────────────────────────────────
+
+    intentReview(root: string, intent: string, maxFindings?: number): Promise<IntentReview> {
+        return this.call('intent_review', { root, intent, max_findings: maxFindings });
+    }
+
+    intentDecide(
+        root: string,
+        intent: string,
+        findingId: string,
+        state: 'accepted' | 'dismissed',
+        note: string,
+        artifact?: string
+    ): Promise<IntentReview> {
+        return this.call('intent_decide', {
+            root,
+            intent,
+            finding_id: findingId,
+            state,
+            note,
+            artifact
+        });
     }
 }
