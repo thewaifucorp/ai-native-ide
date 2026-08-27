@@ -32,6 +32,10 @@ import {
     CMD_LIBRARY_CAPTURE,
     CMD_LIBRARY_LIFECYCLE,
     CMD_LIBRARY_READ,
+    CMD_LIFECYCLE_DELETE_EXPORT,
+    CMD_LIFECYCLE_EXPORT,
+    CMD_LIFECYCLE_PUBLISH,
+    CMD_LIFECYCLE_READ,
     CMD_SETTINGS_PROFILE,
     CMD_SETTINGS_READ,
     CMD_SETTINGS_RESET,
@@ -101,6 +105,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderLibrary()}
                 {this.renderSettings()}
                 {this.renderDurable()}
+                {this.renderLifecycle()}
                 {this.renderPacks()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
@@ -1061,6 +1066,141 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     onClick={() => this.commands.executeCommand(CMD_DURABLE_READ)}
                 >
                     {busy ? 'lendo…' : 'Ler projeto'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * PUBLICAR E EVOLUIR (§16).
+     *
+     * Duas coisas diferentes na mesma seção, e a diferença é o ponto: o export é
+     * local e tem undo de verdade (apagar o arquivo); publicar é efeito externo e
+     * NÃO tem undo — no máximo compensação, e em destino imutável nem isso. A
+     * tela mostra a classe que o motor calculou; ela não inventa um rollback nem
+     * esconde a falta de um.
+     */
+    protected renderLifecycle(): React.ReactNode {
+        const cycle = this.store.lifecycle;
+        const busy = this.store.lifecycleBusy;
+        const attempt = this.store.lifecycleAttempt;
+        const summary = busy
+            ? 'lendo…'
+            : !cycle
+                ? 'não lido'
+                : cycle.blockedReason
+                    ? 'sem projeto durável'
+                    : `${cycle.history.length} versão(ões) · ${cycle.exports.length} export(s)`;
+
+        return this.section(
+            'lifecycle',
+            'Publicar',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!cycle && <small>não lido — clique em “ler” para abrir o histórico</small>}
+                    {cycle?.blockedReason && <p className="cap-detail">{cycle.blockedReason}</p>}
+                    {cycle && !cycle.blockedReason && (
+                        <>
+                            <div className="cap-head">
+                                <b>{cycle.title}</b>
+                                <span className="cap-pill ready">próxima: {cycle.nextVersion}</span>
+                            </div>
+                            <small className="cap-evidence">
+                                {cycle.logPath} · exports em {cycle.exportsPath}
+                            </small>
+                            <small className="cap-hint">
+                                export é local e reversível de verdade · publicar é efeito externo:
+                                não tem rollback, só compensação — e em destino imutável, nem isso ·
+                                nada aqui exige ShinAI ou Katsui
+                            </small>
+
+                            <div className="cap-actions">
+                                <button
+                                    className="cap-btn"
+                                    disabled={busy}
+                                    onClick={() => this.commands.executeCommand(CMD_LIFECYCLE_EXPORT)}
+                                >
+                                    Exportar (local)
+                                </button>
+                                <button
+                                    className="cap-btn primary"
+                                    disabled={busy || (cycle.history.length > 0 &&
+                                        this.draft('lifecycle-problem').trim().length === 0)}
+                                    title={cycle.history.length > 0
+                                        ? 'Republicar pede o problema observado que esta versão corrige'
+                                        : 'Publica a primeira versão; pede confirmação antes'}
+                                    onClick={() =>
+                                        this.commands.executeCommand(
+                                            CMD_LIFECYCLE_PUBLISH,
+                                            'compensable',
+                                            this.draft('lifecycle-problem') || undefined
+                                        )
+                                    }
+                                >
+                                    {cycle.history.length > 0 ? 'Republicar' : 'Publicar'}
+                                </button>
+                            </div>
+                            {cycle.history.length > 0 && (
+                                <div className="cap-actions">
+                                    {this.input('lifecycle-problem', 'problema observado que esta versão corrige')}
+                                </div>
+                            )}
+
+                            {attempt && (
+                                <small className={attempt.needsConfirmation ? 'cap-remediation' : 'cap-evidence'}>
+                                    {attempt.needsConfirmation ? 'aguardando confirmação: ' : ''}
+                                    {attempt.explain}
+                                </small>
+                            )}
+
+                            {cycle.exports.map(file => (
+                                <div className="cap-receipt" key={file.path}>
+                                    <span className="cap-receipt-action">export</span>
+                                    <span className="cap-receipt-detail">
+                                        {file.path} · {file.version ?? 'versão ilegível'} ·{' '}
+                                        {Math.max(1, Math.round(file.bytes / 1024))} KiB
+                                    </span>
+                                    <button
+                                        className="cap-btn"
+                                        disabled={busy}
+                                        title="Compensação do export: apagar o arquivo desfaz por completo"
+                                        onClick={() =>
+                                            this.commands.executeCommand(
+                                                CMD_LIFECYCLE_DELETE_EXPORT,
+                                                file.path
+                                            )
+                                        }
+                                    >
+                                        Apagar
+                                    </button>
+                                </div>
+                            ))}
+
+                            {cycle.history.map(record => (
+                                <div className="cap-receipt" key={record.version}>
+                                    <span className="cap-receipt-action">v{record.version}</span>
+                                    <span className="cap-receipt-detail">
+                                        {record.problem ? `corrige: ${record.problem}` : record.note}
+                                    </span>
+                                    <small>
+                                        {record.reversibility === 'irreversible'
+                                            ? 'irreversível, sem compensação'
+                                            : record.compensation?.note ?? record.reversibility}
+                                    </small>
+                                </div>
+                            ))}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_LIFECYCLE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler publicações'}
                 </button>
             </div>
         );

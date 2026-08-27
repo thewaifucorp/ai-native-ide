@@ -41,6 +41,7 @@ mod context;
 mod harness;
 mod intent;
 mod library;
+mod lifecycle;
 mod notes;
 mod packs;
 mod policy;
@@ -707,6 +708,75 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §16 — export, publish, republish. Reading and exporting are safe; the
+        // publish arm is the one that can produce an effect nobody can undo, and
+        // it refuses to do so without `confirmed`.
+        "lifecycle_snapshot" | "lifecycle_export" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            let value = tokio::task::spawn_blocking(move || match method.as_str() {
+                "lifecycle_export" => {
+                    lifecycle::export(&root).and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string()))
+                }
+                _ => lifecycle::snapshot(&root)
+                    .and_then(|s| serde_json::to_value(s).map_err(|e| e.to_string())),
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            Ok(value)
+        }
+        "lifecycle_delete_export" => {
+            #[derive(Deserialize)]
+            struct DeleteParams {
+                root: String,
+                path: String,
+            }
+            let p: DeleteParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || lifecycle::delete_export(&root, &p.path))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "lifecycle_publish" => {
+            #[derive(Deserialize)]
+            struct PublishParams {
+                root: String,
+                #[serde(default = "default_publish_target")]
+                target: String,
+                /// The person's explicit act. Defaults to FALSE: a missing field
+                /// must never be read as consent for an external effect.
+                #[serde(default)]
+                confirmed: bool,
+                #[serde(default)]
+                problem: Option<String>,
+                #[serde(default)]
+                related_resources: Vec<String>,
+            }
+            fn default_publish_target() -> String {
+                "compensable".to_string()
+            }
+            let p: PublishParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let attempt = tokio::task::spawn_blocking(move || {
+                lifecycle::publish(
+                    &root,
+                    &p.target,
+                    p.confirmed,
+                    p.problem.as_deref(),
+                    p.related_resources,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(attempt).map_err(|e| e.to_string())
         }
         // §14 — the mode/permission policy, asked BEFORE a governed effect is
         // decided. It answers; it never executes and never skips the broker.

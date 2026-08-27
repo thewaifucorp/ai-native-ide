@@ -255,6 +255,30 @@ export interface EngineService {
 
     // ── §13 config: one schema for the panel and the file ─────────────────────
 
+    // ── §16 publicar e evoluir ────────────────────────────────────────────────
+
+    lifecycleSnapshot(root: string): Promise<LifecycleSnapshot>;
+    /** Writes the portable manifest locally. Reversible: deleting it undoes it. */
+    lifecycleExport(root: string): Promise<PublishAttempt>;
+    /** Performs the compensation for a local export: deletes the file. */
+    lifecycleDeleteExport(root: string, path: string): Promise<LifecycleSnapshot>;
+    /**
+     * Publishes (or republishes) the next version.
+     *
+     * `confirmed` is the person's explicit act; without it an external effect
+     * comes back as `needsConfirmation` and NOTHING is recorded. A republish
+     * requires the observed problem it fixes.
+     */
+    lifecyclePublish(
+        root: string,
+        options: {
+            target?: 'compensable' | 'immutable';
+            confirmed?: boolean;
+            problem?: string;
+            relatedResources?: string[];
+        }
+    ): Promise<PublishAttempt>;
+
     /**
      * §14 — what the project's mode and permissions require for ONE effect.
      *
@@ -823,6 +847,64 @@ export interface SettingRow {
     explain: string;
     /** True when nothing consumes this value yet — marked, never hidden. */
     declaredNotWired: boolean;
+}
+
+// ── §16 lifecycle: export, publish, republish ────────────────────────────────
+
+/** A manifest already written to `.instrument/exports/`. */
+export interface ExportedFile {
+    path: string;
+    bytes: number;
+    version?: string;
+}
+
+/** The compensating action for an effect, or the honest absence of one. */
+export interface CompensationPlan {
+    /** `reversible` | `compensation_only` | `irreversible`. */
+    reversibility: string;
+    /** `delete_exported_file` | `publish_compensating_version`. */
+    kind: string;
+    target: string;
+    note: string;
+}
+
+export interface PublishRecord {
+    projectId: string;
+    version: string;
+    problem?: string;
+    relatedResources: string[];
+    note: string;
+    reversibility: string;
+    compensation?: CompensationPlan;
+}
+
+export interface LifecycleSnapshot {
+    projectId?: string;
+    title?: string;
+    latestVersion?: string;
+    nextVersion: string;
+    history: PublishRecord[];
+    exports: ExportedFile[];
+    /** Why publishing is unavailable right now, when it is. */
+    blockedReason?: string;
+    logPath: string;
+    exportsPath: string;
+}
+
+/**
+ * The result of trying to export or publish.
+ *
+ * `needsConfirmation` means NOTHING happened yet: the engine decided this effect
+ * requires an explicit act first. The reversibility class and the compensation
+ * plan travel with it, so the confirmation names what cannot be undone.
+ */
+export interface PublishAttempt {
+    needsConfirmation: boolean;
+    reversibility: string;
+    compensation?: CompensationPlan;
+    explain: string;
+    record?: PublishRecord;
+    snapshot: LifecycleSnapshot;
 }
 
 /** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */

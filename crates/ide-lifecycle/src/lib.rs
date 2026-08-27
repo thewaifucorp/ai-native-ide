@@ -285,9 +285,24 @@ impl PublishLog {
             .map(|record| record.version.clone())
     }
 
-    /// Publishes the next version. The first publication is `0.0.1`; later ones
-    /// bump the patch of the latest recorded version.
+    /// Publishes the next version to a compensable registry. The first
+    /// publication is `0.0.1`; later ones bump the patch of the latest recorded
+    /// version.
     pub fn publish(&mut self, project_id: &str) -> anyhow::Result<PublishRecord> {
+        self.publish_to(project_id, PublishTarget::ExternalCompensable)
+    }
+
+    /// Publishes to a named target.
+    ///
+    /// The target is what decides whether the publication can be compensated at
+    /// all, so a caller that publishes into an immutable sink must be able to say
+    /// so — otherwise the record would claim a compensation plan that does not
+    /// exist, which is the one thing this module is written to prevent.
+    pub fn publish_to(
+        &mut self,
+        project_id: &str,
+        target: PublishTarget,
+    ) -> anyhow::Result<PublishRecord> {
         let version = match self.latest_version(project_id) {
             Some(previous) => bump_patch(&previous),
             None => "0.0.1".to_owned(),
@@ -295,14 +310,21 @@ impl PublishLog {
         let effect = LifecycleEffect::Publish {
             project_id: project_id.to_owned(),
             version: version.clone(),
-            target: PublishTarget::ExternalCompensable,
+            target,
         };
         let record = PublishRecord {
             project_id: project_id.to_owned(),
             version,
             problem: None,
             related_resources: Vec::new(),
-            note: "Publicação local.".to_owned(),
+            note: match target {
+                PublishTarget::ExternalCompensable => {
+                    "Publicação em destino que aceita correção posterior.".to_owned()
+                }
+                PublishTarget::ExternalImmutable => {
+                    "Publicação em destino imutável: sem undo e sem compensação.".to_owned()
+                }
+            },
             reversibility: effect.reversibility(),
             compensation: compensation_for(&effect),
         };
@@ -323,6 +345,23 @@ impl PublishLog {
         problem: &str,
         related_resources: Vec<String>,
     ) -> anyhow::Result<PublishRecord> {
+        self.republish_to(
+            project_id,
+            problem,
+            related_resources,
+            PublishTarget::ExternalCompensable,
+        )
+    }
+
+    /// Republishes to a named target. Same reason as [`PublishLog::publish_to`]:
+    /// the target decides whether a compensation exists, so it cannot be assumed.
+    pub fn republish_to(
+        &mut self,
+        project_id: &str,
+        problem: &str,
+        related_resources: Vec<String>,
+        target: PublishTarget,
+    ) -> anyhow::Result<PublishRecord> {
         let version = match self.latest_version(project_id) {
             Some(previous) => bump_patch(&previous),
             None => anyhow::bail!("cannot republish a project that was never published"),
@@ -330,7 +369,7 @@ impl PublishLog {
         let effect = LifecycleEffect::Republish {
             project_id: project_id.to_owned(),
             version: version.clone(),
-            target: PublishTarget::ExternalCompensable,
+            target,
         };
         let record = PublishRecord {
             project_id: project_id.to_owned(),
@@ -478,6 +517,25 @@ mod tests {
             .expect("record carries a compensation plan");
         assert_eq!(plan.kind, CompensationKind::PublishCompensatingVersion);
         assert_eq!(plan.target, "auction@0.0.1");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// An immutable target must reach the RECORD as irreversible with no plan.
+    /// Recording it as compensable would put a compensation on the receipt that
+    /// nobody can perform.
+    #[test]
+    fn publishing_to_an_immutable_target_records_no_compensation() {
+        let root = temp_root("immutable");
+        let _ = fs::remove_dir_all(&root);
+        let mut log = PublishLog::open(&root).unwrap();
+
+        let record = log
+            .publish_to("auction", PublishTarget::ExternalImmutable)
+            .unwrap();
+
+        assert_eq!(record.reversibility, Reversibility::Irreversible);
+        assert!(record.compensation.is_none());
+        assert!(record.note.contains("imutável"));
         fs::remove_dir_all(&root).unwrap();
     }
 

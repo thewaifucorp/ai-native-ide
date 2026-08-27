@@ -12,8 +12,10 @@ import {
     Guidance,
     GuidanceState,
     LibrarySnapshot,
+    LifecycleSnapshot,
     PolicyDecision,
     ProjectSnapshot,
+    PublishAttempt,
     SettingsPatch,
     SettingsSnapshot,
     SyncProposal,
@@ -385,6 +387,37 @@ export class EngineSidecarService implements EngineService {
     }
 
     // ── §13 config ────────────────────────────────────────────────────────────
+
+    lifecycleSnapshot(root: string): Promise<LifecycleSnapshot> {
+        return this.call('lifecycle_snapshot', { root });
+    }
+
+    lifecycleExport(root: string): Promise<PublishAttempt> {
+        return this.call('lifecycle_export', { root });
+    }
+
+    lifecycleDeleteExport(root: string, path: string): Promise<LifecycleSnapshot> {
+        return this.call('lifecycle_delete_export', { root, path });
+    }
+
+    lifecyclePublish(
+        root: string,
+        options: {
+            target?: 'compensable' | 'immutable';
+            confirmed?: boolean;
+            problem?: string;
+            relatedResources?: string[];
+        } = {}
+    ): Promise<PublishAttempt> {
+        return this.call('lifecycle_publish', {
+            root,
+            target: options.target ?? 'compensable',
+            // Never defaulted to true anywhere: consent is stated, not assumed.
+            confirmed: options.confirmed === true,
+            problem: options.problem,
+            related_resources: options.relatedResources ?? []
+        });
+    }
 
     policyDecide(
         root: string,

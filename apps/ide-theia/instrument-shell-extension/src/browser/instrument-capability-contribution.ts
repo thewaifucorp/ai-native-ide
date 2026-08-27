@@ -76,6 +76,10 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_DISCARD = 'instrument.session.discard';
+export const CMD_LIFECYCLE_READ = 'instrument.lifecycle.read';
+export const CMD_LIFECYCLE_EXPORT = 'instrument.lifecycle.export';
+export const CMD_LIFECYCLE_DELETE_EXPORT = 'instrument.lifecycle.deleteExport';
+export const CMD_LIFECYCLE_PUBLISH = 'instrument.lifecycle.publish';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
@@ -269,6 +273,25 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_DISCARD, label: 'Instrument: descartar a worktree do agente' },
             { execute: () => this.sessionDiscard() }
+        );
+        commands.registerCommand(
+            { id: CMD_LIFECYCLE_READ, label: 'Instrument: ler publicações e exports (§16)' },
+            { execute: () => this.readLifecycle() }
+        );
+        commands.registerCommand(
+            { id: CMD_LIFECYCLE_EXPORT, label: 'Instrument: exportar o projeto (local, reversível)' },
+            { execute: () => this.lifecycleExport() }
+        );
+        commands.registerCommand(
+            { id: CMD_LIFECYCLE_DELETE_EXPORT, label: 'Instrument: apagar um export (compensação)' },
+            { execute: (relPath?: string) => (relPath ? this.lifecycleDeleteExport(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_LIFECYCLE_PUBLISH, label: 'Instrument: publicar versão (efeito externo)' },
+            {
+                execute: (target?: 'compensable' | 'immutable', problem?: string) =>
+                    this.lifecyclePublish(target ?? 'compensable', problem)
+            }
         );
         commands.registerCommand(
             { id: CMD_MATERIALS_ANALYZE, label: 'Instrument: analisar materiais do projeto (§5)' },
@@ -1774,6 +1797,111 @@ export class InstrumentCapabilityContribution
             this.store.setSession(await this.session.discard(root));
         } catch (err) {
             this.messages.error(`Falha ao descartar a worktree: ${this.msg(err)}`);
+        }
+    }
+
+    // ── §16 publicar e evoluir ──────────────────────────────────────────────
+
+    protected async readLifecycle(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLifecycleBusy(true);
+        try {
+            this.store.setLifecycle(await this.engine.lifecycleSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler o ciclo de publicação: ${this.msg(err)}`);
+            this.store.setLifecycle(undefined);
+        } finally {
+            this.store.setLifecycleBusy(false);
+        }
+    }
+
+    /** Local export: the one effect here with a true undo. No confirmation is
+     *  asked because none is required — inventing one would train the person to
+     *  click through the confirmations that DO matter. */
+    protected async lifecycleExport(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLifecycleBusy(true);
+        try {
+            const attempt = await this.engine.lifecycleExport(root);
+            this.store.setLifecycleAttempt(attempt);
+            this.messages.info(attempt.explain);
+        } catch (err) {
+            this.messages.error(`Export não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setLifecycleBusy(false);
+        }
+    }
+
+    protected async lifecycleDeleteExport(relPath: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLifecycleBusy(true);
+        try {
+            this.store.setLifecycle(await this.engine.lifecycleDeleteExport(root, relPath));
+            this.messages.info(`${relPath} apagado — o export foi desfeito por completo.`);
+        } catch (err) {
+            this.messages.error(`Export não foi apagado: ${this.msg(err)}`);
+        } finally {
+            this.store.setLifecycleBusy(false);
+        }
+    }
+
+    /**
+     * Publish, in two calls on purpose.
+     *
+     * The first asks the ENGINE what this effect is; if it answers
+     * `needsConfirmation`, the dialog shows the engine's own sentence — the
+     * reversibility class and the compensation (or its absence) — and only an
+     * explicit OK produces the second call. Nothing is recorded in between, so a
+     * cancelled publish leaves no version behind.
+     */
+    protected async lifecyclePublish(
+        target: 'compensable' | 'immutable',
+        problem?: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLifecycleBusy(true);
+        try {
+            const asked = await this.engine.lifecyclePublish(root, { target, problem });
+            this.store.setLifecycleAttempt(asked);
+            if (!asked.needsConfirmation) {
+                this.messages.info(asked.explain);
+                return;
+            }
+            const confirmed = await new ConfirmDialog({
+                title: `Publicar ${asked.snapshot.nextVersion}?`,
+                msg: asked.explain,
+                ok: 'Publicar',
+                cancel: 'Não publicar'
+            }).open();
+            if (!confirmed) {
+                this.messages.info('Nada foi publicado.');
+                return;
+            }
+            const done = await this.engine.lifecyclePublish(root, {
+                target,
+                problem,
+                confirmed: true
+            });
+            this.store.setLifecycleAttempt(done);
+            this.messages.info(
+                `Publicado ${done.record?.version ?? ''} · ${done.compensation?.note ?? 'sem compensação possível'}`
+            );
+        } catch (err) {
+            this.messages.error(`Publicação não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setLifecycleBusy(false);
         }
     }
 

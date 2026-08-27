@@ -17,6 +17,8 @@ import {
     HarnessRun,
     IntentReview,
     LibrarySnapshot,
+    LifecycleSnapshot,
+    PublishAttempt,
     NotesSnapshot,
     ProjectSnapshot,
     SettingsSnapshot,
@@ -150,6 +152,13 @@ export class InstrumentStore {
     //    Abrir pasta não é registrar projeto.
     durable: ProjectSnapshot | undefined;
     durableBusy = false;
+
+    // ── REAL ciclo de publicação (§16): versões publicadas, exports em disco e
+    //    o que cada efeito PODE desfazer. `lifecycleAttempt` guarda a última
+    //    resposta do motor — inclusive a que diz "isto exige confirmação".
+    lifecycle: LifecycleSnapshot | undefined;
+    lifecycleBusy = false;
+    lifecycleAttempt: PublishAttempt | undefined;
 
     // ── REAL pacote de contexto do agente (§6): o que o agente receberia, o
     //    que ficou de fora com o motivo, e o que ninguém consegue responder a
@@ -427,6 +436,26 @@ export class InstrumentStore {
 
     setSettingsBusy(busy: boolean): void {
         this.settingsBusy = busy;
+        this.emit();
+    }
+
+    setLifecycle(snapshot: LifecycleSnapshot | undefined): void {
+        this.lifecycle = snapshot;
+        this.emit();
+    }
+
+    setLifecycleBusy(busy: boolean): void {
+        this.lifecycleBusy = busy;
+        this.emit();
+    }
+
+    /** The engine's last answer about an export/publish, verbatim — including a
+     *  refusal to proceed without confirmation. */
+    setLifecycleAttempt(attempt: PublishAttempt | undefined): void {
+        this.lifecycleAttempt = attempt;
+        if (attempt) {
+            this.lifecycle = attempt.snapshot;
+        }
         this.emit();
     }
 
