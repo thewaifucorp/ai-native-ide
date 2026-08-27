@@ -28,6 +28,7 @@ import {
     StackCandidate
 } from '../common/analysis-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
+import { EngineService } from 'engine-extension';
 
 /** Diretórios nunca abertos, e reportados como não abertos. */
 const SKIP_DIRS = [
@@ -103,6 +104,7 @@ const SCRIPT_ROLES: Record<string, CommandCandidate['slug']> = {
 export class AnalysisServiceImpl implements AnalysisService {
 
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
+    @inject(EngineService) protected readonly engine!: EngineService;
 
     async analyze(rootUri: string): Promise<ProjectAnalysis> {
         const root = this.rootPath(rootUri);
@@ -194,31 +196,28 @@ export class AnalysisServiceImpl implements AnalysisService {
         return this.analyze(rootUri);
     }
 
-    async proposeGuidance(
+    async importGuidance(
         rootUri: string,
         id: string
-    ): Promise<{ proposalId: string; relPath: string }> {
+    ): Promise<{ guidanceId: string; state: string }> {
         const analysis = await this.analyze(rootUri);
         const candidate = analysis.guidance.find(g => g.id === id);
         if (!candidate) {
             throw new Error(`guidance desconhecida: ${id}`);
         }
-        // Guidance é conteúdo do projeto: vira proposta no broker, com diff, não
-        // um arquivo que apareceu do nada.
-        const body = {
-            id: candidate.id,
-            title: candidate.title,
-            strength: candidate.strength,
-            text: candidate.text,
-            provenance: candidate.provenance,
-            adoptedFrom: 'analise-de-materiais-§5'
-        };
-        const proposal = await this.governed.proposeWrite(
-            rootUri,
-            candidate.target,
-            `${JSON.stringify(body, null, 2)}\n`
+        // Vai para a Guidance Library do §13 como CANDIDATA. A procedência
+        // detectada (arquivo e linha) viaja com ela e substitui a genérica que o
+        // motor escreveria — é ela que deixa a orientação conferível.
+        const imported = await this.engine.libraryImport(
+            this.rootPath(rootUri),
+            candidate.title,
+            candidate.text,
+            `${candidate.provenance.path}${
+                typeof candidate.provenance.line === 'number' ? `:${candidate.provenance.line}` : ''
+            }`,
+            'projeto'
         );
-        return { proposalId: proposal.id, relPath: proposal.relPath };
+        return { guidanceId: imported.id, state: imported.state };
     }
 
     async registerReference(
@@ -302,6 +301,10 @@ export class AnalysisServiceImpl implements AnalysisService {
         limits: string[]
     ): GuidanceCandidate[] {
         const out: GuidanceCandidate[] = [];
+        // Nomes que a biblioteca já tem, para não oferecer importar duas vezes a
+        // mesma orientação. Lido do registry real — se ele não existe ainda, o
+        // conjunto é vazio, que é a verdade.
+        const existingNames = this.libraryNames(root);
         for (const instruction of instructions) {
             const raw = this.readOr(path.join(root, instruction.provenance.path));
             if (!raw) {
@@ -347,10 +350,10 @@ export class AnalysisServiceImpl implements AnalysisService {
                         line: section.line,
                         excerpt: this.clip(section.text)
                     },
-                    target: `.product/guidance/${this.slug(section.title)}.json`,
-                    alreadyDeclared: fs.existsSync(
-                        path.join(root, '.product', 'guidance', `${this.slug(section.title)}.json`)
-                    )
+                    // A biblioteca do §13 é o destino; `alreadyDeclared` lê o
+                    // registry dela, não um arquivo inventado aqui.
+                    target: '.guidance/ (biblioteca do projeto)',
+                    alreadyDeclared: existingNames.has(section.title.trim())
                 });
             }
         }
@@ -591,6 +594,24 @@ export class AnalysisServiceImpl implements AnalysisService {
             return out.slice(0, MAX_CANDIDATES);
         }
         return out;
+    }
+
+    /** Nomes de guidance que a biblioteca do §13 já contém. */
+    protected libraryNames(root: string): Set<string> {
+        const raw = this.readOr(path.join(root, '.guidance', 'registry.json'));
+        if (!raw) {
+            return new Set();
+        }
+        try {
+            const parsed = JSON.parse(raw) as { entries?: { name?: string }[] };
+            return new Set(
+                (parsed.entries ?? [])
+                    .map(entry => (entry.name ?? '').trim())
+                    .filter(name => name.length > 0)
+            );
+        } catch {
+            return new Set();
+        }
     }
 
     protected referenceRegistered(root: string, id: string): boolean {

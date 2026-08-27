@@ -32,10 +32,26 @@ interface RecordedProposal {
     content: string;
 }
 
-function fixture(): Fixture & { proposals: RecordedProposal[] } {
+/** What the sidecar's library import would have received. */
+interface RecordedImport {
+    name: string;
+    text: string;
+    provenance?: string;
+}
+
+function fixture(): Fixture & { proposals: RecordedProposal[]; imports: RecordedImport[] } {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'analysis-'));
     const service = new AnalysisServiceImpl();
     const proposals: RecordedProposal[] = [];
+    const imports: RecordedImport[] = [];
+    // Duplo do sidecar: registra a importação e devolve o que o motor devolveria
+    // — estado `candidate`, que é a garantia que o §13 move para o lifecycle.
+    (service as unknown as { engine: unknown }).engine = {
+        libraryImport: async (_root: string, name: string, text: string, provenance?: string) => {
+            imports.push({ name, text, provenance });
+            return { id: `guidance-${imports.length}`, state: 'candidate', name, text };
+        }
+    };
     // Duplo do broker: registra a proposta sem escrever nada, que é exatamente o
     // que o broker real faz na primeira chamada.
     (service as unknown as { governed: unknown }).governed = {
@@ -51,7 +67,7 @@ function fixture(): Fixture & { proposals: RecordedProposal[] } {
             };
         }
     };
-    return { service, root, rootUri: FileUri.create(root).toString(), proposals };
+    return { service, root, rootUri: FileUri.create(root).toString(), proposals, imports };
 }
 
 function write(root: string, rel: string, body: string): void {
@@ -292,26 +308,31 @@ describe('AnalysisServiceImpl — instruções, guidance, configuração, refer�
         assert.strictEqual(guidance.text, 'O lance precisa exceder estritamente o atual.');
         assert.strictEqual(guidance.provenance.path, 'AGENTS.md');
         assert.strictEqual(guidance.provenance.line, 1);
-        assert.ok(guidance.target.startsWith('.product/guidance/'));
+        assert.ok(
+            guidance.target.startsWith('.guidance/'),
+            `o destino é a biblioteca do §13: ${guidance.target}`
+        );
     });
 
-    it('adotar guidance vai ao broker, porque .product/ é conteúdo do projeto', async () => {
-        const { service, root, rootUri, proposals } = fixture();
+    /** §13 corrigiu o destino: a guidance detectada entra na Guidance Library
+     *  como CANDIDATA, não em `.product/guidance/` pelo broker. O que barra uma
+     *  regra vinda de detector é o lifecycle do motor, não um diff. */
+    it('adotar guidance importa para a biblioteca como candidata, sem broker', async () => {
+        const { service, root, rootUri, proposals, imports } = fixture();
         write(root, 'AGENTS.md', '# Desempate\n\nExceder estritamente.\n');
         const analysis = await service.analyze(rootUri);
 
-        const result = await service.proposeGuidance(rootUri, analysis.guidance[0].id);
+        const result = await service.importGuidance(rootUri, analysis.guidance[0].id);
 
-        assert.strictEqual(proposals.length, 1, 'passou pelo broker');
-        assert.ok(result.relPath.startsWith('.product/guidance/'));
-        // E NADA foi escrito: proposta é proposta.
+        assert.strictEqual(result.state, 'candidate', 'importada não dirige agente');
+        assert.strictEqual(proposals.length, 0, 'a biblioteca não passa pelo broker');
+        assert.strictEqual(imports.length, 1);
+        assert.strictEqual(imports[0].name, 'Desempate');
         assert.strictEqual(
-            fs.existsSync(path.join(root, result.relPath)),
-            false,
-            'proposta não escreve arquivo'
+            imports[0].provenance,
+            'AGENTS.md:1',
+            'a procedência detectada viaja com a importação'
         );
-        const body = JSON.parse(proposals[0].content) as { provenance: { path: string } };
-        assert.strictEqual(body.provenance.path, 'AGENTS.md', 'a procedência viaja com a adoção');
     });
 
     it('config de preview traz a porta quando existe linha para apontar', async () => {

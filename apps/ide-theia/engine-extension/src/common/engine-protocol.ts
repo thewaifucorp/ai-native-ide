@@ -213,6 +213,67 @@ export interface EngineService {
     /** Compiles the minimum package an agent would receive, plus what was left
      *  out and what nobody can answer. Never scans the project. */
     contextCompile(root: string, budgetChars?: number): Promise<ContextPackage>;
+
+    // ── §13 Guidance Library + Truth Registry (ide-guidance) ──────────────────
+
+    /** Both registries plus `appliedNow` for the open project. */
+    librarySnapshot(root: string): Promise<LibrarySnapshot>;
+
+    /** Captures guidance the person wrote. The destination decides its lifecycle. */
+    libraryCapture(root: string, request: CaptureRequest): Promise<LibrarySnapshot>;
+
+    /** Imports a steering text as a CANDIDATE — never active, never steering. */
+    libraryImport(
+        root: string,
+        name: string,
+        text: string,
+        provenance?: string,
+        owner?: string
+    ): Promise<Guidance>;
+
+    /** `active` | `suspended` | `archived` | `superseded` (needs `by`). */
+    libraryLifecycle(
+        root: string,
+        id: string,
+        to: GuidanceState,
+        by?: string
+    ): Promise<LibrarySnapshot>;
+
+    /** Declares which file owns a subject. */
+    truthDeclare(
+        root: string,
+        subject: string,
+        authorityPath: string,
+        precedence?: number,
+        provenance?: string
+    ): Promise<LibrarySnapshot>;
+
+    truthConsumer(root: string, id: string, consumer: string): Promise<LibrarySnapshot>;
+
+    /** Describes the sync work; performs none of it. */
+    truthSync(root: string, id: string, upToDate?: string[]): Promise<SyncProposal>;
+
+    // ── §13 config: one schema for the panel and the file ─────────────────────
+
+    settingsSnapshot(root: string): Promise<SettingsSnapshot>;
+    settingsPatch(root: string, patch: SettingsPatch): Promise<SettingsSnapshot>;
+    settingsProfile(root: string, profile: string): Promise<SettingsSnapshot>;
+    settingsReset(root: string, field: string): Promise<SettingsSnapshot>;
+    /** Reversible defaults from what §1 detected. A user value is never touched. */
+    settingsDetected(
+        root: string,
+        git: boolean,
+        agent: boolean,
+        aag: boolean
+    ): Promise<SettingsSnapshot>;
+
+    // ── §13 durable project ───────────────────────────────────────────────────
+
+    projectSnapshot(root: string): Promise<ProjectSnapshot>;
+    /** Needs a title AND a written intent: those survive without a transcript. */
+    projectRegister(root: string, title: string, intent: string): Promise<ProjectSnapshot>;
+    projectAttach(root: string, path: string, kind?: 'directory' | 'repository'): Promise<ProjectSnapshot>;
+    projectIntent(root: string, intent: string): Promise<ProjectSnapshot>;
 }
 
 /** A check's outcome. `unknown` and `not_run` are distinct absences of
@@ -566,4 +627,199 @@ export interface ContextPackage {
     /** How many project files are NOT in the package. "Nothing was dumped" has
      *  to be a number, not a promise. */
     projectFilesNotIncluded: number;
+}
+
+// ── §13 GUIDANCE LIBRARY + TRUTH REGISTRY (ide-guidance) ────────────────────
+//
+// Mirrors `engine-sidecar/src/library.rs`. The engine's own types serialize
+// camelCase, so this whole surface is camelCase.
+//
+// The line that matters here: a CANDIDATE never steers an agent. `import` (a
+// steering file, a §5 detection) lands `candidate`; only an explicit `activate`
+// makes guidance eligible for `appliedNow`, which is the engine's deterministic
+// compilation — active + matching scope + matching application, strongest and
+// most specific first, each with the reason it applies.
+
+export type GuidanceState = 'candidate' | 'active' | 'suspended' | 'superseded' | 'archived';
+
+export type GuidanceStrengthName = 'suggestion' | 'default' | 'required' | 'blocking';
+
+export type GuidanceTypeName =
+    | 'preference'
+    | 'convention'
+    | 'applicable_decision'
+    | 'rule'
+    | 'policy';
+
+export type GuidanceApplicationName =
+    | 'writing'
+    | 'code'
+    | 'design'
+    | 'tool'
+    | 'agent'
+    | 'effect'
+    | 'general';
+
+/**
+ * Internally tagged with `kind`, as the crate declares it.
+ *
+ * The FIELDS stay snake_case: `rename_all` on a Rust enum renames the VARIANTS,
+ * not the fields inside them. Typing `projectId` here produced `undefined` at
+ * runtime — the same seam that turned `idle_ms` into "NaN dias" on screen.
+ */
+export type GuidanceScope =
+    | { kind: 'person' }
+    | { kind: 'project'; project_id: string }
+    | { kind: 'resource'; resource_id: string }
+    | { kind: 'path'; path: string }
+    | { kind: 'task'; session_id: string };
+
+export type GuidanceDuration =
+    | { kind: 'session' }
+    | { kind: 'task' }
+    | { kind: 'until'; date: string }
+    | { kind: 'permanent' };
+
+export interface Guidance {
+    id: string;
+    name: string;
+    guidanceType: GuidanceTypeName;
+    scope: GuidanceScope;
+    application: GuidanceApplicationName;
+    strength: GuidanceStrengthName;
+    origin: 'created' | 'imported' | 'suggested';
+    duration: GuidanceDuration;
+    priority: number;
+    owner: string;
+    /** Where the sentence came from — a file and line when §5 imported it. */
+    provenance: string;
+    /** The set (`.guidance/<set>.md`) this guidance belongs to. */
+    set: string;
+    text: string;
+    state: GuidanceState;
+    /** 0 until a context compilation actually carried it. */
+    lastUsedMs: number;
+}
+
+export interface AppliedGuidance {
+    guidance: Guidance;
+    /** Strength label plus why the scope matched this activity. */
+    reason: string;
+}
+
+/** Hygiene the engine can prove. `obsolete` is surfaced for review only —
+ *  nothing is ever removed automatically. */
+export type HygieneFinding =
+    | { kind: 'duplicate'; ids: string[]; name: string }
+    | { kind: 'point_rule_as_permanent'; id: string; name: string }
+    /** `idle_ms`, not `idleMs`: enum variant fields keep the crate's casing. */
+    | { kind: 'obsolete'; id: string; name: string; idle_ms: number };
+
+export interface TruthDeclaration {
+    id: string;
+    subject: string;
+    scope: GuidanceScope;
+    /** The file that owns the subject. */
+    authorityPath: string;
+    precedence: number;
+    consumers: string[];
+    provenance: string;
+}
+
+export type TruthFinding = { kind: 'authority_conflict'; ids: string[]; subject: string };
+
+/** Describes a sync and performs none of it. */
+export interface SyncProposal {
+    subject: string;
+    authorityPath: string;
+    consumersToUpdate: string[];
+    reason: string;
+}
+
+export interface LibrarySnapshot {
+    guidance: Guidance[];
+    /** What WOULD be compiled for the current activity, in order. */
+    appliedNow: AppliedGuidance[];
+    hygiene: HygieneFinding[];
+    truth: TruthDeclaration[];
+    conflicts: TruthFinding[];
+    libraryPath: string;
+    /** The window behind the `obsolete` findings, so the badge is explainable. */
+    stalenessWindowMs: number;
+}
+
+/** A capture, as the panel sends it. `destination` decides state, duration and
+ *  set — never an inference, and a malformed one is refused. */
+export interface CaptureRequest {
+    name: string;
+    text: string;
+    guidanceType?: GuidanceTypeName;
+    application?: GuidanceApplicationName;
+    strength?: GuidanceStrengthName;
+    owner?: string;
+    provenance?: string;
+    /** `use_now`, `create_stable`, `record_decision` or `incorporate:<set>`. */
+    destination: string;
+}
+
+// ── §13 CONFIG (ide-config) ─────────────────────────────────────────────────
+
+export interface SettingRow {
+    field: string;
+    label: string;
+    value: string;
+    /** `default`, `detected` or `user`. A user value survives detection. */
+    source: 'default' | 'detected' | 'user';
+    /** Plain-language consequence, from the engine. */
+    explain: string;
+    /** True when nothing consumes this value yet — marked, never hidden. */
+    declaredNotWired: boolean;
+}
+
+export interface SettingsSnapshot {
+    /** The typed config, exactly as the file holds it. */
+    config: unknown;
+    rows: SettingRow[];
+    profiles: { name: string; layout: string; depth: string }[];
+    /** The file the panel is editing, so both surfaces are visibly one thing. */
+    path: string;
+}
+
+export interface SettingsPatch {
+    mode?: 'full_vibes' | 'hybrid' | 'spec';
+    depth?: 'essential' | 'detailed' | 'raw';
+    layout?: 'focused' | 'balanced' | 'expanded';
+    permissions?: 'cautious' | 'balanced' | 'yolo';
+    harnessLayers?: number[];
+    automaticCheckpoints?: boolean;
+    idlePaidInference?: boolean;
+}
+
+// ── §13 DURABLE PROJECT (ide-domain semantic store) ─────────────────────────
+
+export interface ProjectRecord {
+    /** Newtype in Rust (`ProjectId(String)`), so it arrives as a plain string. */
+    id: string;
+    title: string;
+    intent: string;
+    created_at_ms: number;
+    updated_at_ms: number;
+}
+
+export interface DurableResource {
+    id: string;
+    kind: 'directory' | 'repository';
+    canonical_path: string;
+    created_at_ms: number;
+}
+
+export interface ProjectSnapshot {
+    /** Null until somebody registers one: a folder is not a project. */
+    project?: ProjectRecord | null;
+    resources: DurableResource[];
+    allProjects: ProjectRecord[];
+    storePath: string;
+    notRegisteredReason?: string | null;
+    /** Capabilities this surface deliberately does not have yet. */
+    gaps: string[];
 }

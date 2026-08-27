@@ -555,6 +555,69 @@ Multi-repo/diretórios/serviços/ambientes e recursos reutilizáveis. Truth Regi
 
 **Pronto:** reabrir preserva projeto e Guidance sem transcript.
 
+**PROVADO (2026-08-27, app Theia ativo, sidecar recompilado).** Feito fora de
+ordem, de propósito: o §6 tinha acabado de ler `.product/guidance/*.json` com um
+formato improvisado meu, e cada sessão a mais aumentaria o que seria reescrito.
+
+- **Guidance Library** (`engine-sidecar/src/library.rs` + `ide-guidance`):
+  captura com destino explícito (`use_now`, `create_stable`, `record_decision`,
+  `incorporate:<set>`), importação como CANDIDATA, promoção, suspensão,
+  arquivamento e substituição. Persiste em `.guidance/` — versionado, com espelho
+  Markdown por conjunto.
+- **A linha do broker fica dita:** a biblioteca NÃO passa pelo broker. O broker
+  existe para barrar escrita que a pessoa não escreveu; guidance capturada é
+  texto que ela acabou de digitar, no destino que ela nomeou. O que protege o
+  outro caso — guidance vinda de arquivo ou de detector — é o lifecycle: importar
+  cria candidata, e `applied_now` compila só ativa.
+- **Truth Registry:** autoridade por assunto, consumidores, conflito quando duas
+  autoridades disputam o mesmo assunto no mesmo escopo, e proposta de
+  sincronização que descreve o trabalho e não faz nada.
+- **Configuração** (`settings.rs` + `ide-config`): um schema para o painel e para
+  `.instrument/config.json`, com a origem de cada valor (default/detected/user) e
+  a consequência em linguagem simples. Escolha de pessoa sobrevive à detecção.
+  Campo que nada consome ainda (`harnessLayers`, `localAag`) aparece marcado, não
+  escondido — esconder faria painel e arquivo discordarem.
+- **Projeto durável** (`project.rs` + `SemanticProjectStore`): abrir pasta não é
+  registrar projeto. Registrar pede título e intenção escrita, anexa a pasta
+  aberta como recurso, e aceita mais pastas/repos. Reabrir recupera tudo sem
+  transcript.
+
+**Dívida do §6 paga:** o `context.rs` agora lê a biblioteca real e usa
+`applied_now` (escopo e aplicação da atividade), então candidata nunca chega a
+agente e o pacote diz quantas estão esperando. Depois de compilar, marca com
+`mark_used` exatamente o que o pacote levou — o que dá sentido à higiene de
+obsolescência.
+
+**Três defeitos achados rodando, todos com teste:**
+
+- `idleMs` × `idle_ms`: `rename_all` em enum Rust renomeia a VARIANTE, não os
+  campos dentro dela. A tela mostrava "ociosa há NaN dias". Mesmo erro estava em
+  `GuidanceScope` (`projectId` × `project_id`).
+- Obsolescência era medida desde a época quando `last_used_ms == 0`, então uma
+  guidance criada há segundos aparecia "ociosa há 20.330 dias". Nunca-usada é
+  outro fato, e virou outro fato: relatório de higiene que diz absurdo sobre
+  regra nova ensina a ignorar higiene. (Um teste existente afirmava o
+  comportamento antigo; foi trocado, com o motivo escrito.)
+- `ide-context` copiava a razão para o campo `scope` do segmento, mostrando a
+  mesma frase duas vezes e escondendo o escopo. Agora `scope` é o escopo
+  declarado.
+
+**Medido na tela:** importar `Desempate` de `AGENTS.md:6` → `candidate`, e o
+pacote do §6 lista `fora · 1 guidance candidata(s) — promover é ato explícito`;
+`Promover` → `active` com `no contexto: sugestão · projeto ativo corresponde`;
+compilar → `3 segmento(s)` incluindo `guidance:guidance-000000`, e
+`registry.json` passou a registrar `usada em 2026-08-27T16:41:28`; reiniciar o
+app → `1 no contexto · 0 candidata(s)` sem transcript nenhum. Autoridade
+`desempate → docs/product-intent.md` gravada em `.guidance/truth.json`. Perfil
+`amplo` → `depth` e `layout` viraram `user` em `.instrument/config.json`, com
+`permissions: cautious (detected)` vindo da detecção real do §1. Projeto durável
+`Leilão de lances selados` registrado com 1 recurso.
+
+**Fora do item, dito:** serviços e ambientes não são recursos duráveis. O recurso
+do motor é um diretório local canônico; dar um diretório a um serviço para caber
+no schema seria inventar fato. O §5 já os detecta com evidência, e a lacuna está
+na tela.
+
 ### 14. Modos e navegação madura
 
 Full Vibes, Hybrid e Spec são policies do mesmo projeto; troca não perde estado; assunto → SoT → implementação → evidência funciona com AAG degradável.

@@ -127,9 +127,14 @@ export interface InstructionCandidate {
  * é bloqueante — quem escreveu sabe, e quem revisa decide. Emitir `blocking`
  * por detecção transformaria palpite em regra que trava trabalho.
  *
- * Adotar grava em `.product/guidance/`, que é CONTEÚDO DO PROJETO — e por isso
- * passa pelo broker, ao contrário de `.instrument/`, que é estado de runtime do
- * IDE.
+ * ── PARA ONDE ISTO VAI (corrigido no §13) ────────────────────────────────
+ * A primeira versão gravava `.product/guidance/<slug>.json` pelo broker. Era
+ * metade improvisada de algo que já existia: a Guidance Library do
+ * `ide-guidance`, com lifecycle, escopo, aplicação e `applied_now`. Adotar aqui
+ * agora IMPORTA para essa biblioteca, e o resultado é uma CANDIDATA — que não
+ * dirige agente nenhum até alguém promover. A proteção deixou de ser um diff no
+ * broker e passou a ser o lifecycle do motor, que é onde ela pertence: o broker
+ * barra escrita em arquivo do projeto, não decide o que orienta um agente.
  */
 export interface GuidanceCandidate {
     id: string;
@@ -138,9 +143,9 @@ export interface GuidanceCandidate {
     /** Trecho lido do arquivo, verbatim (cortado no comprimento). */
     text: string;
     provenance: Provenance;
-    /** Caminho que a adoção propõe escrever. */
+    /** Onde a adoção coloca isto: a Guidance Library do projeto. */
     target: string;
-    /** Já existe arquivo de guidance com este id. */
+    /** Já existe na biblioteca uma guidance com este nome. */
     alreadyDeclared: boolean;
 }
 
@@ -257,13 +262,16 @@ export interface AnalysisService {
     adoptConfig(rootUri: string, id: string): Promise<ProjectAnalysis>;
 
     /**
-     * Propõe adotar uma guidance, escrevendo em `.product/guidance/`.
+     * Importa uma guidance detectada para a Guidance Library do projeto (§13).
      *
-     * Aqui o regime é o OUTRO: `.product/` é conteúdo do projeto, versionado e
-     * revisável, então a escrita atravessa o broker e vira decisão no dock — não
-     * um arquivo que apareceu. Devolve a proposta, não o arquivo.
+     * Volta como CANDIDATA: entra na biblioteca, aparece na lista, e não entra em
+     * contexto de agente nenhum até alguém promover. Sem broker, porque nada é
+     * escrito em arquivo do projeto — a biblioteca é a biblioteca, e o que barra
+     * uma regra vinda de detector é o lifecycle, não um diff.
+     *
+     * Devolve o id da guidance criada, para a tela poder oferecer promover.
      */
-    proposeGuidance(rootUri: string, id: string): Promise<{ proposalId: string; relPath: string }>;
+    importGuidance(rootUri: string, id: string): Promise<{ guidanceId: string; state: string }>;
 
     /**
      * Propõe registrar uma referência em `.product/references/`.

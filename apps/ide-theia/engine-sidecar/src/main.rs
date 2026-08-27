@@ -25,6 +25,9 @@
 //!   - `packs_install`   params `{ root, path }`
 //!   - `packs_apply` / `packs_revert` params `{ root, pack_id }`
 //!   - `context_compile` params `{ root, budget_chars }` -> the §6 package
+//!   - `library_*`   the §13 Guidance Library + Truth Registry
+//!   - `settings_*`  the §13 config (one schema for the panel and the file)
+//!   - `project_*`   the §13 durable project (identity, intent, resources)
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -34,7 +37,10 @@
 
 mod context;
 mod harness;
+mod library;
 mod packs;
+mod project;
+mod settings;
 mod preview;
 mod reconcile;
 
@@ -379,8 +385,275 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 context::compile_package(&root, p.budget_chars, evidence)
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())??;
             serde_json::to_value(package).map_err(|e| e.to_string())
+        }
+        // §13 — Guidance Library and Truth Registry. `ide_guidance` owns its own
+        // files (`.guidance/`), so these arms are thin: resolve the root, carry
+        // the clock, hand back what the panel renders.
+        "library_snapshot" => {
+            #[derive(Deserialize)]
+            struct LibraryParams {
+                root: String,
+                #[serde(default)]
+                context: ide_guidance::ActivityContext,
+            }
+            let p: LibraryParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || library::snapshot(&root, p.context))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "library_capture" => {
+            #[derive(Deserialize)]
+            struct CaptureParams {
+                root: String,
+                #[serde(flatten)]
+                request: library::CaptureRequest,
+            }
+            let p: CaptureParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || library::capture(&root, p.request))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "library_import" => {
+            #[derive(Deserialize)]
+            struct ImportParams {
+                root: String,
+                name: String,
+                text: String,
+                #[serde(default)]
+                owner: Option<String>,
+                #[serde(default)]
+                provenance: Option<String>,
+            }
+            let p: ImportParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let imported = tokio::task::spawn_blocking(move || {
+                library::import(
+                    &root,
+                    &p.name,
+                    &p.text,
+                    p.owner.as_deref(),
+                    p.provenance.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(imported).map_err(|e| e.to_string())
+        }
+        "library_lifecycle" => {
+            #[derive(Deserialize)]
+            struct LifecycleParams {
+                root: String,
+                id: String,
+                to: String,
+                #[serde(default)]
+                by: Option<String>,
+            }
+            let p: LifecycleParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                library::lifecycle(&root, &p.id, &p.to, p.by.as_deref())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "library_truth_declare" => {
+            #[derive(Deserialize)]
+            struct DeclareParams {
+                root: String,
+                subject: String,
+                authority_path: String,
+                #[serde(default = "default_precedence")]
+                precedence: i64,
+                #[serde(default)]
+                provenance: Option<String>,
+            }
+            fn default_precedence() -> i64 {
+                100
+            }
+            let p: DeclareParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                library::declare_truth(
+                    &root,
+                    &p.subject,
+                    &p.authority_path,
+                    p.precedence,
+                    p.provenance.as_deref().unwrap_or("declarado no IDE"),
+                    None,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "library_truth_consumer" => {
+            #[derive(Deserialize)]
+            struct ConsumerParams {
+                root: String,
+                id: String,
+                consumer: String,
+            }
+            let p: ConsumerParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                library::add_consumer(&root, &p.id, &p.consumer)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "library_truth_sync" => {
+            #[derive(Deserialize)]
+            struct SyncParams {
+                root: String,
+                id: String,
+                #[serde(default)]
+                up_to_date: Vec<String>,
+            }
+            let p: SyncParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let proposal = tokio::task::spawn_blocking(move || {
+                library::propose_sync(&root, &p.id, &p.up_to_date)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(proposal).map_err(|e| e.to_string())
+        }
+        // §13 — configuration. The panel and `.instrument/config.json` are the
+        // same schema; an unknown value fails instead of being stored as
+        // something the caller did not ask for.
+        "settings_snapshot" | "settings_reset" | "settings_profile" => {
+            #[derive(Deserialize)]
+            struct SettingsParams {
+                root: String,
+                #[serde(default)]
+                field: Option<String>,
+                #[serde(default)]
+                profile: Option<String>,
+            }
+            let p: SettingsParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            let snapshot = tokio::task::spawn_blocking(move || match method.as_str() {
+                "settings_reset" => match p.field.as_deref() {
+                    Some(field) => settings::reset(&root, field),
+                    None => Err("reset precisa dizer qual campo".to_string()),
+                },
+                "settings_profile" => match p.profile.as_deref() {
+                    Some(name) => settings::profile(&root, name),
+                    None => Err("perfil precisa de nome".to_string()),
+                },
+                _ => settings::snapshot(&root),
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "settings_patch" => {
+            #[derive(Deserialize)]
+            struct PatchParams {
+                root: String,
+                #[serde(flatten)]
+                patch: settings::PatchRequest,
+            }
+            let p: PatchParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || settings::patch(&root, p.patch))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "settings_detected" => {
+            #[derive(Deserialize)]
+            struct DetectedParams {
+                root: String,
+                #[serde(default)]
+                git: bool,
+                #[serde(default)]
+                agent: bool,
+                #[serde(default)]
+                aag: bool,
+            }
+            let p: DetectedParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                settings::detected(&root, p.git, p.agent, p.aag)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §13 — the durable project. Opening a folder is not registering a
+        // project: registering needs a title and a written intent, which are what
+        // survive with no transcript.
+        "project_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootParams {
+                root: String,
+            }
+            let p: RootParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || project::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "project_register" => {
+            #[derive(Deserialize)]
+            struct RegisterParams {
+                root: String,
+                title: String,
+                intent: String,
+            }
+            let p: RegisterParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || project::register(&root, &p.title, &p.intent))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "project_attach" => {
+            #[derive(Deserialize)]
+            struct AttachParams {
+                root: String,
+                path: String,
+                #[serde(default = "default_kind")]
+                kind: String,
+            }
+            fn default_kind() -> String {
+                "directory".to_string()
+            }
+            let p: AttachParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || project::attach(&root, &p.path, &p.kind))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "project_intent" => {
+            #[derive(Deserialize)]
+            struct IntentParams {
+                root: String,
+                intent: String,
+            }
+            let p: IntentParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || project::set_intent(&root, &p.intent))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §4 — reconciliation of declared vs observed behavior.
         "reconcile_scan" => {

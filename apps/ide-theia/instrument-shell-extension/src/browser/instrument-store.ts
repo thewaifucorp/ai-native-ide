@@ -15,6 +15,9 @@ import {
     BrokerActivity,
     ContextPackage,
     HarnessRun,
+    LibrarySnapshot,
+    ProjectSnapshot,
+    SettingsSnapshot,
     PacksSnapshot,
     PreviewSnapshot,
     ReconciliationSnapshot
@@ -117,6 +120,22 @@ export class InstrumentStore {
     packs: PacksSnapshot | undefined;
     packsBusy = false;
 
+    // ── REAL biblioteca de Guidance + Truth Registry (§13): o que existe, o
+    //    que está ATIVO e aplicável agora, a higiene e os conflitos de
+    //    autoridade. `undefined` = nem lida.
+    library: LibrarySnapshot | undefined;
+    libraryBusy = false;
+
+    // ── REAL configuração (§13): um schema para o painel e para o arquivo, com
+    //    a origem de cada valor (default/detected/user) e a consequência.
+    settings: SettingsSnapshot | undefined;
+    settingsBusy = false;
+
+    // ── REAL projeto durável (§13): identidade, intenção escrita e recursos.
+    //    Abrir pasta não é registrar projeto.
+    durable: ProjectSnapshot | undefined;
+    durableBusy = false;
+
     // ── REAL pacote de contexto do agente (§6): o que o agente receberia, o
     //    que ficou de fora com o motivo, e o que ninguém consegue responder a
     //    partir de material declarado. `undefined` = nem compilado.
@@ -134,7 +153,7 @@ export class InstrumentStore {
     productBusy = false;
 
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
-    collapsedSections: string[] = ['workbench', 'broker', 'harness', 'packs'];
+    collapsedSections: string[] = ['workbench', 'broker', 'harness', 'packs', 'library', 'settings', 'durable'];
 
     // ── REAL broker trail (M9): the raw audit the Rust broker recorded for this
     //    project — propose / awaiting / snapshot / execute / rollback. Fetched on
@@ -335,6 +354,48 @@ export class InstrumentStore {
     get openDivergenceCount(): number {
         return this.reconciliation
             ? this.reconciliation.divergences.filter(d => !d.reconciliation).length
+            : 0;
+    }
+
+    setLibrary(snapshot: LibrarySnapshot | undefined): void {
+        this.library = snapshot;
+        this.emit();
+    }
+
+    setLibraryBusy(busy: boolean): void {
+        this.libraryBusy = busy;
+        this.emit();
+    }
+
+    setSettings(snapshot: SettingsSnapshot | undefined): void {
+        this.settings = snapshot;
+        this.emit();
+    }
+
+    setSettingsBusy(busy: boolean): void {
+        this.settingsBusy = busy;
+        this.emit();
+    }
+
+    setDurable(snapshot: ProjectSnapshot | undefined): void {
+        this.durable = snapshot;
+        this.emit();
+    }
+
+    setDurableBusy(busy: boolean): void {
+        this.durableBusy = busy;
+        this.emit();
+    }
+
+    /** Guidance ativa e aplicável a este projeto agora. */
+    get appliedGuidanceCount(): number {
+        return this.library ? this.library.appliedNow.length : 0;
+    }
+
+    /** Candidatas esperando revisão — nenhuma delas dirige agente. */
+    get candidateGuidanceCount(): number {
+        return this.library
+            ? this.library.guidance.filter(g => g.state === 'candidate').length
             : 0;
     }
 

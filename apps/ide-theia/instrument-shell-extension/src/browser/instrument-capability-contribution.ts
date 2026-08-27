@@ -36,7 +36,13 @@ import {
     TEST_PROVIDER_V1,
     TEST_PROVIDER_V2
 } from '../common/harness-test-provider';
-import { EngineService, ReconciliationChoice } from 'engine-extension';
+import {
+    CaptureRequest,
+    EngineService,
+    GuidanceState,
+    ReconciliationChoice,
+    SettingsPatch
+} from 'engine-extension';
 import { InstrumentStore } from './instrument-store';
 
 export const CMD_CAP_REFRESH = 'instrument.capability.refresh';
@@ -76,6 +82,22 @@ export const CMD_PREVIEW_STOP = 'instrument.preview.stop';
 export const CMD_RECONCILE_SCAN = 'instrument.reconcile.scan';
 export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
 export const CMD_CONTEXT_COMPILE = 'instrument.context.compile';
+
+// §13 — biblioteca de guidance, truth registry, configuração e projeto durável.
+export const CMD_LIBRARY_READ = 'instrument.library.read';
+export const CMD_LIBRARY_CAPTURE = 'instrument.library.capture';
+export const CMD_LIBRARY_LIFECYCLE = 'instrument.library.lifecycle';
+export const CMD_TRUTH_DECLARE = 'instrument.truth.declare';
+export const CMD_TRUTH_CONSUMER = 'instrument.truth.consumer';
+export const CMD_TRUTH_SYNC = 'instrument.truth.sync';
+export const CMD_SETTINGS_READ = 'instrument.settings.read';
+export const CMD_SETTINGS_PATCH = 'instrument.settings.patch';
+export const CMD_SETTINGS_PROFILE = 'instrument.settings.profile';
+export const CMD_SETTINGS_RESET = 'instrument.settings.reset';
+export const CMD_DURABLE_READ = 'instrument.durable.read';
+export const CMD_DURABLE_REGISTER = 'instrument.durable.register';
+export const CMD_DURABLE_INTENT = 'instrument.durable.intent';
+export const CMD_DURABLE_ATTACH = 'instrument.durable.attach';
 export const CMD_PACKS_REFRESH = 'instrument.packs.refresh';
 export const CMD_PACKS_INSTALL = 'instrument.packs.install';
 export const CMD_PACKS_APPLY = 'instrument.packs.apply';
@@ -132,6 +154,9 @@ export class InstrumentCapabilityContribution
             this.scanExternal();
             this.watchForExternalWrites();
             this.refreshProduct();
+            this.readLibrary();
+            this.readSettings();
+            this.readDurable();
             // Agent proposals arrive out of band; ask periodically. A push channel
             // over the RPC connection would be better and is not built yet.
             window.setInterval(() => this.adoptPendingProposal(), 5000);
@@ -244,8 +269,11 @@ export class InstrumentCapabilityContribution
             { execute: (id?: string) => (id ? this.adoptConfig(id) : undefined) }
         );
         commands.registerCommand(
-            { id: CMD_PROPOSE_GUIDANCE, label: 'Instrument: propor guidance detectada (§5)' },
-            { execute: (id?: string) => (id ? this.proposeGuidance(id) : undefined) }
+            {
+                id: CMD_PROPOSE_GUIDANCE,
+                label: 'Instrument: importar guidance detectada para a biblioteca (§5→§13)'
+            },
+            { execute: (id?: string) => (id ? this.importGuidance(id) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_REGISTER_REFERENCE, label: 'Instrument: registrar referência detectada (§5)' },
@@ -277,6 +305,77 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_CONTEXT_COMPILE, label: 'Instrument: compilar contexto do agente (§6)' },
             { execute: (budget?: number) => this.compileContext(budget) }
+        );
+        commands.registerCommand(
+            { id: CMD_LIBRARY_READ, label: 'Instrument: ler biblioteca de guidance (§13)' },
+            { execute: () => this.readLibrary() }
+        );
+        commands.registerCommand(
+            { id: CMD_LIBRARY_CAPTURE, label: 'Instrument: capturar guidance (§13)' },
+            { execute: (request?: CaptureRequest) => (request ? this.captureGuidance(request) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_LIBRARY_LIFECYCLE, label: 'Instrument: mudar estado de uma guidance (§13)' },
+            {
+                execute: (id?: string, to?: GuidanceState, by?: string) =>
+                    id && to ? this.guidanceLifecycle(id, to, by) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_TRUTH_DECLARE, label: 'Instrument: declarar autoridade sobre um assunto (§13)' },
+            {
+                execute: (subject?: string, authorityPath?: string) =>
+                    subject && authorityPath ? this.declareTruth(subject, authorityPath) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_TRUTH_CONSUMER, label: 'Instrument: registrar consumidor de um assunto (§13)' },
+            {
+                execute: (id?: string, consumer?: string) =>
+                    id && consumer ? this.addConsumer(id, consumer) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_TRUTH_SYNC, label: 'Instrument: propor sincronizar consumidores (§13)' },
+            { execute: (id?: string) => (id ? this.proposeSync(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_SETTINGS_READ, label: 'Instrument: ler configuração do projeto (§13)' },
+            { execute: () => this.readSettings() }
+        );
+        commands.registerCommand(
+            { id: CMD_SETTINGS_PATCH, label: 'Instrument: mudar configuração (§13)' },
+            { execute: (patch?: SettingsPatch) => (patch ? this.patchSettings(patch) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_SETTINGS_PROFILE, label: 'Instrument: aplicar perfil de layout (§13)' },
+            { execute: (name?: string) => (name ? this.applyProfile(name) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_SETTINGS_RESET, label: 'Instrument: voltar um campo ao default (§13)' },
+            { execute: (field?: string) => (field ? this.resetSetting(field) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_DURABLE_READ, label: 'Instrument: ler projeto durável (§13)' },
+            { execute: () => this.readDurable() }
+        );
+        commands.registerCommand(
+            { id: CMD_DURABLE_REGISTER, label: 'Instrument: registrar projeto durável (§13)' },
+            {
+                execute: (title?: string, intent?: string) =>
+                    title && intent ? this.registerDurable(title, intent) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_DURABLE_INTENT, label: 'Instrument: reescrever a intenção do projeto (§13)' },
+            { execute: (intent?: string) => (intent ? this.setDurableIntent(intent) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_DURABLE_ATTACH, label: 'Instrument: anexar recurso ao projeto (§13)' },
+            {
+                execute: (path?: string, kind?: 'directory' | 'repository') =>
+                    path ? this.attachResource(path, kind ?? 'directory') : undefined
+            }
         );
         commands.registerCommand(
             { id: CMD_PACKS_REFRESH, label: 'Instrument: ler packs do projeto (§4)' },
@@ -336,6 +435,10 @@ export class InstrumentCapabilityContribution
         }
         try {
             this.store.setCapabilities(await this.capabilities.list(root));
+            // §13: the config's reversible defaults follow what was ACTUALLY
+            // detected. A user choice is never touched — that is what recording
+            // each value's origin is for.
+            this.applyDetectedSettings();
         } catch (err) {
             this.messages.error(`Falha ao detectar capabilities: ${this.msg(err)}`);
         }
@@ -732,21 +835,24 @@ export class InstrumentCapabilityContribution
         }
     }
 
-    protected async proposeGuidance(id: string): Promise<void> {
+    protected async importGuidance(id: string): Promise<void> {
         const root = this.root;
         if (!root) {
             return;
         }
         this.store.setAnalysisBusy(true);
         try {
-            const { relPath } = await this.analysis.proposeGuidance(root, id);
-            // Proposta, não escrita: quem confirma é a decisão no dock.
+            const { state } = await this.analysis.importGuidance(root, id);
+            // `candidate` é o ponto, não um detalhe: a orientação entrou na
+            // biblioteca e NÃO dirige agente nenhum até alguém promover.
             this.messages.info(
-                `Guidance proposta em ${relPath} — nada foi escrito: decida no dock.`
+                `Importada para a biblioteca como ${state} — não entra em contexto de agente ` +
+                    'até você promover.'
             );
-            this.adoptPendingProposal();
+            this.readLibrary();
+            this.analyzeMaterials();
         } catch (err) {
-            this.messages.error(`Guidance não proposta: ${this.msg(err)}`);
+            this.messages.error(`Guidance não importada: ${this.msg(err)}`);
         } finally {
             this.store.setAnalysisBusy(false);
         }
@@ -900,6 +1006,299 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Decisão recusada: ${this.msg(err)}`);
         } finally {
             this.store.setReconcileBusy(false);
+        }
+    }
+
+    // ── §13 biblioteca de guidance e truth registry ───────────────────────
+    //
+    // A biblioteca não passa pelo broker, e a linha é explícita: o broker existe
+    // para barrar escrita que a pessoa NÃO escreveu (agente, provider, detector).
+    // Guidance capturada é texto que a pessoa acabou de digitar, no destino que
+    // ela nomeou. O que protege o outro caso — guidance vinda de arquivo ou de
+    // detector — é o lifecycle do motor: importar cria CANDIDATA, e candidata não
+    // entra em contexto de agente até alguém promover.
+
+    protected async readLibrary(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLibraryBusy(true);
+        try {
+            this.store.setLibrary(await this.engine.librarySnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler a biblioteca: ${this.msg(err)}`);
+            this.store.setLibrary(undefined);
+        } finally {
+            this.store.setLibraryBusy(false);
+        }
+    }
+
+    protected async captureGuidance(request: CaptureRequest): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLibraryBusy(true);
+        try {
+            const after = await this.engine.libraryCapture(root, request);
+            this.store.setLibrary(after);
+            this.messages.info(
+                `Guidance capturada em ${after.libraryPath}/ — destino ${request.destination}.`
+            );
+        } catch (err) {
+            this.messages.error(`Guidance não capturada: ${this.msg(err)}`);
+        } finally {
+            this.store.setLibraryBusy(false);
+        }
+    }
+
+    protected async guidanceLifecycle(id: string, to: GuidanceState, by?: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLibraryBusy(true);
+        try {
+            this.store.setLibrary(await this.engine.libraryLifecycle(root, id, to, by));
+            if (to === 'active') {
+                // Promover é o ato que deixa a guidance dirigir agente; dizer isso
+                // é o ponto da separação candidata/ativa.
+                this.messages.info(
+                    'Promovida: a partir de agora entra no contexto compilado para o agente.'
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Estado não mudou: ${this.msg(err)}`);
+        } finally {
+            this.store.setLibraryBusy(false);
+        }
+    }
+
+    protected async declareTruth(subject: string, authorityPath: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLibraryBusy(true);
+        try {
+            const after = await this.engine.truthDeclare(
+                root,
+                subject,
+                authorityPath,
+                100,
+                'declarada no IDE'
+            );
+            this.store.setLibrary(after);
+            const conflicts = after.conflicts.filter(c => c.subject === subject).length;
+            if (conflicts > 0) {
+                // Conflito de autoridade não é erro de escrita: é fato novo, e
+                // fica na tela em vez de ser resolvido por precedência silenciosa.
+                this.messages.warn(
+                    `${subject} agora tem mais de uma autoridade no mesmo escopo — o conflito está na lista.`
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Autoridade não declarada: ${this.msg(err)}`);
+        } finally {
+            this.store.setLibraryBusy(false);
+        }
+    }
+
+    protected async addConsumer(id: string, consumer: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLibraryBusy(true);
+        try {
+            this.store.setLibrary(await this.engine.truthConsumer(root, id, consumer));
+        } catch (err) {
+            this.messages.error(`Consumidor não registrado: ${this.msg(err)}`);
+        } finally {
+            this.store.setLibraryBusy(false);
+        }
+    }
+
+    protected async proposeSync(id: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            const proposal = await this.engine.truthSync(root, id);
+            // Proposta descreve o trabalho e não faz nada: dizer isso evita que a
+            // mensagem pareça confirmação de sincronização.
+            this.messages.info(
+                `${proposal.reason} · consumidores a atualizar: ` +
+                    `${proposal.consumersToUpdate.join(', ') || 'nenhum'} — nada foi sincronizado.`
+            );
+        } catch (err) {
+            this.messages.error(`Proposta não gerada: ${this.msg(err)}`);
+        }
+    }
+
+    // ── §13 configuração ──────────────────────────────────────────────────
+
+    protected async readSettings(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setSettingsBusy(true);
+        try {
+            this.store.setSettings(await this.engine.settingsSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler a configuração: ${this.msg(err)}`);
+            this.store.setSettings(undefined);
+        } finally {
+            this.store.setSettingsBusy(false);
+        }
+    }
+
+    protected async patchSettings(patch: SettingsPatch): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setSettingsBusy(true);
+        try {
+            this.store.setSettings(await this.engine.settingsPatch(root, patch));
+        } catch (err) {
+            this.messages.error(`Configuração não mudou: ${this.msg(err)}`);
+        } finally {
+            this.store.setSettingsBusy(false);
+        }
+    }
+
+    protected async applyProfile(name: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setSettingsBusy(true);
+        try {
+            this.store.setSettings(await this.engine.settingsProfile(root, name));
+        } catch (err) {
+            this.messages.error(`Perfil não aplicado: ${this.msg(err)}`);
+        } finally {
+            this.store.setSettingsBusy(false);
+        }
+    }
+
+    protected async resetSetting(field: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setSettingsBusy(true);
+        try {
+            this.store.setSettings(await this.engine.settingsReset(root, field));
+        } catch (err) {
+            this.messages.error(`Campo não voltou ao default: ${this.msg(err)}`);
+        } finally {
+            this.store.setSettingsBusy(false);
+        }
+    }
+
+    /** Aplica defaults reversíveis a partir do que o §1 detectou de verdade.
+     *  Valor escolhido por pessoa nunca é sobrescrito — é para isso que a origem
+     *  de cada valor existe. */
+    protected async applyDetectedSettings(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        // Ids are the ones `capability-definitions.ts` declares. `git` is not a
+        // capability there — the §5 analysis reads `.git` directly — so it is
+        // reported from the analysis when there is one, and as false otherwise.
+        // False here only lowers a still-default setting; it never overrides a
+        // choice.
+        const ready = (id: string) => this.store.capability(id)?.status === 'ready';
+        try {
+            this.store.setSettings(
+                await this.engine.settingsDetected(
+                    root,
+                    this.store.analysis?.git.isRepo === true,
+                    ready('agentes'),
+                    ready('grafo')
+                )
+            );
+        } catch {
+            /* silencioso: é um default reversível, não uma ação pedida */
+        }
+    }
+
+    // ── §13 projeto durável ───────────────────────────────────────────────
+
+    protected async readDurable(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setDurableBusy(true);
+        try {
+            this.store.setDurable(await this.engine.projectSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler o projeto durável: ${this.msg(err)}`);
+            this.store.setDurable(undefined);
+        } finally {
+            this.store.setDurableBusy(false);
+        }
+    }
+
+    protected async registerDurable(title: string, intent: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setDurableBusy(true);
+        try {
+            const after = await this.engine.projectRegister(root, title, intent);
+            this.store.setDurable(after);
+            this.messages.info(
+                `Projeto durável registrado em ${after.storePath} — reabrir recupera título, ` +
+                    'intenção e recursos sem transcript.'
+            );
+        } catch (err) {
+            this.messages.error(`Projeto não registrado: ${this.msg(err)}`);
+        } finally {
+            this.store.setDurableBusy(false);
+        }
+    }
+
+    protected async setDurableIntent(intent: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setDurableBusy(true);
+        try {
+            this.store.setDurable(await this.engine.projectIntent(root, intent));
+        } catch (err) {
+            this.messages.error(`Intenção não mudou: ${this.msg(err)}`);
+        } finally {
+            this.store.setDurableBusy(false);
+        }
+    }
+
+    protected async attachResource(
+        path: string,
+        kind: 'directory' | 'repository'
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setDurableBusy(true);
+        try {
+            const after = await this.engine.projectAttach(root, path, kind);
+            this.store.setDurable(after);
+            this.messages.info(`${after.resources.length} recurso(s) no projeto.`);
+        } catch (err) {
+            this.messages.error(`Recurso não anexado: ${this.msg(err)}`);
+        } finally {
+            this.store.setDurableBusy(false);
         }
     }
 

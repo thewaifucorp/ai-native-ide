@@ -10,7 +10,7 @@
 //! # The rule this exists to hold
 //!
 //! An agent never receives the project. It receives a MINIMUM PACKAGE built from
-//! material somebody declared: guidance adopted into `.product/guidance/`,
+//! material somebody declared: ACTIVE guidance from the §13 Guidance Library,
 //! authorities declared in `.product/sot/`, and evidence the §4 engines recorded.
 //! Everything else is not in the package, and that absence is reported two ways:
 //!
@@ -22,6 +22,24 @@
 //! A panel that showed neither would let "the agent got what it needed" be an
 //! assumption. The whole point of §6 is that it is a statement with a list.
 //!
+//! # Where the guidance comes from (corrected in §13)
+//!
+//! The first cut of this module read `.product/guidance/*.json` with a shape of
+//! its own. That was a hand-rolled half of something that already existed:
+//! `ide_guidance::GuidanceRegistry` owns the model, the lifecycle and — crucially
+//! — `applied_now`, which compiles only guidance whose SCOPE and APPLICATION
+//! match the current activity, each with a reason. Reading files directly meant
+//! every candidate looked active and every scope looked applicable.
+//!
+//! Now the registry is the source, and two things follow for free:
+//!
+//!  * A CANDIDATE (what an import or a detector produces) never reaches an agent.
+//!    Only an explicit `activate` makes guidance eligible, and the package says
+//!    how many candidates are waiting instead of silently including or hiding
+//!    them.
+//!  * What the package actually used is stamped back with `mark_used`, which is
+//!    what gives the hygiene staleness report any meaning.
+//!
 //! # Version, and why it is mtime plus size
 //!
 //! Every source carries a version so two runs can be told apart. It is the
@@ -31,13 +49,12 @@
 
 use ide_context::{compile, CompiledContext, ContextInputs, EvidenceRef};
 use ide_guidance::{
-    AppliedGuidance, Guidance, GuidanceApplication, GuidanceDuration, GuidanceOrigin,
-    GuidanceScope, GuidanceState, GuidanceStrength, GuidanceType, TruthDeclaration,
+    ActivityContext, AppliedGuidance, GuidanceRegistry, GuidanceScope, GuidanceState,
+    TruthDeclaration,
 };
 use serde::Serialize;
 use std::path::Path;
 
-const GUIDANCE_DIR: &str = ".product/guidance";
 const SOT_DIR: &str = ".product/sot";
 
 /// Default character budget for the compiled package.
@@ -85,6 +102,13 @@ pub struct ContextPackage {
     pub project_files_not_included: usize,
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn version_of(path: &Path) -> String {
     match std::fs::metadata(path) {
         Ok(meta) => {
@@ -98,25 +122,6 @@ fn version_of(path: &Path) -> String {
         }
         Err(_) => "não pôde ser lido".to_string(),
     }
-}
-
-/// One adopted guidance file, as §5's adoption writes it.
-#[derive(serde::Deserialize)]
-struct GuidanceFile {
-    id: String,
-    title: String,
-    #[serde(default)]
-    strength: Option<String>,
-    text: String,
-    #[serde(default)]
-    provenance: Option<GuidanceProvenance>,
-}
-
-#[derive(serde::Deserialize)]
-struct GuidanceProvenance {
-    path: String,
-    #[serde(default)]
-    line: Option<u64>,
 }
 
 /// One SoT artifact, as §3 writes and reads it.
@@ -136,21 +141,6 @@ struct SotFile {
 struct SotClaim {
     #[serde(default)]
     statement: String,
-}
-
-/// Strength as the FILE declares it.
-///
-/// §5's adoption only ever writes `suggestion`, on purpose — a detector cannot
-/// know a sentence is blocking. But a person editing that file can, and their
-/// word is honored here. Anything unrecognized degrades to `suggestion` rather
-/// than being promoted.
-fn strength_of(declared: Option<&str>) -> GuidanceStrength {
-    match declared {
-        Some("blocking") => GuidanceStrength::Blocking,
-        Some("required") => GuidanceStrength::Required,
-        Some("default") => GuidanceStrength::Default,
-        _ => GuidanceStrength::Suggestion,
-    }
 }
 
 fn read_dir_json(dir: &Path) -> Vec<(String, String)> {
@@ -213,76 +203,83 @@ fn count_project_files(root: &Path) -> usize {
 }
 
 /// Compiles the package an agent would receive for `intent_subject`.
-pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<EvidenceRef>) -> ContextPackage {
+pub fn compile_package(
+    root: &Path,
+    budget_chars: Option<usize>,
+    evidence: Vec<EvidenceRef>,
+) -> Result<ContextPackage, String> {
     let budget = budget_chars.unwrap_or(DEFAULT_BUDGET);
     let mut sources: Vec<SourceRow> = Vec::new();
     let mut limits: Vec<String> = Vec::new();
     let mut excluded: Vec<Excluded> = Vec::new();
     let mut unknown: Vec<String> = Vec::new();
 
-    // ── guidance adopted into the project ────────────────────────────────
-    let mut applied: Vec<AppliedGuidance> = Vec::new();
-    for (name, raw) in read_dir_json(&root.join(GUIDANCE_DIR)) {
-        let rel = format!("{GUIDANCE_DIR}/{name}");
-        match serde_json::from_str::<GuidanceFile>(&raw) {
-            Ok(file) => {
-                let provenance = file
-                    .provenance
-                    .as_ref()
-                    .map(|p| match p.line {
-                        Some(line) => format!("{}:{line}", p.path),
-                        None => p.path.clone(),
-                    })
-                    .unwrap_or_else(|| rel.clone());
-                sources.push(SourceRow {
-                    path: rel.clone(),
-                    kind: "guidance".to_string(),
-                    version: version_of(&root.join(&rel)),
-                });
-                applied.push(AppliedGuidance {
-                    // Short on purpose: the compiler uses `reason` for BOTH the
-                    // segment's scope and its reason, so a long sentence here
-                    // shows up twice on screen.
-                    reason: format!("adotada em {rel}"),
-                    guidance: Guidance {
-                        // §5 writes ids like `guidance:AGENTS.md#desempate`, and
-                        // the compiler prefixes `guidance:` itself — keeping both
-                        // renders `guidance:guidance:…`.
-                        id: file
-                            .id
-                            .strip_prefix("guidance:")
-                            .unwrap_or(&file.id)
-                            .to_string(),
-                        name: file.title,
-                        guidance_type: GuidanceType::Convention,
-                        scope: GuidanceScope::Project {
-                            project_id: root.to_string_lossy().into_owned(),
-                        },
-                        application: GuidanceApplication::General,
-                        strength: strength_of(file.strength.as_deref()),
-                        origin: GuidanceOrigin::Imported,
-                        duration: GuidanceDuration::Permanent,
-                        priority: 0,
-                        owner: "projeto".to_string(),
-                        provenance,
-                        set: "projeto".to_string(),
-                        text: file.text,
-                        state: GuidanceState::Active,
-                        last_used_ms: 0,
-                    },
-                });
-            }
-            Err(error) => excluded.push(Excluded {
-                what: rel,
-                reason: format!("não pôde ser lida ({error}) — ficou fora do pacote"),
-            }),
-        }
+    // ── active guidance, from the §13 library ────────────────────────────
+    //
+    // `applied_now` is the engine's own compilation: only ACTIVE guidance whose
+    // scope and application match this activity, ordered strongest-and-most-
+    // specific first, each carrying the reason it applies.
+    let mut registry = GuidanceRegistry::open(crate::library::library_root(root))
+        .map_err(|error| format!("{error:#}"))?;
+    let all = registry.list();
+    let context = ActivityContext {
+        project_id: Some(root.to_string_lossy().into_owned()),
+        ..ActivityContext::default()
+    };
+    let applied: Vec<AppliedGuidance> = registry.applied_now(&context);
+    let library_rel = crate::library::LIBRARY_REL;
+
+    for entry in &applied {
+        sources.push(SourceRow {
+            path: format!("{library_rel}/{}.md", entry.guidance.set),
+            kind: "guidance".to_string(),
+            // The provenance is where the SENTENCE came from (a file and line,
+            // when §5 imported it); the version is the state of the library file
+            // it now lives in. Both, because they answer different questions.
+            version: format!(
+                "{} · {}",
+                entry.guidance.provenance,
+                version_of(&root.join(format!("{library_rel}/registry.json")))
+            ),
+        });
     }
-    if applied.is_empty() {
+
+    // Candidates and non-applicable guidance are DIFFERENT absences, and neither
+    // is "no guidance".
+    let candidates = all
+        .iter()
+        .filter(|entry| entry.state == GuidanceState::Candidate)
+        .count();
+    let active_elsewhere = all
+        .iter()
+        .filter(|entry| entry.state == GuidanceState::Active)
+        .count()
+        - applied.len().min(
+            all.iter()
+                .filter(|entry| entry.state == GuidanceState::Active)
+                .count(),
+        );
+
+    if applied.is_empty() && all.is_empty() {
         unknown.push(format!(
-            "nenhuma orientação adotada em {GUIDANCE_DIR}/ — o agente não recebe convenção \
+            "biblioteca de guidance vazia em {library_rel}/ — o agente não recebe convenção \
              nenhuma deste projeto"
         ));
+    }
+    if candidates > 0 {
+        // Named, not included: a candidate is exactly what nobody has reviewed.
+        excluded.push(Excluded {
+            what: format!("{candidates} guidance candidata(s)"),
+            reason: "candidata não entra em contexto de agente — promover é ato explícito"
+                .to_string(),
+        });
+    }
+    if active_elsewhere > 0 {
+        excluded.push(Excluded {
+            what: format!("{active_elsewhere} guidance ativa(s) de outro escopo"),
+            reason: "ativa, mas o escopo ou a aplicação não correspondem a esta atividade"
+                .to_string(),
+        });
     }
 
     // ── authorities and declared intent ──────────────────────────────────
@@ -387,6 +384,22 @@ pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<E
     };
     let compiled = compile(&inputs);
 
+    // Stamp what the package ACTUALLY carried. Segments dropped for budget are
+    // deliberately not stamped: they did not reach the agent, so counting them as
+    // used would make the staleness report lie in the other direction.
+    let used: Vec<String> = compiled
+        .segments
+        .iter()
+        .filter_map(|segment| segment.origin.strip_prefix("guidance:").map(str::to_string))
+        .collect();
+    if !used.is_empty() {
+        // A failure to stamp is reported, not swallowed: it means the next
+        // hygiene report is wrong about this guidance.
+        if let Err(error) = registry.mark_used(&used, now_ms()) {
+            limits.push(format!("uso não registrado na biblioteca ({error:#})"));
+        }
+    }
+
     if !compiled.dropped_for_budget.is_empty() {
         limits.push(format!(
             "{} segmento(s) cortado(s) pelo orçamento de {budget} caracteres",
@@ -402,9 +415,10 @@ pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<E
         .map(|segment| segment.origin.as_str())
         .collect();
     let mut policy = vec![
-        "nenhum arquivo do projeto entra no pacote por varredura: só material declarado \
-         (.product/guidance, .product/sot) e evidência observada"
-            .to_string(),
+        format!(
+            "nenhum arquivo do projeto entra no pacote por varredura: só guidance ATIVA de \
+             {library_rel}/, autoridade declarada em {SOT_DIR}/ e evidência observada"
+        ),
         format!(
             "{} segmento(s) mantido(s) verbatim, imunes ao orçamento: {}",
             verbatim.len(),
@@ -429,7 +443,7 @@ pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<E
             .to_string(),
     });
 
-    ContextPackage {
+    Ok(ContextPackage {
         compiled,
         sources,
         excluded,
@@ -437,12 +451,13 @@ pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<E
         unknown,
         limits,
         project_files_not_included: project_files,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::{capture, import, lifecycle, CaptureRequest};
 
     fn project() -> tempfile::TempDir {
         tempfile::tempdir().expect("tempdir")
@@ -454,78 +469,156 @@ mod tests {
         std::fs::write(abs, body).unwrap();
     }
 
+    fn request(name: &str, strength: &str) -> CaptureRequest {
+        CaptureRequest {
+            name: name.to_string(),
+            text: format!("texto de {name}"),
+            guidance_type: None,
+            application: None,
+            strength: Some(strength.to_string()),
+            scope: None,
+            owner: None,
+            provenance: None,
+            destination: "create_stable".to_string(),
+        }
+    }
+
+    fn package(root: &Path, budget: Option<usize>) -> ContextPackage {
+        compile_package(root, budget, Vec::new()).expect("pacote")
+    }
+
     /// An empty project produces an EMPTY package that says what it does not
     /// know — never a package that looks complete.
     #[test]
     fn an_empty_project_produces_unknowns_not_a_package() {
         let dir = project();
 
-        let package = compile_package(dir.path(), None, Vec::new());
+        let package = package(dir.path(), None);
 
         assert!(package.compiled.segments.is_empty());
-        assert_eq!(package.unknown.len(), 4, "guidance, autoridade, intenção, evidência");
+        assert_eq!(
+            package.unknown.len(),
+            4,
+            "biblioteca, autoridade, intenção, evidência: {:?}",
+            package.unknown
+        );
         assert!(package.policy.iter().any(|p| p.contains("retrieval governado")));
     }
 
-    /// Adopted guidance reaches the package, and its provenance travels with it.
+    /// Active guidance from the library reaches the package, and its provenance
+    /// travels with it as the source's version line.
     #[test]
-    fn adopted_guidance_reaches_the_package_with_its_provenance() {
+    fn active_guidance_reaches_the_package_with_its_provenance() {
         let dir = project();
-        write(
-            dir.path(),
-            ".product/guidance/desempate.json",
-            r#"{"id":"desempate","title":"Desempate","strength":"suggestion",
-                "text":"Exceder estritamente o atual.",
-                "provenance":{"path":"AGENTS.md","line":6}}"#,
-        );
+        capture(dir.path(), request("Desempate", "suggestion")).expect("capture");
 
-        let package = compile_package(dir.path(), None, Vec::new());
+        let package = package(dir.path(), None);
 
         let segment = package
             .compiled
             .segments
             .iter()
-            .find(|s| s.origin == "guidance:desempate")
+            .find(|s| s.origin.starts_with("guidance:"))
             .expect("segmento de guidance");
-        assert_eq!(segment.text, "Exceder estritamente o atual.");
+        assert_eq!(segment.text, "texto de Desempate");
         assert!(!segment.verbatim, "sugestão não é verbatim");
         assert!(package
             .sources
             .iter()
-            .any(|s| s.kind == "guidance" && s.version.contains("bytes:")));
+            .any(|s| s.kind == "guidance" && s.version.contains("capturada no IDE")));
     }
 
-    /// A person can strengthen a guidance by editing the file, and then it
-    /// becomes verbatim — immune to the budget. A detector never can.
+    /// A CANDIDATE never reaches an agent, and the package names how many are
+    /// waiting instead of hiding them.
+    #[test]
+    fn a_candidate_is_named_but_never_included() {
+        let dir = project();
+        let imported = import(
+            dir.path(),
+            "AGENTS.md — Desempate",
+            "exceder estritamente o atual",
+            None,
+            Some("AGENTS.md:6"),
+        )
+        .expect("import");
+
+        let before = package(dir.path(), None);
+        assert!(
+            before
+                .compiled
+                .segments
+                .iter()
+                .all(|s| !s.origin.starts_with("guidance:")),
+            "candidata não entra"
+        );
+        assert!(before
+            .excluded
+            .iter()
+            .any(|e| e.what.contains("candidata") && e.reason.contains("ato explícito")));
+
+        lifecycle(dir.path(), &imported.id, "active", None).expect("activate");
+
+        let after = package(dir.path(), None);
+        let segment = after
+            .compiled
+            .segments
+            .iter()
+            .find(|s| s.origin.starts_with("guidance:"))
+            .expect("promovida entra");
+        assert_eq!(segment.text, "exceder estritamente o atual");
+        assert!(after
+            .sources
+            .iter()
+            .any(|s| s.version.contains("AGENTS.md:6")));
+    }
+
+    /// A person can declare a guidance blocking, and then it is verbatim — immune
+    /// to the budget. A detector never can.
     #[test]
     fn a_human_declared_blocking_guidance_is_kept_verbatim() {
         let dir = project();
-        write(
-            dir.path(),
-            ".product/guidance/segredo.json",
-            r#"{"id":"segredo","title":"Segredos","strength":"blocking",
-                "text":"Nunca escreva credencial em arquivo versionado."}"#,
-        );
+        capture(dir.path(), request("Segredos", "blocking")).expect("capture");
 
         // A budget of ZERO would drop everything droppable.
-        let package = compile_package(dir.path(), Some(0), Vec::new());
+        let package = package(dir.path(), Some(0));
 
         let segment = package
             .compiled
             .segments
             .iter()
-            .find(|s| s.origin == "guidance:segredo")
+            .find(|s| s.origin.starts_with("guidance:"))
             .expect("bloqueante sobrevive a orçamento zero");
         assert!(segment.verbatim);
-        assert!(package.policy.iter().any(|p| p.contains("guidance:segredo")));
+        assert!(package.policy.iter().any(|p| p.contains(&segment.origin)));
     }
 
-    /// Unrecognized strength degrades to suggestion instead of being promoted.
+    /// Compiling stamps what it USED, which is what gives the hygiene staleness
+    /// report meaning. A segment the budget dropped is not stamped.
     #[test]
-    fn an_unknown_strength_degrades_to_suggestion() {
-        assert_eq!(strength_of(Some("mandatorio")), GuidanceStrength::Suggestion);
-        assert_eq!(strength_of(None), GuidanceStrength::Suggestion);
-        assert_eq!(strength_of(Some("blocking")), GuidanceStrength::Blocking);
+    fn compiling_stamps_only_the_guidance_it_carried() {
+        let dir = project();
+        capture(dir.path(), request("Levada", "blocking")).expect("capture");
+        capture(dir.path(), request("Cortada", "suggestion")).expect("capture");
+
+        // Zero budget: the blocking one is verbatim and stays, the suggestion is
+        // dropped.
+        let package = package(dir.path(), Some(0));
+        assert_eq!(package.compiled.dropped_for_budget.len(), 1);
+
+        let library = GuidanceRegistry::open(crate::library::library_root(dir.path()))
+            .expect("library");
+        let stamped: Vec<(String, u64)> = library
+            .list()
+            .into_iter()
+            .map(|entry| (entry.name, entry.last_used_ms))
+            .collect();
+        for (name, last_used) in stamped {
+            if name == "Levada" {
+                assert!(last_used > 0, "a que foi levada é marcada como usada");
+            } else {
+                assert_eq!(last_used, 0, "a que o orçamento cortou não foi usada");
+            }
+        }
     }
 
     /// The SoT gives authority per subject, and the intent comes from the
@@ -541,7 +634,7 @@ mod tests {
                 "claims":[{"id":"c1","statement":"Empate não é resolvido por ordem de criação."}]}"#,
         );
 
-        let package = compile_package(dir.path(), None, Vec::new());
+        let package = package(dir.path(), None);
 
         assert!(package
             .compiled
@@ -570,7 +663,7 @@ mod tests {
         write(dir.path(), "src/b.ts", "y");
         write(dir.path(), "node_modules/big.js", "z");
 
-        let package = compile_package(dir.path(), None, Vec::new());
+        let package = package(dir.path(), None);
 
         assert_eq!(package.project_files_not_included, 2, "node_modules não conta");
         assert!(package
@@ -579,29 +672,29 @@ mod tests {
             .any(|e| e.reason.contains("retrieval governado")));
     }
 
-    /// A malformed material is reported as excluded, and does not take the rest
+    /// A malformed authority is reported as excluded, and does not take the rest
     /// of the package down.
     #[test]
     fn a_malformed_material_is_excluded_with_its_reason() {
         let dir = project();
-        write(dir.path(), ".product/guidance/quebrada.json", "{ não é json");
+        write(dir.path(), ".product/sot/quebrada.json", "{ não é json");
         write(
             dir.path(),
-            ".product/guidance/boa.json",
-            r#"{"id":"boa","title":"Boa","text":"vale"}"#,
+            ".product/sot/boa.json",
+            r#"{"id":"boa","path":"docs/boa.md","authorityOver":["assunto"]}"#,
         );
 
-        let package = compile_package(dir.path(), None, Vec::new());
+        let package = package(dir.path(), None);
 
         assert!(package
             .excluded
             .iter()
-            .any(|e| e.what.contains("quebrada.json") && e.reason.contains("não pôde ser lida")));
+            .any(|e| e.what.contains("quebrada.json") && e.reason.contains("não pôde ser lido")));
         assert!(package
             .compiled
             .segments
             .iter()
-            .any(|s| s.origin == "guidance:boa"));
+            .any(|s| s.origin == "truth:boa:assunto"));
     }
 
     /// Evidence supplied by the §4 engines becomes a source with its id.
@@ -614,7 +707,7 @@ mod tests {
             source: "preview:health".to_string(),
         }];
 
-        let package = compile_package(dir.path(), None, evidence);
+        let package = compile_package(dir.path(), None, evidence).expect("pacote");
 
         assert!(package
             .sources

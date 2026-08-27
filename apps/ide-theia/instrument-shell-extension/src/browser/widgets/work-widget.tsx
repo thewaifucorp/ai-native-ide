@@ -376,8 +376,9 @@ export class WorkWidget extends AbstractInstrumentWidget {
                         <span className="cap-pill not-installed">não compilado</span>
                     </div>
                     <small className="cap-hint">
-                        pacote mínimo a partir de material declarado (`.product/guidance`,
-                        `.product/sot`) e da evidência observada · o projeto inteiro nunca entra
+                        pacote mínimo a partir de material declarado — guidance ATIVA de
+                        `.guidance/` e autoridade de `.product/sot/` — mais a evidência
+                        observada · o projeto inteiro nunca entra, e candidata não entra
                     </small>
                     <div className="cap-actions">
                         <button
@@ -951,7 +952,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     <>
                         <small className="cap-hint">
                             Orientações candidatas — sempre como <b>sugestão</b>: detector não sabe
-                            que uma frase é bloqueante, quem escreveu sabe
+                            que uma frase é bloqueante, quem escreveu sabe. Importar coloca na
+                            biblioteca como candidata; promover é ato separado.
                         </small>
                         {analysis.guidance.map(g => (
                             <div className="cap-receipt" key={g.id}>
@@ -960,18 +962,18 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                 <small>{g.text}</small>
                                 {evidence(g.provenance)}
                                 {g.alreadyDeclared ? (
-                                    <small>já existe em {g.target}</small>
+                                    <small>já está na biblioteca do projeto</small>
                                 ) : (
                                     <div className="cap-actions">
                                         <button
                                             className="cap-btn"
                                             disabled={busy}
-                                            title={`Propõe escrever ${g.target} — .product/ é conteúdo do projeto, então passa pelo broker`}
+                                            title="Entra na Guidance Library como CANDIDATA — não dirige agente nenhum até você promover, em Ferramentas"
                                             onClick={() =>
                                                 this.commands.executeCommand(CMD_PROPOSE_GUIDANCE, g.id)
                                             }
                                         >
-                                            Propor guidance (vai ao broker)
+                                            Importar para a biblioteca (candidata)
                                         </button>
                                     </div>
                                 )}

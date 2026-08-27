@@ -49,6 +49,19 @@ pub struct CompiledContext {
     pub budget_chars: usize,
 }
 
+/// Human-readable scope of a piece of guidance, for the segment's `scope`.
+fn scope_label(scope: &ide_guidance::GuidanceScope) -> String {
+    match scope {
+        ide_guidance::GuidanceScope::Person => "pessoa".to_owned(),
+        ide_guidance::GuidanceScope::Project { project_id } => format!("projeto {project_id}"),
+        ide_guidance::GuidanceScope::Resource { resource_id } => {
+            format!("recurso {resource_id}")
+        }
+        ide_guidance::GuidanceScope::Path { path } => format!("caminho {path}"),
+        ide_guidance::GuidanceScope::Task { session_id } => format!("tarefa {session_id}"),
+    }
+}
+
 fn guidance_priority(strength: GuidanceStrength) -> u8 {
     match strength {
         GuidanceStrength::Blocking => 100,
@@ -75,7 +88,11 @@ pub fn compile(inputs: &ContextInputs) -> CompiledContext {
         let strength = applied.guidance.strength;
         segments.push(ContextSegment {
             origin: format!("guidance:{}", applied.guidance.id),
-            scope: applied.reason.clone(),
+            // The SCOPE the guidance declares, not a copy of the reason. Those are
+            // different questions — "where does this apply" and "why is it here
+            // now" — and duplicating the reason into both rendered the same
+            // sentence twice on screen while hiding the scope entirely.
+            scope: scope_label(&applied.guidance.scope),
             reason: applied.reason.clone(),
             text: applied.guidance.text.clone(),
             verbatim: guidance_is_verbatim(strength),
@@ -232,6 +249,9 @@ pub fn navigate(
 
 #[cfg(test)]
 mod tests {
+    // See `scope_of_a_segment_is_the_declared_scope` below: `scope` and `reason`
+    // answer different questions and must not be the same string.
+
     use super::*;
     use ide_guidance::{
         Guidance, GuidanceApplication, GuidanceDuration, GuidanceOrigin, GuidanceScope,
@@ -386,5 +406,51 @@ mod tests {
         assert!(navigation.implementations.is_empty());
         assert_eq!(navigation.authorities.len(), 1);
         assert_eq!(navigation.evidence.len(), 1);
+    }
+
+    /// `scope` is WHERE the guidance applies; `reason` is WHY it was compiled
+    /// now. They used to be the same string, which showed the reason twice and
+    /// hid the scope.
+    #[test]
+    fn scope_of_a_segment_is_the_declared_scope() {
+        use ide_guidance::{
+            Guidance, GuidanceApplication, GuidanceDuration, GuidanceOrigin, GuidanceScope,
+            GuidanceState, GuidanceStrength, GuidanceType,
+        };
+        let inputs = ContextInputs {
+            intent: String::new(),
+            applied_guidance: vec![AppliedGuidance {
+                reason: "sugestão · projeto ativo corresponde".to_owned(),
+                guidance: Guidance {
+                    id: "g1".to_owned(),
+                    name: "Desempate".to_owned(),
+                    guidance_type: GuidanceType::Convention,
+                    scope: GuidanceScope::Project {
+                        project_id: "leilao".to_owned(),
+                    },
+                    application: GuidanceApplication::General,
+                    strength: GuidanceStrength::Suggestion,
+                    origin: GuidanceOrigin::Created,
+                    duration: GuidanceDuration::Permanent,
+                    priority: 0,
+                    owner: "pessoa".to_owned(),
+                    provenance: "AGENTS.md:6".to_owned(),
+                    set: "project".to_owned(),
+                    text: "exceder estritamente".to_owned(),
+                    state: GuidanceState::Active,
+                    last_used_ms: 0,
+                },
+            }],
+            truth: Vec::new(),
+            evidence: Vec::new(),
+            budget_chars: 1_000,
+        };
+
+        let compiled = compile(&inputs);
+
+        let segment = &compiled.segments[0];
+        assert_eq!(segment.scope, "projeto leilao");
+        assert_eq!(segment.reason, "sugestão · projeto ativo corresponde");
+        assert_ne!(segment.scope, segment.reason);
     }
 }

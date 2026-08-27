@@ -319,6 +319,104 @@ impl GuidanceRegistry {
         Ok(updated)
     }
 
+    /// Suspends active guidance: it stops steering, and it is not gone.
+    ///
+    /// Separate from archiving on purpose. A suspended rule can come back with
+    /// its history intact; an archived one is out of the steering path for good.
+    /// Collapsing the two would make "turn this off for now" indistinguishable
+    /// from "this is over".
+    pub fn suspend(&mut self, id: &str) -> anyhow::Result<Guidance> {
+        self.transition(id, GuidanceState::Suspended)
+    }
+
+    /// Archives guidance: kept as history, never compiled into context again.
+    pub fn archive(&mut self, id: &str) -> anyhow::Result<Guidance> {
+        self.transition(id, GuidanceState::Archived)
+    }
+
+    /// Marks `id` superseded BY another guidance, which must exist and must not
+    /// be the same entry.
+    ///
+    /// The replacement is required: `Superseded` with nothing pointing forward
+    /// leaves the reader unable to find what replaced it, which is the whole
+    /// reason this state exists rather than plain archiving. The successor's id
+    /// lands in the superseded entry's provenance, so the trail survives in the
+    /// Markdown mirror too.
+    pub fn supersede(&mut self, id: &str, by: &str) -> anyhow::Result<Guidance> {
+        if id == by {
+            anyhow::bail!("guidance {id} cannot supersede itself")
+        }
+        if !self.entries.contains_key(by) {
+            anyhow::bail!("unknown replacement guidance {by}")
+        }
+        let guidance = self
+            .entries
+            .get_mut(id)
+            .with_context(|| format!("unknown guidance {id}"))?;
+        guidance.state = GuidanceState::Superseded;
+        guidance.provenance = format!("{} · substituída por {by}", guidance.provenance);
+        let updated = guidance.clone();
+        self.persist()?;
+        Ok(updated)
+    }
+
+    /// Replaces the provenance of one entry.
+    ///
+    /// Exists because the provenance a caller has is often better than the one
+    /// this crate can write: `import_steering` can only say "imported steering
+    /// file: <name>", while the host that found the text knows the file AND the
+    /// line. Provenance is what makes guidance checkable, so the better one wins.
+    /// Empty is refused — that would be worse than the generic sentence.
+    pub fn set_provenance(&mut self, id: &str, provenance: &str) -> anyhow::Result<Guidance> {
+        if provenance.trim().is_empty() {
+            anyhow::bail!("provenance cannot be blank")
+        }
+        let guidance = self
+            .entries
+            .get_mut(id)
+            .with_context(|| format!("unknown guidance {id}"))?;
+        guidance.provenance = provenance.to_owned();
+        let updated = guidance.clone();
+        self.persist()?;
+        Ok(updated)
+    }
+
+    fn transition(&mut self, id: &str, to: GuidanceState) -> anyhow::Result<Guidance> {
+        let guidance = self
+            .entries
+            .get_mut(id)
+            .with_context(|| format!("unknown guidance {id}"))?;
+        guidance.state = to;
+        let updated = guidance.clone();
+        self.persist()?;
+        Ok(updated)
+    }
+
+    /// Records that guidance was actually compiled into a context, at `now_ms`.
+    ///
+    /// Without this, `last_used_ms` stays at 0 forever and
+    /// [`GuidanceRegistry::hygiene_with_staleness`] reports EVERY active rule as
+    /// obsolete — a hygiene report that flags everything says nothing. Time is
+    /// injected, like everywhere else in this crate: the caller owns the clock.
+    ///
+    /// Only active guidance is stamped: marking a suspended or archived entry
+    /// used would make it look alive in the next hygiene pass.
+    pub fn mark_used(&mut self, ids: &[String], now_ms: u64) -> anyhow::Result<usize> {
+        let mut stamped = 0usize;
+        for id in ids {
+            if let Some(guidance) = self.entries.get_mut(id) {
+                if guidance.state == GuidanceState::Active {
+                    guidance.last_used_ms = now_ms;
+                    stamped += 1;
+                }
+            }
+        }
+        if stamped > 0 {
+            self.persist()?;
+        }
+        Ok(stamped)
+    }
+
     /// Deterministically compiles the guidance applicable to the current
     /// activity, strongest and most specific first. Only active guidance whose
     /// scope and application match is included, each with an explicit reason.
@@ -393,13 +491,22 @@ impl GuidanceRegistry {
                     name: guidance.name.clone(),
                 });
             }
-            let idle_ms = now_ms.saturating_sub(guidance.last_used_ms);
-            if idle_ms > staleness_window_ms {
-                findings.push(HygieneFinding::Obsolete {
-                    id: guidance.id.clone(),
-                    name: guidance.name.clone(),
-                    idle_ms,
-                });
+            // `last_used_ms == 0` means NEVER COMPILED INTO A CONTEXT, not "idle
+            // since the epoch". Reporting that as obsolescence called a guidance
+            // captured seconds ago "idle for 20,000 days" — a hygiene report that
+            // says something absurd about a brand-new rule teaches people to
+            // ignore hygiene. Never-used is visible on its own (the field is 0)
+            // and is a different fact from a rule that was used and then stopped
+            // being used.
+            if guidance.last_used_ms > 0 {
+                let idle_ms = now_ms.saturating_sub(guidance.last_used_ms);
+                if idle_ms > staleness_window_ms {
+                    findings.push(HygieneFinding::Obsolete {
+                        id: guidance.id.clone(),
+                        name: guidance.name.clone(),
+                        idle_ms,
+                    });
+                }
             }
         }
         for (key, mut ids) in groups {
@@ -886,13 +993,20 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// Obsolescence is measured from the last RECORDED USE.
+    ///
+    /// This test used to assert it from `last_used_ms == 0`, i.e. from the epoch.
+    /// On screen that read "idle for 20,330 days" next to a guidance captured
+    /// seconds earlier — and a hygiene report that says something absurd about a
+    /// brand-new rule teaches people to ignore hygiene. Never-used is its own
+    /// fact (the field is 0, and the panel says "nunca usada"), so it is no
+    /// longer dressed up as obsolescence.
     #[test]
     fn hygiene_flags_obsolete_only_past_the_staleness_window() {
         let root = temp_root("obsolete");
         let _ = fs::remove_dir_all(&root);
         let mut registry = GuidanceRegistry::open(&root).unwrap();
-        // Captured guidance starts with last_used_ms == 0.
-        registry
+        let captured = registry
             .capture(
                 draft("regra antiga", GuidanceScope::Person),
                 CaptureDestination::CreateStable,
@@ -900,14 +1014,22 @@ mod tests {
             .unwrap();
 
         let window_ms = 2_000;
-        // Idle (1_000ms) within the window: not yet obsolete.
+        // Never used: not obsolete, no matter how far the clock is.
+        assert!(!registry
+            .hygiene_with_staleness(999_999, window_ms)
+            .iter()
+            .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
+
+        registry.mark_used(&[captured.id.clone()], 0).unwrap();
+        // Used at 0. Idle (1_000ms) within the window: not yet obsolete.
         let fresh = registry.hygiene_with_staleness(1_000, window_ms);
         assert!(!fresh
             .iter()
             .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
 
-        // Idle (5_000ms) beyond the window: obsolete surfaces for review.
-        let stale = registry.hygiene_with_staleness(5_000, window_ms);
+        registry.mark_used(&[captured.id.clone()], 1).unwrap();
+        // Idle beyond the window: obsolete surfaces for review.
+        let stale = registry.hygiene_with_staleness(5_001, window_ms);
         assert!(stale.iter().any(|finding| matches!(
             finding,
             HygieneFinding::Obsolete { idle_ms, .. } if *idle_ms == 5_000
@@ -1008,6 +1130,165 @@ mod tests {
             .conflicts()
             .iter()
             .any(|finding| matches!(finding, TruthFinding::AuthorityConflict { .. })));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Suspended stops steering and stays recoverable; archived leaves the
+    /// steering path for good. Collapsing the two would make "off for now"
+    /// indistinguishable from "this is over".
+    #[test]
+    fn suspend_stops_steering_and_archive_is_a_different_end() {
+        let root = temp_root("lifecycle");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        let kept = registry
+            .capture(draft("fica", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+        let paused = registry
+            .capture(draft("pausa", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+        let over = registry
+            .capture(draft("fim", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+
+        registry.suspend(&paused.id).unwrap();
+        registry.archive(&over.id).unwrap();
+
+        let applied: Vec<String> = registry
+            .applied_now(&ActivityContext::default())
+            .into_iter()
+            .map(|entry| entry.guidance.id)
+            .collect();
+        assert_eq!(applied, vec![kept.id], "só a ativa entra no contexto");
+        let states: BTreeMap<String, GuidanceState> = registry
+            .list()
+            .into_iter()
+            .map(|g| (g.id, g.state))
+            .collect();
+        assert_eq!(states[&paused.id], GuidanceState::Suspended);
+        assert_eq!(states[&over.id], GuidanceState::Archived);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Superseding requires an existing replacement that is not itself: a
+    /// `Superseded` entry with nothing pointing forward leaves the reader unable
+    /// to find what replaced it.
+    #[test]
+    fn superseding_needs_a_real_replacement_and_keeps_the_trail() {
+        let root = temp_root("supersede");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        let old = registry
+            .capture(draft("antiga", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+        let new = registry
+            .capture(draft("nova", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+
+        assert!(registry.supersede(&old.id, &old.id).is_err(), "nada substitui a si mesma");
+        assert!(
+            registry.supersede(&old.id, "guidance-999999").is_err(),
+            "substituta tem de existir"
+        );
+
+        let superseded = registry.supersede(&old.id, &new.id).unwrap();
+        assert_eq!(superseded.state, GuidanceState::Superseded);
+        assert!(
+            superseded.provenance.contains(&new.id),
+            "o rastro tem de apontar a substituta: {}",
+            superseded.provenance
+        );
+        // And it no longer steers anything.
+        let applied: Vec<String> = registry
+            .applied_now(&ActivityContext::default())
+            .into_iter()
+            .map(|entry| entry.guidance.id)
+            .collect();
+        assert_eq!(applied, vec![new.id]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Without `mark_used`, `last_used_ms` stays 0 forever and the staleness
+    /// report flags EVERY active rule — a hygiene report that flags everything
+    /// says nothing.
+    #[test]
+    fn marking_used_is_what_makes_the_staleness_report_mean_anything() {
+        let root = temp_root("used");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        let fresh = registry
+            .capture(draft("usada", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+        let idle = registry
+            .capture(draft("esquecida", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+
+        let never_used: Vec<String> = registry
+            .hygiene_with_staleness(10_000, 5_000)
+            .into_iter()
+            .filter_map(|finding| match finding {
+                HygieneFinding::Obsolete { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            never_used.is_empty(),
+            "nunca usada não é obsoleta: chamar de ociosa uma regra criada agora              ensina a ignorar a higiene"
+        );
+
+        // Usada há muito tempo (window 5s, agora 10s, uso em 1s) → obsoleta.
+        assert_eq!(registry.mark_used(&[idle.id.clone()], 1_000).unwrap(), 1);
+        assert_eq!(registry.mark_used(&[fresh.id.clone()], 9_000).unwrap(), 1);
+
+        let after: Vec<String> = registry
+            .hygiene_with_staleness(10_000, 5_000)
+            .into_iter()
+            .filter_map(|finding| match finding {
+                HygieneFinding::Obsolete { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(after, vec![idle.id], "só a que ninguém usou fica obsoleta");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A better provenance replaces the generic one; a blank one is refused,
+    /// because that is worse than "imported steering file: X".
+    #[test]
+    fn provenance_can_be_replaced_but_not_blanked() {
+        let root = temp_root("provenance");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        let imported = registry
+            .import_steering("AGENTS.md", "texto", GuidanceScope::Person, "projeto")
+            .unwrap();
+        assert!(imported.provenance.contains("imported steering file"));
+
+        let updated = registry.set_provenance(&imported.id, "AGENTS.md:6").unwrap();
+        assert_eq!(updated.provenance, "AGENTS.md:6");
+        assert!(registry.set_provenance(&imported.id, "   ").is_err());
+        assert!(registry.set_provenance("guidance-999999", "x").is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A suspended entry must not be stampable as used: it would look alive in
+    /// the next hygiene pass.
+    #[test]
+    fn marking_a_suspended_guidance_used_does_nothing() {
+        let root = temp_root("used-suspended");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = GuidanceRegistry::open(&root).unwrap();
+        let entry = registry
+            .capture(draft("pausada", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .unwrap();
+        registry.suspend(&entry.id).unwrap();
+
+        assert_eq!(registry.mark_used(&[entry.id.clone()], 5_000).unwrap(), 0);
+        assert_eq!(
+            registry.list()[0].last_used_ms,
+            0,
+            "guidance suspensa não recebe marca de uso"
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 }

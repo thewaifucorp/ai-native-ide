@@ -25,6 +25,18 @@ import { HarnessProviderState, HarnessSnapshot } from '../../common/harness-prot
 import { CONFLICT_PROVIDER_ID, TEST_PROVIDER_ID } from '../../common/harness-test-provider';
 import {
     CMD_BROKER_TRAIL,
+    CMD_DURABLE_ATTACH,
+    CMD_DURABLE_INTENT,
+    CMD_DURABLE_READ,
+    CMD_DURABLE_REGISTER,
+    CMD_LIBRARY_CAPTURE,
+    CMD_LIBRARY_LIFECYCLE,
+    CMD_LIBRARY_READ,
+    CMD_SETTINGS_PROFILE,
+    CMD_SETTINGS_READ,
+    CMD_SETTINGS_RESET,
+    CMD_TRUTH_DECLARE,
+    CMD_TRUTH_SYNC,
     CMD_PACKS_APPLY,
     CMD_PACKS_INSTALL,
     CMD_PACKS_REFRESH,
@@ -86,6 +98,9 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderCapabilities()}
                 {this.renderExternal()}
                 {this.renderWorkbench()}
+                {this.renderLibrary()}
+                {this.renderSettings()}
+                {this.renderDurable()}
                 {this.renderPacks()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
@@ -527,6 +542,525 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     onClick={() => this.commands.executeCommand(CMD_PACKS_REFRESH)}
                 >
                     {busy ? 'lendo…' : 'Ler packs'}
+                </button>
+            </div>
+        );
+    }
+
+    // ── §13 biblioteca de guidance, autoridade, config e projeto durável ────
+
+    /** Campos em digitação (captura de guidance, registro de projeto). */
+    protected drafts: Record<string, string> = {};
+
+    protected draft(key: string): string {
+        return this.drafts[key] ?? '';
+    }
+
+    protected setDraft(key: string, value: string): void {
+        this.drafts[key] = value;
+        this.update();
+    }
+
+    protected input(key: string, placeholder: string): React.ReactNode {
+        return (
+            <input
+                className="cap-input"
+                placeholder={placeholder}
+                value={this.draft(key)}
+                onChange={event => this.setDraft(key, event.target.value)}
+            />
+        );
+    }
+
+    /**
+     * A GUIDANCE LIBRARY e o TRUTH REGISTRY (§13).
+     *
+     * A distinção que a tela existe para manter visível: `candidata` NÃO dirige
+     * agente. Importar (arquivo de steering, detecção do §5) cria candidata;
+     * promover é um ato, e só depois dele a orientação entra no contexto
+     * compilado. Por isso cada linha mostra o estado, e as ativas dizem
+     * explicitamente que estão no contexto de agora.
+     *
+     * Higiene e conflito de autoridade são exibidos, nunca resolvidos sozinhos:
+     * duplicata, regra pontual salva como permanente e obsolescência são
+     * findings do motor para alguém revisar.
+     */
+    protected renderLibrary(): React.ReactNode {
+        const library = this.store.library;
+        const busy = this.store.libraryBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !library
+                ? 'não lida'
+                : `${library.appliedNow.length} no contexto · ${
+                      library.guidance.filter(g => g.state === 'candidate').length
+                  } candidata(s)`;
+
+        return this.section(
+            'library',
+            'Guidance e autoridade',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!library && <small>não lida — clique em “ler” para abrir a biblioteca</small>}
+                    {library && (
+                        <>
+                            <small>
+                                biblioteca versionada em `{library.libraryPath}/` · candidata não
+                                entra em contexto de agente até ser promovida
+                            </small>
+                            {library.guidance.length === 0 && (
+                                <small>nenhuma orientação neste projeto</small>
+                            )}
+                            {library.guidance.map(entry => {
+                                const applied = library.appliedNow.find(
+                                    a => a.guidance.id === entry.id
+                                );
+                                return (
+                                    <div className="cap-receipt" key={entry.id}>
+                                        <span
+                                            className={`cap-receipt-action ${
+                                                entry.state === 'active'
+                                                    ? ''
+                                                    : entry.state === 'candidate'
+                                                        ? 'check-unknown'
+                                                        : 'check-not_run'
+                                            }`}
+                                        >
+                                            {entry.state}
+                                        </span>
+                                        <span className="cap-receipt-detail">{entry.name}</span>
+                                        <small>
+                                            {entry.strength} · {entry.set} · {entry.origin}
+                                            {applied ? ` · no contexto: ${applied.reason}` : ''}
+                                        </small>
+                                        <small className="cap-evidence">
+                                            {entry.provenance}
+                                            {entry.lastUsedMs > 0
+                                                ? ` · usada em ${new Date(
+                                                      entry.lastUsedMs
+                                                  ).toLocaleString()}`
+                                                : ' · nunca usada em um contexto'}
+                                        </small>
+                                        <div className="cap-actions">
+                                            {entry.state !== 'active' && (
+                                                <button
+                                                    className="cap-btn primary"
+                                                    disabled={busy}
+                                                    title="A partir daqui entra no contexto compilado para o agente"
+                                                    onClick={() =>
+                                                        this.commands.executeCommand(
+                                                            CMD_LIBRARY_LIFECYCLE,
+                                                            entry.id,
+                                                            'active'
+                                                        )
+                                                    }
+                                                >
+                                                    Promover
+                                                </button>
+                                            )}
+                                            {entry.state === 'active' && (
+                                                <button
+                                                    className="cap-btn"
+                                                    disabled={busy}
+                                                    title="Para de dirigir agente e continua recuperável"
+                                                    onClick={() =>
+                                                        this.commands.executeCommand(
+                                                            CMD_LIBRARY_LIFECYCLE,
+                                                            entry.id,
+                                                            'suspended'
+                                                        )
+                                                    }
+                                                >
+                                                    Suspender
+                                                </button>
+                                            )}
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                title="Sai do caminho de steering e fica como histórico"
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        CMD_LIBRARY_LIFECYCLE,
+                                                        entry.id,
+                                                        'archived'
+                                                    )
+                                                }
+                                            >
+                                                Arquivar
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {library.hygiene.length > 0 && (
+                                <>
+                                    <small>
+                                        higiene — findings para revisar, nada é removido sozinho
+                                        (janela de{' '}
+                                        {Math.round(library.stalenessWindowMs / 86400000)} dias)
+                                    </small>
+                                    {library.hygiene.map((finding, index) => (
+                                        <small className="cap-remediation" key={`hyg:${index}`}>
+                                            {finding.kind === 'duplicate' &&
+                                                `duplicada: ${finding.name} (${finding.ids.join(', ')})`}
+                                            {finding.kind === 'point_rule_as_permanent' &&
+                                                `regra pontual salva como permanente: ${finding.name}`}
+                                            {finding.kind === 'obsolete' &&
+                                                `ociosa desde o último uso há ${Math.round(
+                                                    finding.idle_ms / 86400000
+                                                )} dia(s): ${finding.name}`}
+                                        </small>
+                                    ))}
+                                </>
+                            )}
+
+                            <div className="cap-actions">
+                                {this.input('guidance-name', 'nome da orientação')}
+                            </div>
+                            <div className="cap-actions">
+                                {this.input('guidance-text', 'texto — o que vale a partir de agora')}
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy ||
+                                        this.draft('guidance-name').trim().length === 0 ||
+                                        this.draft('guidance-text').trim().length === 0
+                                    }
+                                    title="Capturada como estável e ativa: é texto que você escreveu, no destino que você escolheu"
+                                    onClick={() => {
+                                        this.commands.executeCommand(CMD_LIBRARY_CAPTURE, {
+                                            name: this.draft('guidance-name'),
+                                            text: this.draft('guidance-text'),
+                                            destination: 'create_stable'
+                                        });
+                                        this.setDraft('guidance-name', '');
+                                        this.setDraft('guidance-text', '');
+                                    }}
+                                >
+                                    Capturar (estável)
+                                </button>
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy ||
+                                        this.draft('guidance-name').trim().length === 0 ||
+                                        this.draft('guidance-text').trim().length === 0
+                                    }
+                                    title="Vale só nesta tarefa: destino diferente, lifecycle diferente"
+                                    onClick={() => {
+                                        this.commands.executeCommand(CMD_LIBRARY_CAPTURE, {
+                                            name: this.draft('guidance-name'),
+                                            text: this.draft('guidance-text'),
+                                            destination: 'use_now'
+                                        });
+                                        this.setDraft('guidance-name', '');
+                                        this.setDraft('guidance-text', '');
+                                    }}
+                                >
+                                    Só agora
+                                </button>
+                            </div>
+
+                            <small>
+                                autoridade — quem manda em cada assunto, e quem consome
+                            </small>
+                            {library.truth.length === 0 && (
+                                <small>nenhuma autoridade declarada</small>
+                            )}
+                            {library.truth.map(entry => (
+                                <div className="cap-receipt" key={entry.id}>
+                                    <span className="cap-receipt-action">autoridade</span>
+                                    <span className="cap-receipt-detail">
+                                        {entry.subject} → {entry.authorityPath}
+                                    </span>
+                                    <small>
+                                        precedência {entry.precedence} · consumidores:{' '}
+                                        {entry.consumers.join(', ') || 'nenhum'}
+                                    </small>
+                                    <div className="cap-actions">
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title="Descreve o trabalho de sincronizar e não faz nada"
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_TRUTH_SYNC, entry.id)
+                                            }
+                                        >
+                                            Propor sincronização
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                            {library.conflicts.map((conflict, index) => (
+                                <small className="cap-remediation" key={`conf:${index}`}>
+                                    conflito de autoridade em {conflict.subject}:{' '}
+                                    {conflict.ids.join(' × ')} — precedência não resolve isso
+                                    sozinha
+                                </small>
+                            ))}
+                            <div className="cap-actions">
+                                {this.input('truth-subject', 'assunto')}
+                                {this.input('truth-path', 'arquivo que manda')}
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy ||
+                                        this.draft('truth-subject').trim().length === 0 ||
+                                        this.draft('truth-path').trim().length === 0
+                                    }
+                                    onClick={() => {
+                                        this.commands.executeCommand(
+                                            CMD_TRUTH_DECLARE,
+                                            this.draft('truth-subject'),
+                                            this.draft('truth-path')
+                                        );
+                                        this.setDraft('truth-subject', '');
+                                        this.setDraft('truth-path', '');
+                                    }}
+                                >
+                                    Declarar autoridade
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_LIBRARY_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler biblioteca'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * CONFIGURAÇÃO (§13): um schema para o painel e para o arquivo.
+     *
+     * Cada campo mostra de onde o valor veio — default reversível, detecção, ou
+     * escolha de pessoa — e a consequência em linguagem simples. Escolha de
+     * pessoa nunca é sobrescrita por detecção; é para isso que a origem existe.
+     * Campo que ninguém consome ainda aparece marcado, não escondido: esconder
+     * faria o painel e o arquivo discordarem.
+     */
+    protected renderSettings(): React.ReactNode {
+        const settings = this.store.settings;
+        const busy = this.store.settingsBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !settings
+                ? 'não lida'
+                : `${settings.rows.filter(r => r.source === 'user').length} escolha(s) de pessoa`;
+
+        return this.section(
+            'settings',
+            'Configuração do projeto',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!settings && <small>não lida — clique em “ler” para abrir a configuração</small>}
+                    {settings && (
+                        <>
+                            <small>
+                                o painel e `{settings.path}` são a mesma coisa · origem de cada
+                                valor fica dita
+                            </small>
+                            {settings.rows.map(row => (
+                                <div className="cap-receipt" key={row.field}>
+                                    <span
+                                        className={`cap-receipt-action ${
+                                            row.source === 'user' ? '' : 'check-not_run'
+                                        }`}
+                                    >
+                                        {row.source}
+                                    </span>
+                                    <span className="cap-receipt-detail">
+                                        {row.label}: {row.value}
+                                    </span>
+                                    <small>{row.explain}</small>
+                                    {row.declaredNotWired && (
+                                        <small className="cap-remediation">
+                                            declarado e ainda não consumido por nada
+                                        </small>
+                                    )}
+                                    {row.source !== 'default' && (
+                                        <div className="cap-actions">
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        CMD_SETTINGS_RESET,
+                                                        row.field
+                                                    )
+                                                }
+                                            >
+                                                Voltar ao default
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            <small>perfis de layout — só reorganizam painéis</small>
+                            <div className="cap-actions">
+                                {settings.profiles.map(profile => (
+                                    <button
+                                        className="cap-btn"
+                                        key={profile.name}
+                                        disabled={busy}
+                                        title={`layout ${profile.layout} · profundidade ${profile.depth}`}
+                                        onClick={() =>
+                                            this.commands.executeCommand(
+                                                CMD_SETTINGS_PROFILE,
+                                                profile.name
+                                            )
+                                        }
+                                    >
+                                        {profile.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_SETTINGS_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler configuração'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * PROJETO DURÁVEL (§13).
+     *
+     * Abrir uma pasta não é escolher um projeto. Um projeto durável tem título,
+     * uma intenção que alguém escreveu, e os recursos que ele abrange — pode ser
+     * mais de uma pasta ou repo. É o que reabrir recupera sem transcript nenhum.
+     */
+    protected renderDurable(): React.ReactNode {
+        const durable = this.store.durable;
+        const busy = this.store.durableBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !durable
+                ? 'não lido'
+                : durable.project
+                    ? `${durable.resources.length} recurso(s)`
+                    : 'não registrado';
+
+        return this.section(
+            'durable',
+            'Projeto durável',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!durable && <small>não lido — clique em “ler” para abrir o registro</small>}
+                    {durable && !durable.project && (
+                        <>
+                            <p className="cap-detail">{durable.notRegisteredReason}</p>
+                            <div className="cap-actions">{this.input('durable-title', 'título')}</div>
+                            <div className="cap-actions">
+                                {this.input('durable-intent', 'intenção — para que este projeto existe')}
+                                <button
+                                    className="cap-btn primary"
+                                    disabled={
+                                        busy ||
+                                        this.draft('durable-title').trim().length === 0 ||
+                                        this.draft('durable-intent').trim().length === 0
+                                    }
+                                    onClick={() =>
+                                        this.commands.executeCommand(
+                                            CMD_DURABLE_REGISTER,
+                                            this.draft('durable-title'),
+                                            this.draft('durable-intent')
+                                        )
+                                    }
+                                >
+                                    Registrar projeto
+                                </button>
+                            </div>
+                        </>
+                    )}
+                    {durable?.project && (
+                        <>
+                            <div className="cap-head">
+                                <b>{durable.project.title}</b>
+                                <span className="cap-pill ready">registrado</span>
+                            </div>
+                            <small>{durable.project.intent}</small>
+                            <small className="cap-evidence">
+                                {durable.storePath} · id {durable.project.id}
+                            </small>
+                            {durable.resources.map(resource => (
+                                <div className="cap-receipt" key={resource.id}>
+                                    <span className="cap-receipt-action">{resource.kind}</span>
+                                    <span className="cap-receipt-detail">
+                                        {resource.canonical_path}
+                                    </span>
+                                </div>
+                            ))}
+                            <div className="cap-actions">
+                                {this.input('durable-attach', 'caminho de outra pasta ou repo')}
+                                <button
+                                    className="cap-btn"
+                                    disabled={busy || this.draft('durable-attach').trim().length === 0}
+                                    onClick={() => {
+                                        this.commands.executeCommand(
+                                            CMD_DURABLE_ATTACH,
+                                            this.draft('durable-attach'),
+                                            'repository'
+                                        );
+                                        this.setDraft('durable-attach', '');
+                                    }}
+                                >
+                                    Anexar recurso
+                                </button>
+                            </div>
+                            <div className="cap-actions">
+                                {this.input('durable-new-intent', 'reescrever a intenção')}
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy || this.draft('durable-new-intent').trim().length === 0
+                                    }
+                                    onClick={() => {
+                                        this.commands.executeCommand(
+                                            CMD_DURABLE_INTENT,
+                                            this.draft('durable-new-intent')
+                                        );
+                                        this.setDraft('durable-new-intent', '');
+                                    }}
+                                >
+                                    Reescrever intenção
+                                </button>
+                            </div>
+                        </>
+                    )}
+                    {durable?.gaps.map((gap, index) => (
+                        <small className="cap-remediation" key={`gap:${index}`}>
+                            ainda não: {gap}
+                        </small>
+                    ))}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_DURABLE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler projeto'}
                 </button>
             </div>
         );

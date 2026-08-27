@@ -8,6 +8,14 @@ import * as path from 'path';
 import * as readline from 'readline';
 import {
     AgentEvent,
+    CaptureRequest,
+    Guidance,
+    GuidanceState,
+    LibrarySnapshot,
+    ProjectSnapshot,
+    SettingsPatch,
+    SettingsSnapshot,
+    SyncProposal,
     AgentProbe,
     BrokerActivity,
     EngineService,
@@ -306,5 +314,117 @@ export class EngineSidecarService implements EngineService {
 
     contextCompile(root: string, budgetChars?: number): Promise<ContextPackage> {
         return this.call('context_compile', { root, budget_chars: budgetChars });
+    }
+
+    // ── §13 Guidance Library + Truth Registry ─────────────────────────────────
+
+    librarySnapshot(root: string): Promise<LibrarySnapshot> {
+        return this.call('library_snapshot', { root });
+    }
+
+    libraryCapture(root: string, request: CaptureRequest): Promise<LibrarySnapshot> {
+        return this.call('library_capture', {
+            root,
+            name: request.name,
+            text: request.text,
+            guidanceType: request.guidanceType,
+            application: request.application,
+            strength: request.strength,
+            owner: request.owner,
+            provenance: request.provenance,
+            destination: request.destination
+        });
+    }
+
+    libraryImport(
+        root: string,
+        name: string,
+        text: string,
+        provenance?: string,
+        owner?: string
+    ): Promise<Guidance> {
+        return this.call('library_import', { root, name, text, provenance, owner });
+    }
+
+    libraryLifecycle(
+        root: string,
+        id: string,
+        to: GuidanceState,
+        by?: string
+    ): Promise<LibrarySnapshot> {
+        return this.call('library_lifecycle', { root, id, to, by });
+    }
+
+    truthDeclare(
+        root: string,
+        subject: string,
+        authorityPath: string,
+        precedence?: number,
+        provenance?: string
+    ): Promise<LibrarySnapshot> {
+        return this.call('library_truth_declare', {
+            root,
+            subject,
+            authority_path: authorityPath,
+            precedence,
+            provenance
+        });
+    }
+
+    truthConsumer(root: string, id: string, consumer: string): Promise<LibrarySnapshot> {
+        return this.call('library_truth_consumer', { root, id, consumer });
+    }
+
+    truthSync(root: string, id: string, upToDate: string[] = []): Promise<SyncProposal> {
+        return this.call('library_truth_sync', { root, id, up_to_date: upToDate });
+    }
+
+    // ── §13 config ────────────────────────────────────────────────────────────
+
+    settingsSnapshot(root: string): Promise<SettingsSnapshot> {
+        return this.call('settings_snapshot', { root });
+    }
+
+    settingsPatch(root: string, patch: SettingsPatch): Promise<SettingsSnapshot> {
+        return this.call('settings_patch', { root, ...patch });
+    }
+
+    settingsProfile(root: string, profile: string): Promise<SettingsSnapshot> {
+        return this.call('settings_profile', { root, profile });
+    }
+
+    settingsReset(root: string, field: string): Promise<SettingsSnapshot> {
+        return this.call('settings_reset', { root, field });
+    }
+
+    settingsDetected(
+        root: string,
+        git: boolean,
+        agent: boolean,
+        aag: boolean
+    ): Promise<SettingsSnapshot> {
+        return this.call('settings_detected', { root, git, agent, aag });
+    }
+
+    // ── §13 durable project ───────────────────────────────────────────────────
+
+    projectSnapshot(root: string): Promise<ProjectSnapshot> {
+        return this.call('project_snapshot', { root });
+    }
+
+    projectRegister(root: string, title: string, intent: string): Promise<ProjectSnapshot> {
+        return this.call('project_register', { root, title, intent });
+    }
+
+    projectAttach(
+        root: string,
+        path: string,
+        kind: 'directory' | 'repository' = 'directory'
+    ): Promise<ProjectSnapshot> {
+        return this.call('project_attach', { root, path, kind });
+    }
+
+    projectIntent(root: string, intent: string): Promise<ProjectSnapshot> {
+        return this.call('project_intent', { root, intent });
     }
 }

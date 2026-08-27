@@ -36,8 +36,14 @@ ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
 #  - ide-context: the REAL deterministic context compiler (§6) — ordering,
 #                 verbatim policy segments and honest budget drops. It reads no
 #                 disk either, so `context.rs` gathers the declared material.
+#  - ide-context / ide-guidance: the REAL context compiler (§6) and the REAL
+#    Guidance Library + Truth Registry (§13). `ide-guidance` owns its own
+#    persistence (`.guidance/registry.json` + a Markdown mirror per set), which is
+#    why the library module here is thin.
 ide-context = { path = "../../../crates/ide-context" }
 ide-guidance = { path = "../../../crates/ide-guidance" }
+#  - ide-config: the REAL config schema shared by the simple UI and the file (§13)
+ide-config = { path = "../../../crates/ide-config" }
 ide-packs = { path = "../../../crates/ide-packs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

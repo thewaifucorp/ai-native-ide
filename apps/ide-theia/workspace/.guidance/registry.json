@@ -1,0 +1,27 @@
+{
+  "entries": [
+    {
+      "id": "guidance-000000",
+      "name": "Desempate",
+      "guidanceType": "convention",
+      "scope": {
+        "kind": "project",
+        "project_id": "/home/mario/Área de trabalho/waifucorp/ai-native-ide/apps/ide-theia/workspace"
+      },
+      "application": "general",
+      "strength": "suggestion",
+      "origin": "imported",
+      "duration": {
+        "kind": "permanent"
+      },
+      "priority": 0,
+      "owner": "projeto",
+      "provenance": "AGENTS.md:6",
+      "set": "imported",
+      "text": "Um lance precisa exceder estritamente o valor atual para assumir a posição.",
+      "state": "active",
+      "lastUsedMs": 1787859688831
+    }
+  ],
+  "next_seq": 1
+}
