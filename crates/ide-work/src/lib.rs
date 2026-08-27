@@ -186,7 +186,8 @@ fn criterion_state(criterion: &Criterion, observed: &BTreeMap<String, String>) -
 /// subject missing from the map is unobserved, not unchanged.
 pub fn report(items: &[WorkItem], observed: &BTreeMap<String, String>) -> WorkReport {
     let mut problems = Vec::new();
-    let by_id: BTreeMap<&str, &WorkItem> = items.iter().map(|item| (item.id.as_str(), item)).collect();
+    let by_id: BTreeMap<&str, &WorkItem> =
+        items.iter().map(|item| (item.id.as_str(), item)).collect();
 
     // Children, by parent. A parent named by nobody is a fine leaf; a parent that
     // does not exist is a problem the surface has to see.
@@ -225,7 +226,8 @@ pub fn report(items: &[WorkItem], observed: &BTreeMap<String, String>) -> WorkRe
         }
     }
     statuses.sort_by(|a, b| a.id.cmp(&b.id));
-    problems.sort_by(|a, b| (a.id.clone(), a.problem.clone()).cmp(&(b.id.clone(), b.problem.clone())));
+    problems
+        .sort_by(|a, b| (a.id.clone(), a.problem.clone()).cmp(&(b.id.clone(), b.problem.clone())));
     WorkReport { statuses, problems }
 }
 
@@ -398,7 +400,10 @@ fn status_of<'a>(
         }
         return Ok(StatusReport {
             status: WorkStatus::Verified,
-            reason: format!("{verified}/{} critérios verificados com prova fresca", counted.len()),
+            reason: format!(
+                "{verified}/{} critérios verificados com prova fresca",
+                counted.len()
+            ),
             ..base
         });
     }
@@ -433,7 +438,10 @@ fn status_of<'a>(
         } else if children_any_progress {
             "filhos em andamento, nada verificado aqui".to_string()
         } else {
-            format!("{} critério(s) declarados, nada implementado", counted.len())
+            format!(
+                "{} critério(s) declarados, nada implementado",
+                counted.len()
+            )
         },
         ..base
     })
