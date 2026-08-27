@@ -244,76 +244,6 @@ Defeito meu corrigido no caminho: falha de poll era engolida e o painel ficava e
 `working` para sempre, mentindo. Agora três falhas seguidas param o loop e dizem
 por quê; submit recusado também aparece.
 
-### §4 — Checks determinísticos no Overview
-
-**Pronto e provado no app.** O Overview dizia "checks não executados" porque
-ninguém ligava o fio, não porque faltasse motor: `crates/ide-harness` já
-avaliava fatos observados em findings com estado, evidência e remediação, e já
-mantinha `unknown` e `not_run` separados de aprovação. Só que o único chamador
-de `run_layer0` no repo era o app Tauri antigo — o sidecar do Theia nem
-dependia do crate.
-
-Agora depende. `engine-sidecar/src/harness.rs` colhe os fatos (git porcelain,
-varredura de texto com raiz e limites, lockfiles, efeitos pendentes) e entrega
-ao motor, que continua sem tocar em processo ou disco.
-
-**Comandos são declarados, não detectados**, em `.instrument/checks.json`.
-Detecção de stack com provenance é o §5; adivinhar aqui duplicaria pior e faria
-o IDE rodar algo que ninguém escreveu. Quando o §5 chegar, ele propõe candidatos
-para esse mesmo arquivo.
-
-**Rodar é ato explícito.** `run_tools` é false por padrão: atualizar painel
-nunca executa comando que veio com o repositório.
-
-Medido na tela, com o workspace de demonstração: `2 passou · 2 falhou ·
-1 desconhecido · 2 não executado`, com Git `não executado` ("não é repositório
-Git"), lockfile `falhou`, e Build `passou` mostrando
-`` `node … --check src/main.ts` saiu com código 0 `` — a promessa de que todo
-resultado carrega o comando cru que o produziu, cumprida. `typecheck` aparece
-como não executado dizendo que não há comando declarado para ele.
-
-Dois defeitos meus achados só rodando, ambos com teste: dois findings de lock
-colidindo no mesmo id (o motor chaveia por manifesto — agora é um lock por
-manifesto), e a costura camelCase entre `ide_harness` e o wrapper do sidecar,
-que fazia o contador de "não executado" sumir da tela.
-
-### §5 — Analisar projeto e materiais
-
-**Pronto e provado no app.** Stack, comandos, Git, serviços e integrações lidos
-do projeto e apresentados como CANDIDATOS: nada é gravado, nada é ligado, e
-chamar a análise duas vezes não tem efeito colateral nenhum.
-
-O embrião (`ProductService.candidates`, PROJ-06) já detectava sem gravar; o que
-faltava, e é o coração do §5, é **provenance**. Toda afirmação carrega o
-arquivo, a linha quando existe, e o trecho realmente lido. Sem isso, "este
-projeto usa Rust" é indistinguível de palpite — e palpite de detector é a mesma
-confiança inventada que o resto do IDE recusa. O formato impõe o corolário: sem
-evidência apontável, o candidato não é emitido. Não há campo "inferido".
-
-**Liga no §4:** candidatos de comando têm destino concreto, o
-`.instrument/checks.json` que os checks leem. O §4 decidiu de propósito não
-detectar comando nenhum; a detecção acontece aqui, uma vez, com evidência, e a
-adoção é um clique por comando.
-
-Duas recusas deliberadas, ambas com teste: valor de variável de `.env` **nunca**
-entra na evidência (é onde a credencial mora — só o nome da variável aparece), e
-script que sobe servidor não vira candidato de check (nunca termina, o §4
-esperaria até o watchdog).
-
-Medido na tela do workspace de demonstração: stack Node com evidência
-`package.json — "name": "demo-auction",`, comando `start` com
-`package.json:8 — "start": "node src/main.ts"`, e a marca honesta **"os checks
-não executam este papel"** em vez de um botão de adoção que seria recusado.
-
-Dois defeitos meus achados só rodando: evidência que era só `{` (pontuação
-estrutural não sustenta afirmação nenhuma) e o botão de adoção oferecido para um
-papel que o motor ignora. A lista de papéis executáveis virou fonte única no
-serviço, marcada em cada candidato, para a tela não poder discordar dele.
-
-Adoção coberta por teste (grava só os slugs pedidos, preserva o que foi escrito
-à mão, recusa papel não executável) — não por prova na tela, porque o workspace
-de demonstração não declara build nem test.
-
 ### 2. Workspace técnico
 
 Debug/DAP real com breakpoints, launch/attach, step, stack e variáveis. Terminal/PTy real. Diff/checkpoint/rollback pelo broker. Git, Open VSX e saída raw acessíveis.
@@ -386,11 +316,106 @@ Preview, checks, findings e reconciliação reais; evidence/comandos raw sob dem
 
 **Pronto:** mudar projeto muda Overview e suas evidências.
 
+**PARCIAL (2026-08-26).** Checks, findings, evidência e a regra de honestidade
+estão de pé e provados no app. Preview, reconciliação e pack local NÃO — este
+item continua aberto.
+
+**Falta:**
+
+- **Preview** e **reconciliação** ligados ao shell Theia. `crates/ide-reconciliation`
+  já existe (`PreviewSupervisor`, `PreviewHealth`, `PreviewEvidenceLedger`,
+  `PreviewFailure`, `CausalLinks`) e o único consumidor é o app Tauri antigo — o
+  sidecar do Theia não depende dele. Mesmo padrão do `ide-harness`: motor pronto,
+  fio faltando.
+- **Instalar um pack local.** `crates/ide-packs` existe; falta verificar o que já
+  cobre antes de propor construir.
+
+**Feito e provado:**
+
+O Overview dizia "checks não executados" porque
+ninguém ligava o fio, não porque faltasse motor: `crates/ide-harness` já
+avaliava fatos observados em findings com estado, evidência e remediação, e já
+mantinha `unknown` e `not_run` separados de aprovação. Só que o único chamador
+de `run_layer0` no repo era o app Tauri antigo — o sidecar do Theia nem
+dependia do crate.
+
+Agora depende. `engine-sidecar/src/harness.rs` colhe os fatos (git porcelain,
+varredura de texto com raiz e limites, lockfiles, efeitos pendentes) e entrega
+ao motor, que continua sem tocar em processo ou disco.
+
+**Comandos são declarados, não detectados**, em `.instrument/checks.json`.
+Detecção de stack com provenance é o §5; adivinhar aqui duplicaria pior e faria
+o IDE rodar algo que ninguém escreveu. Quando o §5 chegar, ele propõe candidatos
+para esse mesmo arquivo.
+
+**Rodar é ato explícito.** `run_tools` é false por padrão: atualizar painel
+nunca executa comando que veio com o repositório.
+
+Medido na tela, com o workspace de demonstração: `2 passou · 2 falhou ·
+1 desconhecido · 2 não executado`, com Git `não executado` ("não é repositório
+Git"), lockfile `falhou`, e Build `passou` mostrando
+`` `node … --check src/main.ts` saiu com código 0 `` — a promessa de que todo
+resultado carrega o comando cru que o produziu, cumprida. `typecheck` aparece
+como não executado dizendo que não há comando declarado para ele.
+
+Dois defeitos meus achados só rodando, ambos com teste: dois findings de lock
+colidindo no mesmo id (o motor chaveia por manifesto — agora é um lock por
+manifesto), e a costura camelCase entre `ide_harness` e o wrapper do sidecar,
+que fazia o contador de "não executado" sumir da tela.
+
 ### 5. Analisar projeto e materiais
 
 **Analisar projeto** detecta recursos, stack, comandos, Git, serviços, instruções, integrações e relações. Gera candidates revisáveis de Guidance/SoT/config; referências têm provenance e assets ficam no workspace.
 
 **Pronto:** projeto existente produz análise/candidates reais, sem ativação silenciosa.
+
+**PARCIAL (2026-08-26).** Stack, comandos, Git, serviços e integrações saem com
+provenance e sem ativar nada. O resto do item continua aberto.
+
+**Falta:**
+
+- **Instruções** e **relações** entre materiais.
+- **Candidates de Guidance e de configuração.** Hoje só existem candidates de
+  recurso e SoT, no embrião `ProductService.candidates` (PROJ-06) — e sem
+  provenance, que o serviço novo já resolve para materiais.
+- **Referências com provenance e assets versionados no workspace.**
+
+**Feito e provado:**
+
+Stack, comandos, Git, serviços e integrações lidos
+do projeto e apresentados como CANDIDATOS: nada é gravado, nada é ligado, e
+chamar a análise duas vezes não tem efeito colateral nenhum.
+
+O embrião (`ProductService.candidates`, PROJ-06) já detectava sem gravar; o que
+faltava, e é o coração do §5, é **provenance**. Toda afirmação carrega o
+arquivo, a linha quando existe, e o trecho realmente lido. Sem isso, "este
+projeto usa Rust" é indistinguível de palpite — e palpite de detector é a mesma
+confiança inventada que o resto do IDE recusa. O formato impõe o corolário: sem
+evidência apontável, o candidato não é emitido. Não há campo "inferido".
+
+**Liga no §4:** candidatos de comando têm destino concreto, o
+`.instrument/checks.json` que os checks leem. O §4 decidiu de propósito não
+detectar comando nenhum; a detecção acontece aqui, uma vez, com evidência, e a
+adoção é um clique por comando.
+
+Duas recusas deliberadas, ambas com teste: valor de variável de `.env` **nunca**
+entra na evidência (é onde a credencial mora — só o nome da variável aparece), e
+script que sobe servidor não vira candidato de check (nunca termina, o §4
+esperaria até o watchdog).
+
+Medido na tela do workspace de demonstração: stack Node com evidência
+`package.json — "name": "demo-auction",`, comando `start` com
+`package.json:8 — "start": "node src/main.ts"`, e a marca honesta **"os checks
+não executam este papel"** em vez de um botão de adoção que seria recusado.
+
+Dois defeitos meus achados só rodando: evidência que era só `{` (pontuação
+estrutural não sustenta afirmação nenhuma) e o botão de adoção oferecido para um
+papel que o motor ignora. A lista de papéis executáveis virou fonte única no
+serviço, marcada em cada candidato, para a tela não poder discordar dele.
+
+Adoção coberta por teste (grava só os slugs pedidos, preserva o que foi escrito
+à mão, recusa papel não executável) — não por prova na tela, porque o workspace
+de demonstração não declara build nem test.
 
 ### 6. Contexto do agente e atividade
 
