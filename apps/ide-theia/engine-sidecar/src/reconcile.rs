@@ -209,16 +209,21 @@ fn upsert_intent(
         .and_then(|raw| serde_json::from_str::<DeclaredIntents>(&raw).ok())
         .unwrap_or_default();
 
-    match declared.intents.iter_mut().find(|i| i.id == id) {
-        Some(existing) => {
-            existing.expected = expected.clone();
-            let next = existing
+    // The index is resolved first on purpose: matching on `iter_mut().find(..)`
+    // keeps the mutable borrow alive across both arms, so the "not there yet"
+    // arm could not push.
+    let existing = declared.intents.iter().position(|i| i.id == id);
+    match existing {
+        Some(index) => {
+            let entry = &mut declared.intents[index];
+            entry.expected = expected.clone();
+            let next = entry
                 .revision
                 .as_deref()
                 .and_then(|r| r.parse::<u32>().ok())
                 .map(|r| r + 1)
                 .unwrap_or(2);
-            existing.revision = Some(next.to_string());
+            entry.revision = Some(next.to_string());
         }
         None => declared.intents.push(DeclaredIntent {
             id: id.to_string(),

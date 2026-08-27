@@ -24,6 +24,7 @@
 //!   - `packs_snapshot`  params `{ root, passed, failed }`
 //!   - `packs_install`   params `{ root, path }`
 //!   - `packs_apply` / `packs_revert` params `{ root, pack_id }`
+//!   - `context_compile` params `{ root, budget_chars }` -> the §6 package
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -31,6 +32,7 @@
 //! per (owner, workspace-root), kept in a process-wide registry so the
 //! propose → approve → propose-executes → rollback lifecycle spans requests.
 
+mod context;
 mod harness;
 mod packs;
 mod preview;
@@ -342,6 +344,43 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §6 — the context an agent would receive. Reads only declared material
+        // (.product/guidance, .product/sot) plus evidence the §4 engines
+        // recorded; everything else is reported as excluded or unknown.
+        "context_compile" => {
+            #[derive(Deserialize)]
+            struct ContextParams {
+                root: String,
+                #[serde(default)]
+                budget_chars: Option<usize>,
+            }
+            let p: ContextParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let package = tokio::task::spawn_blocking(move || {
+                // Evidence comes from the preview ledger: it is the only thing in
+                // this process that has actually observed behavior, and the
+                // ledger is what mints evidence ids.
+                let evidence = preview::observations(&root)
+                    .into_iter()
+                    .map(|observation| ide_context::EvidenceRef {
+                        id: observation
+                            .evidence_ids
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| observation.id.clone()),
+                        summary: format!(
+                            "{} observado como {}",
+                            observation.subject, observation.actual
+                        ),
+                        source: observation.subject.clone(),
+                    })
+                    .collect();
+                context::compile_package(&root, p.budget_chars, evidence)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(package).map_err(|e| e.to_string())
         }
         // §4 — reconciliation of declared vs observed behavior.
         "reconcile_scan" => {

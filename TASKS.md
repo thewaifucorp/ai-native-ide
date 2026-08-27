@@ -316,19 +316,40 @@ Preview, checks, findings e reconciliação reais; evidence/comandos raw sob dem
 
 **Pronto:** mudar projeto muda Overview e suas evidências.
 
-**PARCIAL (2026-08-26).** Checks, findings, evidência e a regra de honestidade
-estão de pé e provados no app. Preview, reconciliação e pack local NÃO — este
-item continua aberto.
+**CÓDIGO COMPLETO (2026-08-27), PROVA DO PREVIEW/PACK PENDENTE DE BUILD.**
+Checks, findings, evidência e a regra de honestidade estão provados no app desde
+2026-08-26. Preview, reconciliação e pack local foram escritos e ligados, com
+testes, mas a prova na tela depende de `cargo build --release` no
+`engine-sidecar` — cargo não roda nesta máquina (trava o PC), então esse passo é
+do Mario. Enquanto o binário for o antigo, os três botões novos respondem
+`unknown method` — erro honesto, não silêncio.
 
-**Falta:**
+**O que foi ligado:**
 
-- **Preview** e **reconciliação** ligados ao shell Theia. `crates/ide-reconciliation`
-  já existe (`PreviewSupervisor`, `PreviewHealth`, `PreviewEvidenceLedger`,
-  `PreviewFailure`, `CausalLinks`) e o único consumidor é o app Tauri antigo — o
-  sidecar do Theia não depende dele. Mesmo padrão do `ide-harness`: motor pronto,
-  fio faltando.
-- **Instalar um pack local.** `crates/ide-packs` existe; falta verificar o que já
-  cobre antes de propor construir.
+- `engine-sidecar/src/preview.rs` — declarado em `.instrument/preview.json`,
+  nunca detectado. Spawn, sonda HTTP crua e log ficam aqui; o motor
+  (`PreviewSupervisor`, `PreviewEvidenceLedger`) continua sem tocar sistema.
+  Saída limpa não vira evidência de falha (o motor recusa) e `https://` é dito
+  não-sondável em vez de adivinhado. 6 testes.
+- `engine-sidecar/src/reconcile.rs` — eixo **declarado × observado**, distinto do
+  §3 (que confere intenção contra implementação por claims de `.product/`).
+  Intenção de `.instrument/intents.json`, e url de saúde declarada conta como
+  expectativa, com `source_path` apontando o arquivo. Decidir não resolve:
+  implementação fica `pending_verification` e só é oferecida quando existe efeito
+  real para nomear. 9 testes.
+- `engine-sidecar/src/packs.rs` + `PackRegistry::install`/`install_from_path`/
+  `validate_pack` — disponível, instalado e aplicado são três estados, e nem
+  aplicado fica verde: check de pack sem resultado observado bloqueia readiness
+  (packs são camada 1+, o §4 é camada 0). 6 testes no sidecar, 5 no crate.
+- Tela: cards de Preview e Declarado × observado no Overview, seção de Packs em
+  Ferramentas.
+- Fixtures do workspace: `src/server.ts` (leaderboard que não vaza id de lance) e
+  `packs/leilao-local.pack.json`.
+
+**Falta para fechar:** `cargo build --release` + `cargo test` no
+`apps/ide-theia/engine-sidecar`, e a passada na tela (iniciar preview, matar o
+processo para ver a evidência, decidir a divergência, instalar/aplicar/reverter o
+pack local).
 
 **Feito e provado:**
 
@@ -369,16 +390,39 @@ que fazia o contador de "não executado" sumir da tela.
 
 **Pronto:** projeto existente produz análise/candidates reais, sem ativação silenciosa.
 
-**PARCIAL (2026-08-26).** Stack, comandos, Git, serviços e integrações saem com
-provenance e sem ativar nada. O resto do item continua aberto.
+**PROVADO (2026-08-27, app Theia ativo em `./workspace`).** O item está
+fechado: stack, comandos, Git, serviços e integrações desde 2026-08-26, e agora
+instruções, relações, candidates de Guidance/configuração e referências/assets.
 
-**Falta:**
+**Fechado em 2026-08-27:**
 
-- **Instruções** e **relações** entre materiais.
-- **Candidates de Guidance e de configuração.** Hoje só existem candidates de
-  recurso e SoT, no embrião `ProductService.candidates` (PROJ-06) — e sem
-  provenance, que o serviço novo já resolve para materiais.
-- **Referências com provenance e assets versionados no workspace.**
+- **Instruções** por NOME (AGENTS.md, CLAUDE.md, .cursorrules,
+  copilot-instructions, CONTRIBUTING, .editorconfig) — nome é a convenção
+  pública dessas ferramentas. Medido na tela: AGENTS.md, 608 bytes, quatro
+  seções.
+- **Guidance** candidata por seção, sempre `suggestion`: detector não sabe que
+  uma frase é bloqueante; quem escreveu sabe, e editando o arquivo a força vale
+  (o §6 honra `blocking`/`required` escritos à mão). Seção sem texto não vira
+  orientação.
+- **Configuração** candidata: o preview do §4, com `package.json:8` e
+  `src/server.ts:14 — const PORT = ... ?? 8787`. Sem porta literal, o candidato
+  sai com o buraco declarado em vez de url adivinhada.
+- **Referências com provenance e assets:** URL citada não é baixada (a análise
+  não tem rede); arquivo do projeto citado já é asset versionado aqui; link
+  quebrado não vira linha morta.
+- **Relações** literais: `doc:AGENTS.md → file:src/auction.ts`,
+  `→ command:test`. Parágrafo que não cita nada não gera relação.
+- **Dois regimes de escrita**, e a diferença é o ponto: `.instrument/` grava
+  direto (estado de runtime do IDE); `.product/` vira proposta no broker.
+  Provado na tela: registrar a referência gerou proposta +13/-0, `Permitir` criou
+  `.product/references/ref-https-exemplo-test-sealed-bid-spec.json` com a
+  procedência dentro, e `Reverter` apagou o arquivo.
+- Defeito real achado rodando: o caminho governado só aceitava arquivo
+  existente. Agora pré-imagem ausente é vazia, o diff é todo-adicionado, a
+  proposta carrega `creating` (criar e reescrever apagando tudo dão o mesmo
+  diff), e o diretório só é criado na aprovação — proposta recusada não deixa
+  rastro.
+- 107 testes em `yarn --cwd apps/ide-theia test:ext`.
 
 **Feito e provado:**
 
@@ -422,6 +466,30 @@ de demonstração não declara build nem test.
 Mostrar prompt/contexto efetivo, inclusões/exclusões, origem, versão, escopo, policy e limites. Compilar pacote mínimo; restante só via retrieval governado ou `unknown`. Activity mostra apenas eventos Bastion do projeto, não Control Tower.
 
 **Pronto:** pessoa sabe o que o agente recebeu, sem despejo do projeto inteiro.
+
+**CÓDIGO COMPLETO (2026-08-27), PROVA PENDENTE DO MESMO BUILD DO §4.**
+
+- `engine-sidecar/src/context.rs` liga o `ide-context` real: o pacote mínimo sai
+  de material DECLARADO — guidance adotada em `.product/guidance/` (o que o §5
+  grava) e autoridades de `.product/sot/` — mais a evidência que os motores do §4
+  registraram. Varredura de projeto não entra em nenhum caminho.
+- A tela divide em INCLUÍDO (origem, escopo, motivo, verbatim, prioridade), FORA
+  (material real deixado de fora, com motivo, e a contagem de arquivos do projeto
+  que não entraram — "nada foi despejado" é número), DESCONHECIDO (o que material
+  declarado não responde), POLICY e LIMITES (orçamento e cortes).
+- Retrieval governado não existe: o que falta continua `unknown` em vez de ser
+  preenchido por varredura. Isso está dito na policy do pacote, na tela.
+- Força de guidance: o §5 só escreve `suggestion`; `blocking`/`required` escritos
+  à mão por uma pessoa são honrados e ficam verbatim, imunes ao orçamento.
+  Palavra desconhecida degrada para `suggestion`, nunca promove.
+- Activity: a trilha do broker é dos efeitos Bastion DESTE projeto — evento com
+  caminho fora da raiz é descartado e contado, e a tela diz o escopo ("Control
+  Tower não é lido aqui"). Coberto por teste.
+- 8 testes em `context.rs` (pendentes do cargo) e 1 novo em
+  `governed-write.spec.ts` (rodando).
+
+**Falta para fechar:** mesmo `cargo build --release` do §4, e compilar o contexto
+na tela.
 
 ### 7. Anotações e reconciliação
 

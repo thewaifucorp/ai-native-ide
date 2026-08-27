@@ -33,6 +33,11 @@ ide-agent = { path = "../../../crates/ide-agent" }
 #                 process itself, so gathering those facts is this sidecar's job.
 ide-harness = { path = "../../../crates/ide-harness" }
 ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
+#  - ide-context: the REAL deterministic context compiler (§6) — ordering,
+#                 verbatim policy segments and honest budget drops. It reads no
+#                 disk either, so `context.rs` gathers the declared material.
+ide-context = { path = "../../../crates/ide-context" }
+ide-guidance = { path = "../../../crates/ide-guidance" }
 ide-packs = { path = "../../../crates/ide-packs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

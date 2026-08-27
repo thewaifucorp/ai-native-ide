@@ -18,7 +18,7 @@ import * as path from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { WriteSourceLedger } from './write-source-ledger';
 import { GovernedWriteServiceImpl } from './governed-write-service';
-import { EngineService, Hunk } from 'engine-extension';
+import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
 
 type ProposeResult = { awaiting_approval?: boolean; written?: boolean; path?: string };
 
@@ -70,6 +70,14 @@ class FakeEngine implements Partial<EngineService> {
             throw new Error(`no snapshot exists for ${effectId}`);
         }
         return { rolledback: true };
+    }
+
+    /** What the broker would report as its trail, including a foreign entry. */
+    activityRows: BrokerActivity[] = [];
+
+    async brokerActivity(_root: string, _owner: string): Promise<{ activity: BrokerActivity[] }> {
+        this.calls.push('activity');
+        return { activity: this.activityRows };
     }
 
     /** Outstanding approvals, keyed by effect id, as the gate would hold them. */
@@ -237,6 +245,26 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         assert.strictEqual(proposal.removedLines, 0, 'não há linha anterior para remover');
         // Nem o arquivo nem a pasta aparecem: proposta recusada não deixa rastro.
         assert.strictEqual(fs.existsSync(path.join(root, '.product/guidance')), false);
+    });
+
+    /** §6: a trilha é dos efeitos DESTE projeto. Um evento com caminho fora da
+     *  raiz não pode se misturar — a trilha é evidência sobre este projeto, e
+     *  um feed de frota disfarçado de trilha local não serve para nada. */
+    it('trilha do broker descarta evento fora da raiz do projeto', async () => {
+        const { service, engine, root, rootUri } = fixture();
+        engine.activityRows = [
+            { kind: 'executed', effect_id: 'e1', path: path.join(root, 'alvo.md') },
+            { kind: 'executed', effect_id: 'e2', path: '/outro/projeto/alvo.md' },
+            { kind: 'proposed', effect_id: 'e3' }
+        ];
+
+        const trail = await service.activity(rootUri);
+
+        assert.deepStrictEqual(
+            trail.map(t => t.effect_id),
+            ['e1', 'e3'],
+            'evento sem caminho é neutro de escopo; o de outro projeto sai'
+        );
     });
 
     it('recusa alvo que existe e não é arquivo', async () => {

@@ -75,6 +75,7 @@ export const CMD_PREVIEW_STATUS = 'instrument.preview.status';
 export const CMD_PREVIEW_STOP = 'instrument.preview.stop';
 export const CMD_RECONCILE_SCAN = 'instrument.reconcile.scan';
 export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
+export const CMD_CONTEXT_COMPILE = 'instrument.context.compile';
 export const CMD_PACKS_REFRESH = 'instrument.packs.refresh';
 export const CMD_PACKS_INSTALL = 'instrument.packs.install';
 export const CMD_PACKS_APPLY = 'instrument.packs.apply';
@@ -272,6 +273,10 @@ export class InstrumentCapabilityContribution
                 execute: (divergenceId?: string, choice?: ReconciliationChoice) =>
                     divergenceId && choice ? this.reconcileDecide(divergenceId, choice) : undefined
             }
+        );
+        commands.registerCommand(
+            { id: CMD_CONTEXT_COMPILE, label: 'Instrument: compilar contexto do agente (§6)' },
+            { execute: (budget?: number) => this.compileContext(budget) }
         );
         commands.registerCommand(
             { id: CMD_PACKS_REFRESH, label: 'Instrument: ler packs do projeto (§4)' },
@@ -895,6 +900,26 @@ export class InstrumentCapabilityContribution
             this.messages.error(`Decisão recusada: ${this.msg(err)}`);
         } finally {
             this.store.setReconcileBusy(false);
+        }
+    }
+
+    // ── §6 contexto do agente ─────────────────────────────────────────────
+
+    /** Compila o pacote mínimo e o traz para a tela junto do que ficou fora.
+     *  Nada é enviado a agente nenhum aqui: isto é o que ELE receberia. */
+    protected async compileContext(budgetChars?: number): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setContextBusy(true);
+        try {
+            this.store.setContext(await this.engine.contextCompile(root, budgetChars));
+        } catch (err) {
+            this.messages.error(`Falha ao compilar o contexto: ${this.msg(err)}`);
+            this.store.setContext(undefined);
+        } finally {
+            this.store.setContextBusy(false);
         }
     }
 

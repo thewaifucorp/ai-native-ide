@@ -292,11 +292,40 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
             .reverse();
     }
 
-    /** Straight passthrough of the broker's audit trail — no reinterpretation. */
+    /**
+     * The broker's audit trail for THIS project — no reinterpretation, and no
+     * foreign scope.
+     *
+     * The broker is already keyed by (owner, root), so this should be
+     * project-local by construction. The filter is the guard that says so out
+     * loud (§6): Activity shows Bastion effects of the open project, never a
+     * fleet-wide feed. If an entry ever arrives with a path outside the root, it
+     * is dropped and COUNTED — a silently mixed-in event would make the trail
+     * unusable as evidence about this project.
+     */
     async activity(rootUri: string): Promise<BrokerActivity[]> {
         const rootFsPath = FileUri.fsPath(new URI(rootUri));
         const result = await this.engine.brokerActivity(rootFsPath, OWNER);
-        return result.activity;
+        const root = path.resolve(rootFsPath);
+        const local = result.activity.filter(entry => {
+            if (!entry.path) {
+                // An entry with no path is scope-neutral (the broker keyed it to
+                // this project); keeping it is not a scope leak.
+                return true;
+            }
+            const resolved = path.resolve(entry.path);
+            return resolved === root || resolved.startsWith(`${root}${path.sep}`);
+        });
+        const foreign = result.activity.length - local.length;
+        if (foreign > 0) {
+            // Never swallowed: the count reaches the log, and the ledger note
+            // keeps it attributable.
+            console.warn(
+                `[governed] ${foreign} evento(s) do broker fora de ${rootFsPath} foram ` +
+                    'descartados da trilha do projeto'
+            );
+        }
+        return local;
     }
 
     async rollback(id: string): Promise<WriteProposal> {

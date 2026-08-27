@@ -207,6 +207,12 @@ export interface EngineService {
     packsApply(root: string, packId: string): Promise<PacksSnapshot>;
 
     packsRevert(root: string, packId: string): Promise<PacksSnapshot>;
+
+    // ── §6 contexto do agente (ide-context) ───────────────────────────────────
+
+    /** Compiles the minimum package an agent would receive, plus what was left
+     *  out and what nobody can answer. Never scans the project. */
+    contextCompile(root: string, budgetChars?: number): Promise<ContextPackage>;
 }
 
 /** A check's outcome. `unknown` and `not_run` are distinct absences of
@@ -503,4 +509,61 @@ export interface PacksSnapshot {
     lookedIn: string;
     /** Why no pack check has a result. Never omitted while it is true. */
     noObservedResults?: string | null;
+}
+
+// ── §6 CONTEXTO DO AGENTE (ide-context) ─────────────────────────────────────
+//
+// Mirrors `engine-sidecar/src/context.rs`. The wrapper is camelCase; the
+// compiler's own types (`ide_context`) already serialize camelCase, so this whole
+// surface is camelCase — unlike the §4 preview, where two crates' conventions
+// meet.
+
+/** One piece of material in the compiled package, with why it is there. */
+export interface ContextSegment {
+    /** `guidance:<id>`, `intent`, `truth:<id>`, `evidence:<id>`. */
+    origin: string;
+    scope: string;
+    reason: string;
+    text: string;
+    /** Policies and required/blocking guidance: never dropped for budget. */
+    verbatim: boolean;
+    priority: number;
+}
+
+export interface CompiledContext {
+    segments: ContextSegment[];
+    /** Origins the budget cut. Rendering this is the honesty of the budget. */
+    droppedForBudget: string[];
+    usedChars: number;
+    budgetChars: number;
+}
+
+export interface ContextSourceRow {
+    path: string;
+    /** `guidance`, `authority` or `evidence`. */
+    kind: string;
+    /** Coarse observed version: mtime + byte length. Detects change, never
+     *  claims to know what changed. */
+    version: string;
+}
+
+export interface ContextExclusion {
+    what: string;
+    reason: string;
+}
+
+export interface ContextPackage {
+    compiled: CompiledContext;
+    sources: ContextSourceRow[];
+    /** Real material deliberately left out, each with the reason. */
+    excluded: ContextExclusion[];
+    /** Rules held while compiling, stated as facts about THIS package. */
+    policy: string[];
+    /** What declared material cannot answer. Only governed retrieval could —
+     *  and it does not exist yet, so this stays unknown. */
+    unknown: string[];
+    limits: string[];
+    /** How many project files are NOT in the package. "Nothing was dumped" has
+     *  to be a number, not a promise. */
+    projectFilesNotIncluded: number;
 }

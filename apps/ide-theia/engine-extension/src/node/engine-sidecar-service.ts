@@ -12,6 +12,7 @@ import {
     BrokerActivity,
     EngineService,
     HarnessRun,
+    ContextPackage,
     Hunk,
     PacksSnapshot,
     PreviewSnapshot,
@@ -299,5 +300,11 @@ export class EngineSidecarService implements EngineService {
 
     packsRevert(root: string, packId: string): Promise<PacksSnapshot> {
         return this.call('packs_revert', { root, pack_id: packId });
+    }
+
+    // ── §6 contexto do agente ─────────────────────────────────────────────────
+
+    contextCompile(root: string, budgetChars?: number): Promise<ContextPackage> {
+        return this.call('context_compile', { root, budget_chars: budgetChars });
     }
 }

@@ -13,6 +13,7 @@ import { WriteProposal } from '../common/governed-protocol';
 import { CapabilityState } from '../common/capability-protocol';
 import {
     BrokerActivity,
+    ContextPackage,
     HarnessRun,
     PacksSnapshot,
     PreviewSnapshot,
@@ -115,6 +116,12 @@ export class InstrumentStore {
     //    estados distintos de propósito.
     packs: PacksSnapshot | undefined;
     packsBusy = false;
+
+    // ── REAL pacote de contexto do agente (§6): o que o agente receberia, o
+    //    que ficou de fora com o motivo, e o que ninguém consegue responder a
+    //    partir de material declarado. `undefined` = nem compilado.
+    context: ContextPackage | undefined;
+    contextBusy = false;
 
     // ── REAL análise do projeto (§5): stack, comandos, Git, serviços e
     //    integrações, cada afirmação com a evidência que a sustenta.
@@ -329,6 +336,16 @@ export class InstrumentStore {
         return this.reconciliation
             ? this.reconciliation.divergences.filter(d => !d.reconciliation).length
             : 0;
+    }
+
+    setContext(pkg: ContextPackage | undefined): void {
+        this.context = pkg;
+        this.emit();
+    }
+
+    setContextBusy(busy: boolean): void {
+        this.contextBusy = busy;
+        this.emit();
     }
 
     setChecks(run: HarnessRun | undefined): void {

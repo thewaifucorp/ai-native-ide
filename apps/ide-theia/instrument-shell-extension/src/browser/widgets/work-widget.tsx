@@ -26,6 +26,7 @@ import {
     CMD_PROPOSE_GUIDANCE,
     CMD_REGISTER_REFERENCE,
     CMD_CHECKS_RUN,
+    CMD_CONTEXT_COMPILE,
     CMD_MATERIALS_ANALYZE,
     CMD_PREVIEW_START,
     CMD_PREVIEW_STATUS,
@@ -344,6 +345,136 @@ export class WorkWidget extends AbstractInstrumentWidget {
                         onClick={() => this.commands.executeCommand(CMD_CHECKS_RUN, true)}
                     >
                         Medir e rodar comandos
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    /**
+     * O CONTEXTO DO AGENTE (§6): o que ele receberia, e o que não receberia.
+     *
+     * A tela é dividida assim de propósito, porque é a divisão que responde a
+     * pergunta do item — "a pessoa sabe o que o agente recebeu":
+     *  • INCLUÍDO — cada segmento com origem, escopo, motivo e se é verbatim.
+     *  • FORA — material real deixado de fora, com o motivo, mais a contagem de
+     *    arquivos do projeto que não entraram. "Nada foi despejado" é número.
+     *  • DESCONHECIDO — o que material declarado não responde. Retrieval
+     *    governado não existe ainda, então isto fica desconhecido em vez de ser
+     *    preenchido por varredura.
+     *  • POLICY e LIMITES — as regras que valeram nesta compilação e os cortes.
+     */
+    protected renderContext(): React.ReactNode {
+        const pkg = this.store.context;
+        const busy = this.store.contextBusy;
+
+        if (!pkg) {
+            return (
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Contexto do agente</b>
+                        <span className="cap-pill not-installed">não compilado</span>
+                    </div>
+                    <small className="cap-hint">
+                        pacote mínimo a partir de material declarado (`.product/guidance`,
+                        `.product/sot`) e da evidência observada · o projeto inteiro nunca entra
+                    </small>
+                    <div className="cap-actions">
+                        <button
+                            className="cap-btn"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_CONTEXT_COMPILE)}
+                        >
+                            {busy ? 'compilando…' : 'Compilar contexto'}
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const { compiled } = pkg;
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Contexto do agente</b>
+                    <span className={`cap-pill ${compiled.segments.length > 0 ? 'ready' : 'not-installed'}`}>
+                        {compiled.segments.length} segmento(s)
+                    </span>
+                </div>
+                <small className="cap-hint">
+                    {compiled.usedChars} de {compiled.budgetChars} caracteres ·{' '}
+                    {pkg.projectFilesNotIncluded} arquivo(s) do projeto fora do pacote
+                </small>
+
+                {compiled.segments.map(segment => (
+                    <div className="cap-receipt" key={segment.origin}>
+                        <span className="cap-receipt-action">
+                            {segment.verbatim ? 'verbatim' : 'incluído'}
+                        </span>
+                        <span className="cap-receipt-detail">{segment.origin}</span>
+                        <small>
+                            escopo {segment.scope} · {segment.reason} · prioridade{' '}
+                            {segment.priority}
+                        </small>
+                        <small className="cap-evidence">{segment.text}</small>
+                    </div>
+                ))}
+
+                {compiled.droppedForBudget.length > 0 && (
+                    <p className="cap-detail">
+                        cortado pelo orçamento: {compiled.droppedForBudget.join(', ')}
+                    </p>
+                )}
+
+                <small className="cap-hint">Origem e versão do material lido</small>
+                {pkg.sources.map((source, index) => (
+                    <small className="cap-evidence" key={`${source.path}:${index}`}>
+                        {source.kind} · {source.path} · {source.version}
+                    </small>
+                ))}
+
+                <small className="cap-hint">Fora do pacote</small>
+                {pkg.excluded.map((exclusion, index) => (
+                    <div className="cap-receipt" key={`${exclusion.what}:${index}`}>
+                        <span className="cap-receipt-action check-not_run">fora</span>
+                        <span className="cap-receipt-detail">{exclusion.what}</span>
+                        <small>{exclusion.reason}</small>
+                    </div>
+                ))}
+
+                {pkg.unknown.length > 0 && (
+                    <>
+                        <small className="cap-hint">
+                            Desconhecido — só retrieval governado responderia, e ele não existe
+                            ainda
+                        </small>
+                        {pkg.unknown.map((item, index) => (
+                            <div className="cap-receipt" key={`unknown:${index}`}>
+                                <span className="cap-receipt-action check-unknown">desconhecido</span>
+                                <span className="cap-receipt-detail">{item}</span>
+                            </div>
+                        ))}
+                    </>
+                )}
+
+                {pkg.policy.map((rule, index) => (
+                    <small className="cap-hint" key={`policy:${index}`}>
+                        policy: {rule}
+                    </small>
+                ))}
+                {pkg.limits.map((limit, index) => (
+                    <small className="cap-remediation" key={`limit:${index}`}>
+                        limite: {limit}
+                    </small>
+                ))}
+
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_CONTEXT_COMPILE)}
+                    >
+                        {busy ? 'compilando…' : 'Compilar de novo'}
                     </button>
                 </div>
             </div>
@@ -964,6 +1095,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
         return (
             <div className="h-sec">
                 {this.renderChecks()}
+                {this.renderContext()}
                 {this.renderPreview()}
                 {this.renderReconciliation()}
                 {this.renderMaterials()}

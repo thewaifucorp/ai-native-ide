@@ -543,6 +543,13 @@ export class ToolsWidget extends AbstractInstrumentWidget {
             summary,
             () => (
                 <div className="cap-card">
+                    {/* §6: escopo dito na tela. Esta trilha é dos efeitos Bastion
+                        DESTE projeto — não é feed de frota, e o Control Tower não
+                        é lido aqui. Evento com caminho fora da raiz é descartado
+                        e contado no log do backend. */}
+                    <small>
+                        efeitos Bastion deste projeto · Control Tower não é lido aqui
+                    </small>
                     {trail === undefined && <small>não lida — clique em “ler” para buscar do broker</small>}
                     {trail && trail.length === 0 && <small>o broker não registrou eventos neste projeto</small>}
                     {trail && trail.map((entry, index) => (

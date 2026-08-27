@@ -49,7 +49,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
