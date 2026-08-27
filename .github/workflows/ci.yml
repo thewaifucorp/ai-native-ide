@@ -50,6 +50,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test --workspace
+      # apps/ide-theia/engine-sidecar is deliberately its own Cargo workspace
+      # (see the comment at the top of its Cargo.toml), so `--workspace` above
+      # never reaches it. §4/§6/§7/§8/§13 live there — test it explicitly.
+      - name: Rust tests (engine sidecar)
+        run: cargo test --manifest-path apps/ide-theia/engine-sidecar/Cargo.toml
       - name: Build Tauri Linux bundle
         run: npm run build
       - name: Smoke installed Tauri Linux artifact
@@ -60,6 +65,28 @@ jobs:
           name: ai-native-ide-linux-${{ github.sha }}
           path: target/release/bundle/
           if-no-files-found: error
+
+  theia-extensions:
+    name: Theia extension tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache yarn cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yarn
+          key: yarn-ide-theia-${{ hashFiles('apps/ide-theia/yarn.lock') }}
+          restore-keys: yarn-ide-theia-
+      # `--ignore-scripts` on purpose: this job type-checks and unit-tests the
+      # instrument-shell-extension, it does not build the Theia bundle, so the
+      # native postinstall steps (drivelist, nsfw, theia prepare) are dead weight.
+      - name: Install Theia app dependencies
+        run: yarn --cwd apps/ide-theia install --frozen-lockfile --ignore-scripts
+      - name: Extension tests
+        run: yarn --cwd apps/ide-theia test:ext
 
   windows-installer:
     name: Windows installer
