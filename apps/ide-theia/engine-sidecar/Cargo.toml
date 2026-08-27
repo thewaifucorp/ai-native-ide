@@ -43,7 +43,11 @@ ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
 ide-context = { path = "../../../crates/ide-context" }
 ide-guidance = { path = "../../../crates/ide-guidance" }
 #  - ide-config: the REAL config schema shared by the simple UI and the file (§13)
+#  - ide-modes:  the REAL mode/permission policy (§14). It decides WHEN the IDE
+#                asks; it never lets an effect skip the broker, so `policy.rs` is
+#                consulted before a governed write and decides nothing itself.
 ide-config = { path = "../../../crates/ide-config" }
+ide-modes = { path = "../../../crates/ide-modes" }
 #  - ide-semantic: the REAL Layer-1 evaluators (§8). Findings are HYPOTHESES —
 #    they never block and never enter agent context.
 ide-semantic = { path = "../../../crates/ide-semantic" }

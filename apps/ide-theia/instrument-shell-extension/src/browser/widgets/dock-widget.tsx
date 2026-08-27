@@ -21,6 +21,7 @@ import {
     CMD_GOVERNED_APPROVE,
     CMD_GOVERNED_ROLLBACK
 } from '../instrument-data-contribution';
+import { WriteProposal } from '../../common/governed-protocol';
 
 @injectable()
 export class DockWidget extends AbstractInstrumentWidget {
@@ -128,11 +129,22 @@ export class DockWidget extends AbstractInstrumentWidget {
             </div>
         );
         if (p.state === 'approved') {
+            const auto = p.policy?.autoApproved === true;
             return (
                 <div className="decision resolved" id="iws-decision-card">
-                    <div className="st-row">ESCRITA APLICADA</div>
+                    <div className="st-row">
+                        {auto ? 'ESCRITA APLICADA SEM PERGUNTAR' : 'ESCRITA APLICADA'}
+                    </div>
                     <h4>{p.relPath} — gravado no arquivo real</h4>
                     <p>{summary}. Os bytes propostos foram escritos no disco (visível no Monaco). O snapshot anterior continua restaurável.</p>
+                    {auto && (
+                        <p>
+                            Ninguém foi perguntado porque a política do projeto disse para não
+                            perguntar. A escrita passou pelo broker do mesmo jeito: tem snapshot,
+                            tem recibo na trilha e o Reverter abaixo funciona.
+                        </p>
+                    )}
+                    {this.renderPolicy(p)}
                     {diff}
                     <div className="acts">
                         <button className="btn" onClick={() => this.commands.executeCommand(CMD_GOVERNED_ROLLBACK)}>Reverter (rollback)</button>
@@ -170,12 +182,38 @@ export class DockWidget extends AbstractInstrumentWidget {
                         : 'Um snapshot reversível é tirado antes — nada foi escrito ainda.'}
                 </p>
                 {p.warning && <p style={{ color: 'var(--need)' }}>{p.warning}</p>}
+                {this.renderPolicy(p)}
                 {diff}
                 <div className="acts">
                     <button className="btn" onClick={() => this.commands.executeCommand(CMD_GOVERNED_PROPOSE)}>Recalcular</button>
                     <button className="btn pri" onClick={() => this.commands.executeCommand(CMD_GOVERNED_APPROVE)}>Permitir<span className="kbd">⏎</span></button>
                 </div>
             </div>
+        );
+    }
+
+    /**
+     * §14 — the rule in force, named on the card that obeys it.
+     *
+     * Without this the button reads as a law of nature; with it, "Permitir"
+     * visibly comes from a mode and a permission the person set and can change.
+     * When the policy engine did not answer, that is said too — the card never
+     * implies a rule was applied when none was consulted.
+     */
+    protected renderPolicy(p: WriteProposal): React.ReactNode {
+        if (!p.policy) {
+            return (
+                <p className="pol">
+                    política de efeito indisponível — esta proposta ficou aguardando decisão,
+                    que é o lado que não perde dado
+                </p>
+            );
+        }
+        return (
+            <p className="pol">
+                modo <b>{p.policy.mode}</b> · permissões <b>{p.policy.permissions}</b>
+                {p.policy.scoped ? ' (regra com escopo próprio)' : ''} — {p.policy.explain}
+            </p>
         );
     }
 

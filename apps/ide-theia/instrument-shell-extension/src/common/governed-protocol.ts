@@ -58,6 +58,39 @@ export interface WriteProposal {
      * is still an anomaly, and hiding it would be the whole problem again.
      */
     warning?: string;
+    /**
+     * §14 — WHO decided this proposal's fate: the project's mode and effective
+     * permission, from `ide-modes` over `.instrument/config.json`.
+     *
+     * It is on every proposal, including the ones that stop for approval, so the
+     * card can name the rule in force instead of leaving "Permitir" looking like
+     * a constant of the universe. Absent only when the policy engine could not be
+     * reached — and then the proposal awaits approval, which is the safe side.
+     */
+    policy?: EffectPolicy;
+}
+
+/** The mode/permission rule that decided one effect, as the card shows it. */
+export interface EffectPolicy {
+    /** `full_vibes` | `hybrid` | `spec`. */
+    mode: string;
+    /** Effective permission for this file, scoped override included. */
+    permissions: string;
+    /** True when a scoped override, not the project-wide value, decided. */
+    scoped: boolean;
+    /** `require_approval` | `auto_approve_recorded`. */
+    decision: string;
+    /** What the mode asks around the effect (checkpoint, contract, hypothesis). */
+    interruption: string;
+    /** Plain sentence naming what decided and what follows. */
+    explain: string;
+    /**
+     * True when this write executed WITHOUT a per-effect prompt because the
+     * policy said so. It still crossed the broker, still has a snapshot and still
+     * has a rollback — Yolo changes when the IDE asks, never whether the effect
+     * is governed.
+     */
+    autoApproved?: boolean;
 }
 
 /**

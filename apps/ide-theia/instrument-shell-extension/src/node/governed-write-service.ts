@@ -33,6 +33,7 @@ import * as path from 'path';
 import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
 import { WriteSourceLedger } from './write-source-ledger';
 import {
+    EffectPolicy,
     GovernedWriteService,
     WriteProposal,
     DiffLinePreview
@@ -212,7 +213,56 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         proposal.creating = creating;
         proposal.warning = warning;
         this.records.set(id, { proposal, rootFsPath, relPath, proposed: newContent });
+
+        // ── §14: the MODE decides whether this stops here ──────────────────
+        // A write into the project is a DURABLE effect by definition — the
+        // prototype class belongs to throwaway state (worktree, preview), not to
+        // the project's own files. The engine answers with the project's mode and
+        // the permission that actually applies to this path.
+        const policy = await this.policyFor(rootFsPath, relPath);
+        proposal.policy = policy;
+        if (policy?.decision === 'auto_approve_recorded') {
+            // Yolo does NOT skip the broker: the effect was proposed above, and
+            // approving it here still snapshots, still writes through the broker
+            // and still leaves a rollback. What changed is only that nobody was
+            // asked.
+            const applied = await this.execute(id, true);
+            applied.policy = { ...policy, autoApproved: true };
+            return applied;
+        }
         return proposal;
+    }
+
+    /**
+     * Asks `ide-modes` (through the sidecar) what this effect requires.
+     *
+     * A failure here is NOT a reason to auto-approve: `undefined` leaves the
+     * proposal awaiting a decision, which is the side that cannot lose data. The
+     * card reports the missing answer rather than implying a rule was applied.
+     */
+    protected async policyFor(
+        rootFsPath: string,
+        relPath: string
+    ): Promise<EffectPolicy | undefined> {
+        try {
+            const decision = await this.engine.policyDecide(rootFsPath, 'durable', {
+                resource: relPath
+            });
+            return {
+                mode: decision.mode,
+                permissions: decision.permissions,
+                scoped: decision.scoped,
+                decision: decision.effect,
+                interruption: decision.interruption,
+                explain: decision.explain
+            };
+        } catch (err) {
+            console.warn(
+                `[governed] política de efeito indisponível (${err instanceof Error ? err.message : String(err)}) — ` +
+                    'a proposta fica aguardando decisão'
+            );
+            return undefined;
+        }
     }
 
     /** Build the wire-level proposal from the real diff. */
@@ -249,6 +299,18 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
     }
 
     async approve(id: string): Promise<WriteProposal> {
+        return this.execute(id);
+    }
+
+    /**
+     * Grants and executes one queued effect through the broker.
+     *
+     * Shared by the person clicking "Permitir" and by an auto-approving policy,
+     * ON PURPOSE: there is exactly one way a write reaches disk, so a mode can
+     * change who decides without ever changing what governs. The ledger note says
+     * which of the two it was.
+     */
+    protected async execute(id: string, auto = false): Promise<WriteProposal> {
         const rec = this.require(id);
         // Grant THIS effect, then re-send the identical write: the broker executes
         // it and snapshots the pre-image. No draining and no ordering assumption —
@@ -277,7 +339,12 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
                 `broker did not execute approved effect ${id} (got ${JSON.stringify(written)})`
             );
         }
-        this.ledger.note(rec.rootFsPath, rec.relPath, 'governed', `efeito ${id} aprovado`);
+        this.ledger.note(
+            rec.rootFsPath,
+            rec.relPath,
+            'governed',
+            auto ? `efeito ${id} aprovado pela política do modo` : `efeito ${id} aprovado`
+        );
         rec.proposal.state = 'approved';
         return rec.proposal;
     }

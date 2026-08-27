@@ -255,6 +255,19 @@ export interface EngineService {
 
     // ── §13 config: one schema for the panel and the file ─────────────────────
 
+    /**
+     * §14 — what the project's mode and permissions require for ONE effect.
+     *
+     * Answering is all it does: the caller still proposes through the broker, and
+     * `auto_approve_recorded` only means the IDE does not stop to ask — the
+     * snapshot, the receipt and the rollback are unchanged.
+     */
+    policyDecide(
+        root: string,
+        effectClass: 'durable' | 'prototype',
+        scope?: { project?: string; resource?: string; tool?: string }
+    ): Promise<PolicyDecision>;
+
     settingsSnapshot(root: string): Promise<SettingsSnapshot>;
     settingsPatch(root: string, patch: SettingsPatch): Promise<SettingsSnapshot>;
     settingsProfile(root: string, profile: string): Promise<SettingsSnapshot>;
@@ -810,6 +823,24 @@ export interface SettingRow {
     explain: string;
     /** True when nothing consumes this value yet — marked, never hidden. */
     declaredNotWired: boolean;
+}
+
+/** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */
+export interface PolicyDecision {
+    /** `full_vibes` | `hybrid` | `spec`. */
+    mode: string;
+    /** The EFFECTIVE permission for this context, scoped override included. */
+    permissions: string;
+    /** True when a scoped override, not the project-wide value, decided. */
+    scoped: boolean;
+    /** `prototype` | `durable`. */
+    class: string;
+    /** `require_approval` | `auto_approve_recorded`. */
+    effect: string;
+    /** `proceed` | `proceed_recording_hypothesis` | `require_checkpoint` | `resolve_contract_first`. */
+    interruption: string;
+    /** Plain sentence naming what decided, for the decision card. */
+    explain: string;
 }
 
 export interface SettingsSnapshot {

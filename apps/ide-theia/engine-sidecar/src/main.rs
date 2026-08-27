@@ -43,6 +43,7 @@ mod intent;
 mod library;
 mod notes;
 mod packs;
+mod policy;
 mod project;
 mod settings;
 mod preview;
@@ -706,6 +707,41 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §14 — the mode/permission policy, asked BEFORE a governed effect is
+        // decided. It answers; it never executes and never skips the broker.
+        "policy_decide" => {
+            #[derive(Deserialize)]
+            struct PolicyParams {
+                root: String,
+                #[serde(default = "default_effect_class")]
+                class: String,
+                #[serde(default)]
+                project: Option<String>,
+                #[serde(default)]
+                resource: Option<String>,
+                #[serde(default)]
+                tool: Option<String>,
+            }
+            // Durable is the safe default: an unstated class must not be the one
+            // that skips the question.
+            fn default_effect_class() -> String {
+                "durable".to_string()
+            }
+            let p: PolicyParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let decision = tokio::task::spawn_blocking(move || {
+                policy::decide(
+                    &root,
+                    &p.class,
+                    p.project.as_deref(),
+                    p.resource.as_deref(),
+                    p.tool.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(decision).map_err(|e| e.to_string())
         }
         "settings_patch" => {
             #[derive(Deserialize)]

@@ -18,7 +18,7 @@ import * as path from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { WriteSourceLedger } from './write-source-ledger';
 import { GovernedWriteServiceImpl } from './governed-write-service';
-import { BrokerActivity, EngineService, Hunk } from 'engine-extension';
+import { BrokerActivity, EngineService, Hunk, PolicyDecision } from 'engine-extension';
 
 type ProposeResult = { awaiting_approval?: boolean; written?: boolean; path?: string };
 
@@ -92,6 +92,25 @@ class FakeEngine implements Partial<EngineService> {
         this.grants.add(effectId);
         return { approved_id: 1 };
     }
+
+    /** §14 policy answer. Defaults to the safe side: the project asks. */
+    policyAnswer: PolicyDecision | Error = {
+        mode: 'hybrid',
+        permissions: 'balanced',
+        scoped: false,
+        class: 'durable',
+        effect: 'require_approval',
+        interruption: 'require_checkpoint',
+        explain: 'Hybrid (permissão do projeto balanced): efeito durável exige sua aprovação'
+    };
+
+    async policyDecide(): Promise<PolicyDecision> {
+        this.calls.push('policy');
+        if (this.policyAnswer instanceof Error) {
+            throw this.policyAnswer;
+        }
+        return this.policyAnswer;
+    }
 }
 
 interface Fixture {
@@ -121,9 +140,12 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'antes\ndepois\n');
         assert.strictEqual(proposal.state, 'awaiting');
         assert.strictEqual(proposal.warning, undefined);
-        assert.strictEqual(engine.calls.length, 2);
+        assert.strictEqual(engine.calls.length, 3);
         assert.strictEqual(engine.calls[0], 'diff');
         assert.match(engine.calls[1], /^propose:w[a-z0-9]+-1$/);
+        // §14: the mode is CONSULTED on every proposal, even the ones it leaves
+        // waiting — that is what puts the rule on the decision card.
+        assert.strictEqual(engine.calls[2], 'policy');
     });
 
     it('never reuses an effect id across processes (the actual root cause)', async () => {
@@ -149,7 +171,7 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         // Reverted through the broker's own snapshot, then re-proposed under a
         // fresh id — never reported as awaiting without undoing the write.
         const kinds = engine.calls.map(c => c.split(':')[0]);
-        assert.deepStrictEqual(kinds, ['diff', 'propose', 'rollback', 'propose']);
+        assert.deepStrictEqual(kinds, ['diff', 'propose', 'rollback', 'propose', 'policy']);
         assert.notStrictEqual(proposal.id, engine.calls[1].split(':')[1]);
     });
 
@@ -275,5 +297,98 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
             () => service.proposeWrite(rootUri, 'uma-pasta', 'x'),
             /not a workspace file/
         );
+    });
+});
+
+// §14 — o modo decide QUANDO o IDE pergunta. Nunca decide se o efeito é
+// governado: mesmo sem pergunta, o efeito é proposto, tem snapshot e tem
+// rollback. Um Yolo que pulasse o broker apagaria a trilha inteira, que é
+// exatamente o que os modos existem para não fazer.
+describe('GovernedWriteServiceImpl — §14: o modo decide quando perguntar', () => {
+
+    it('a política viaja na proposta, para o card poder dizer quem decidiu', async () => {
+        const { service, rootUri } = fixture();
+
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'antes\ndepois\n');
+
+        assert.strictEqual(proposal.policy?.mode, 'hybrid');
+        assert.strictEqual(proposal.policy?.permissions, 'balanced');
+        assert.strictEqual(proposal.policy?.decision, 'require_approval');
+        assert.notStrictEqual(proposal.policy?.autoApproved, true);
+    });
+
+    it('yolo aplica sem perguntar — e ainda assim passa pelo broker', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = {
+            mode: 'full_vibes',
+            permissions: 'yolo',
+            scoped: false,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'proceed_recording_hypothesis',
+            explain: 'aprovado sem perguntar — snapshot e recibo continuam'
+        };
+
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'antes\ndepois\n');
+
+        assert.strictEqual(proposal.state, 'approved');
+        assert.strictEqual(proposal.policy?.autoApproved, true);
+        // A ordem prova o que importa: PROPOSTO ao broker antes de qualquer
+        // aprovação, aprovado por effect id, e executado pelo mesmo caminho da
+        // pessoa. Nada de escrita direta.
+        const order = engine.calls.filter(c => c !== 'diff' && c !== 'policy');
+        assert.strictEqual(order.length, 3);
+        assert.match(order[0], /^propose:/);
+        assert.match(order[1], /^approve:/);
+        assert.match(order[2], /^propose:/);
+        assert.strictEqual(order[0], order[2], 'o mesmo efeito é reenviado, não outro');
+    });
+
+    it('escrita auto-aprovada continua reversível pelo snapshot do broker', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = {
+            mode: 'full_vibes',
+            permissions: 'yolo',
+            scoped: false,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'proceed',
+            explain: 'yolo'
+        };
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'x\n');
+
+        const reverted = await service.rollback(proposal.id);
+
+        assert.strictEqual(reverted.state, 'rolledback');
+        assert.ok(engine.calls.some(c => c === `rollback:${proposal.id}`));
+    });
+
+    // Falha da política não pode virar permissão: sem resposta, a proposta espera.
+    it('política indisponível deixa a proposta aguardando, não auto-aprova', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = new Error('sidecar fora do ar');
+
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'x\n');
+
+        assert.strictEqual(proposal.state, 'awaiting');
+        assert.strictEqual(proposal.policy, undefined);
+        assert.ok(!engine.calls.some(c => c.startsWith('approve:')));
+    });
+
+    it('regra com escopo próprio chega ao card como escopada', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.policyAnswer = {
+            mode: 'hybrid',
+            permissions: 'yolo',
+            scoped: true,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'require_checkpoint',
+            explain: 'regra escopada'
+        };
+
+        const proposal = await service.proposeWrite(rootUri, 'alvo.md', 'x\n');
+
+        assert.strictEqual(proposal.policy?.scoped, true);
     });
 });

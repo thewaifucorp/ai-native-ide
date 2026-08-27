@@ -12,6 +12,7 @@ import {
     Guidance,
     GuidanceState,
     LibrarySnapshot,
+    PolicyDecision,
     ProjectSnapshot,
     SettingsPatch,
     SettingsSnapshot,
@@ -384,6 +385,14 @@ export class EngineSidecarService implements EngineService {
     }
 
     // ── §13 config ────────────────────────────────────────────────────────────
+
+    policyDecide(
+        root: string,
+        effectClass: 'durable' | 'prototype',
+        scope: { project?: string; resource?: string; tool?: string } = {}
+    ): Promise<PolicyDecision> {
+        return this.call('policy_decide', { root, class: effectClass, ...scope });
+    }
 
     settingsSnapshot(root: string): Promise<SettingsSnapshot> {
         return this.call('settings_snapshot', { root });
