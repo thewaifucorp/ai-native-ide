@@ -310,7 +310,7 @@ impl PackRegistry {
     ///    verdict already taken; reverting first makes that visible.
     pub fn install(&mut self, pack: Pack) -> anyhow::Result<()> {
         validate_pack(&pack)?;
-        if self.applied.iter().any(|id| *id == pack.id) {
+        if self.applied.contains(&pack.id) {
             anyhow::bail!(
                 "pack {} is applied — revert it before installing over it",
                 pack.id
