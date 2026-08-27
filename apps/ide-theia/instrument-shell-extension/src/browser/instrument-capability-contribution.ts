@@ -31,6 +31,7 @@ import { AnalysisService } from '../common/analysis-protocol';
 import { AgentSessionService } from '../common/agent-session-protocol';
 import { ProductService } from '../common/product-protocol';
 import { HarnessService, HarnessManifest } from '../common/harness-protocol';
+import { WORK_PROVIDER, WORK_PROVIDER_ID } from '../common/work-provider';
 import {
     CONFLICT_PROVIDER,
     TEST_PROVIDER_ID,
@@ -76,6 +77,9 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_DISCARD = 'instrument.session.discard';
+export const CMD_WORK_READ = 'instrument.work.read';
+export const CMD_WORK_ADD = 'instrument.work.add';
+export const CMD_WORK_PROVIDER = 'instrument.work.useDefaultProvider';
 export const CMD_LIFECYCLE_READ = 'instrument.lifecycle.read';
 export const CMD_LIFECYCLE_EXPORT = 'instrument.lifecycle.export';
 export const CMD_LIFECYCLE_DELETE_EXPORT = 'instrument.lifecycle.deleteExport';
@@ -273,6 +277,21 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_DISCARD, label: 'Instrument: descartar a worktree do agente' },
             { execute: () => this.sessionDiscard() }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_READ, label: 'Instrument: ler trabalho e status calculado (§9)' },
+            { execute: () => this.readWork() }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_ADD, label: 'Instrument: declarar item de trabalho (§9)' },
+            {
+                execute: (id?: string, title?: string, kind?: string, parent?: string) =>
+                    id && title ? this.addWorkItem(id, title, kind ?? 'task', parent) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_PROVIDER, label: 'Instrument: usar o provider de trabalho padrão (§9)' },
+            { execute: () => this.useWorkProvider() }
         );
         commands.registerCommand(
             { id: CMD_LIFECYCLE_READ, label: 'Instrument: ler publicações e exports (§16)' },
@@ -1797,6 +1816,91 @@ export class InstrumentCapabilityContribution
             this.store.setSession(await this.session.discard(root));
         } catch (err) {
             this.messages.error(`Falha ao descartar a worktree: ${this.msg(err)}`);
+        }
+    }
+
+    // ── §9 trabalho e status calculado ──────────────────────────────────────
+
+    protected async readWork(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setWorkBusy(true);
+        try {
+            this.store.setWork(await this.engine.workSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler o trabalho: ${this.msg(err)}`);
+            this.store.setWork(undefined);
+        } finally {
+            this.store.setWorkBusy(false);
+        }
+    }
+
+    /**
+     * Declares one item. It carries facts only — no status, because there is no
+     * status to carry: the engine computes it from criteria, implementation and
+     * how fresh the evidence is.
+     */
+    protected async addWorkItem(
+        id: string,
+        title: string,
+        kind: string,
+        parent?: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setWorkBusy(true);
+        try {
+            this.store.setWork(
+                await this.engine.workWriteItem(root, {
+                    id,
+                    title,
+                    kind,
+                    parents: parent ? [parent] : [],
+                    criteria: [],
+                    implementation: []
+                })
+            );
+        } catch (err) {
+            this.messages.error(`Item não foi declarado: ${this.msg(err)}`);
+        } finally {
+            this.store.setWorkBusy(false);
+        }
+    }
+
+    /**
+     * Makes §9 the harness provider of this project — through the SAME registry
+     * every other provider goes through.
+     *
+     * §1 made those three slots single-owner, so a §9 that took them by being
+     * built in would turn that clause into a rule the IDE breaks about itself.
+     * If another provider already owns a slot, activation is REJECTED, and the
+     * rejection is reported instead of being worked around.
+     */
+    protected async useWorkProvider(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        this.store.setWorkBusy(true);
+        try {
+            await this.harness.register(root, WORK_PROVIDER);
+            this.store.setHarness(await this.harness.activate(root, WORK_PROVIDER_ID));
+            this.messages.info(
+                'Provider de trabalho do Instrument ativo: ele passa a ser o dono dos slots ' +
+                'workflow, hierarquia e status principal deste projeto.'
+            );
+            await this.readWork();
+        } catch (err) {
+            this.messages.error(
+                `Provider padrão não foi ativado: ${this.msg(err)} — outro provider já é dono ` +
+                'de um dos slots, e o IDE não junta dois harnesses.'
+            );
+        } finally {
+            this.store.setWorkBusy(false);
         }
     }
 

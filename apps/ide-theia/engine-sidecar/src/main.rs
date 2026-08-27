@@ -49,6 +49,7 @@ mod project;
 mod settings;
 mod preview;
 mod reconcile;
+mod work;
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -707,6 +708,33 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             })
             .await
             .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §9 — trabalho e status. Ler calcula; gravar grava FATO (critério,
+        // implementação, prova), nunca status: o artefato não tem esse campo.
+        "work_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || work::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "work_write_item" => {
+            #[derive(Deserialize)]
+            struct WriteParams {
+                root: String,
+                item: ide_work::WorkItem,
+            }
+            let p: WriteParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || work::write_item(&root, p.item))
+                .await
+                .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §16 — export, publish, republish. Reading and exporting are safe; the

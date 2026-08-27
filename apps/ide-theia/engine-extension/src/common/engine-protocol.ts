@@ -255,6 +255,17 @@ export interface EngineService {
 
     // ── §13 config: one schema for the panel and the file ─────────────────────
 
+    // ── §9 trabalho e status calculado ────────────────────────────────────────
+
+    /** Reads the items and COMPUTES every status over material measured now. */
+    workSnapshot(root: string): Promise<WorkSnapshot>;
+    /**
+     * Writes one item artifact. It takes facts — criteria, implementation,
+     * evidence — and there is deliberately no status parameter: writing a status
+     * has to be impossible, not discouraged.
+     */
+    workWriteItem(root: string, item: WorkItem): Promise<WorkSnapshot>;
+
     // ── §16 publicar e evoluir ────────────────────────────────────────────────
 
     lifecycleSnapshot(root: string): Promise<LifecycleSnapshot>;
@@ -847,6 +858,72 @@ export interface SettingRow {
     explain: string;
     /** True when nothing consumes this value yet — marked, never hidden. */
     declaredNotWired: boolean;
+}
+
+// ── §9 work: Features, Tasks and a status nobody can type ────────────────────
+
+/** What a verification produced, and over WHAT material. */
+export interface WorkEvidence {
+    passed: boolean;
+    atMs: number;
+    /** The subject the proof was taken over (a path, a check id). */
+    subject: string;
+    /** Hash of that subject AT PROOF TIME — what makes proof go stale. */
+    subjectHash: string;
+    note: string;
+}
+
+export interface WorkCriterion {
+    id: string;
+    text: string;
+    evidence?: WorkEvidence;
+    /** Proposed by an agent and not adopted: shown, counted nowhere. */
+    proposed?: boolean;
+}
+
+export interface WorkItem {
+    id: string;
+    title: string;
+    /** `feature` | `task` | `subtask`. */
+    kind: string;
+    /** Items this one serves. Empty = direct task; many = multi-feature task. */
+    parents?: string[];
+    criteria?: WorkCriterion[];
+    /** Subjects that implement this item. */
+    implementation?: string[];
+    /** Reason, when someone declared it blocked. */
+    blocked?: string;
+}
+
+/** A computed status. There is no field anywhere that sets one. */
+export interface WorkStatusReport {
+    id: string;
+    /** One of the seven §9 states, computed. */
+    status: string;
+    /** Why it came out that way — a status nobody can explain is one somebody typed. */
+    reason: string;
+    criteriaTotal: number;
+    criteriaVerified: number;
+    staleCriteria: string[];
+    unobservedSubjects: string[];
+    proposedCriteria: number;
+    children: string[];
+}
+
+export interface WorkHierarchyProblem {
+    id: string;
+    problem: string;
+}
+
+export interface WorkSnapshot {
+    items: WorkItem[];
+    statuses: WorkStatusReport[];
+    problems: WorkHierarchyProblem[];
+    /** Item files that could not be read, with the reason for each. */
+    unreadable: { path: string; problem: string }[];
+    /** Subject → hash measured NOW: the evidence that freshness was measured. */
+    observed: Record<string, string>;
+    itemsDir: string;
 }
 
 // ── §16 lifecycle: export, publish, republish ────────────────────────────────

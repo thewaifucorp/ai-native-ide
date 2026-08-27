@@ -19,6 +19,7 @@ import {
     LibrarySnapshot,
     LifecycleSnapshot,
     PublishAttempt,
+    WorkSnapshot,
     NotesSnapshot,
     ProjectSnapshot,
     SettingsSnapshot,
@@ -152,6 +153,12 @@ export class InstrumentStore {
     //    Abrir pasta não é registrar projeto.
     durable: ProjectSnapshot | undefined;
     durableBusy = false;
+
+    // ── REAL trabalho (§9): itens em arquivo e status CALCULADO. Nenhum campo
+    //    aqui é escrito por alguém: o motor derivou tudo do que os artefatos
+    //    dizem e do material medido agora.
+    work: WorkSnapshot | undefined;
+    workBusy = false;
 
     // ── REAL ciclo de publicação (§16): versões publicadas, exports em disco e
     //    o que cada efeito PODE desfazer. `lifecycleAttempt` guarda a última
@@ -436,6 +443,16 @@ export class InstrumentStore {
 
     setSettingsBusy(busy: boolean): void {
         this.settingsBusy = busy;
+        this.emit();
+    }
+
+    setWork(snapshot: WorkSnapshot | undefined): void {
+        this.work = snapshot;
+        this.emit();
+    }
+
+    setWorkBusy(busy: boolean): void {
+        this.workBusy = busy;
         this.emit();
     }
 

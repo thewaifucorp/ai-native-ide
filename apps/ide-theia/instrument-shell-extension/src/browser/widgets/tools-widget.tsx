@@ -36,6 +36,9 @@ import {
     CMD_LIFECYCLE_EXPORT,
     CMD_LIFECYCLE_PUBLISH,
     CMD_LIFECYCLE_READ,
+    CMD_WORK_ADD,
+    CMD_WORK_PROVIDER,
+    CMD_WORK_READ,
     CMD_SETTINGS_PROFILE,
     CMD_SETTINGS_READ,
     CMD_SETTINGS_RESET,
@@ -105,6 +108,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderLibrary()}
                 {this.renderSettings()}
                 {this.renderDurable()}
+                {this.renderWork()}
                 {this.renderLifecycle()}
                 {this.renderPacks()}
                 {this.renderBrokerTrail()}
@@ -1066,6 +1070,173 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     onClick={() => this.commands.executeCommand(CMD_DURABLE_READ)}
                 >
                     {busy ? 'lendo…' : 'Ler projeto'}
+                </button>
+            </div>
+        );
+    }
+
+    /** Rótulo humano dos sete status calculados. */
+    protected statusLabel(status: string): string {
+        switch (status) {
+            case 'not_started': return 'não iniciado';
+            case 'in_progress': return 'em andamento';
+            case 'implemented_not_verified': return 'implementado, não verificado';
+            case 'partially_verified': return 'parcialmente verificado';
+            case 'verified': return 'verificado';
+            case 'blocked': return 'bloqueado';
+            case 'evidence_stale': return 'evidência desatualizada';
+            default: return status;
+        }
+    }
+
+    /**
+     * TRABALHO (§9).
+     *
+     * Feature → Task → Subtask, com task direta e task servindo mais de uma
+     * feature. O que esta tela mostra de status NUNCA foi escrito por ninguém: o
+     * motor derivou de critério, implementação declarada e frescor da prova, e a
+     * razão vem junto — status sem razão é indistinguível de status digitado.
+     *
+     * O provider é o padrão do harness, não um sistema paralelo: ele toma os
+     * slots pelo mesmo registro que qualquer provider, e um projeto que use GSD
+     * ou Scrum suspende este e ativa o dele.
+     */
+    protected renderWork(): React.ReactNode {
+        const work = this.store.work;
+        const busy = this.store.workBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !work
+                ? 'não lido'
+                : `${work.items.length} item(ns)`;
+        const statusOf = (id: string) => work?.statuses.find(s => s.id === id);
+
+        return this.section(
+            'work',
+            'Trabalho',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!work && <small>não lido — clique em “ler” para calcular os status</small>}
+                    {work && (
+                        <>
+                            <small className="cap-hint">
+                                status é calculado, não escrito: o artefato não tem campo de status ·
+                                task concluída não promove feature · material que muda torna prova
+                                antiga desatualizada · critério proposto por agente aparece e não conta
+                            </small>
+                            <small className="cap-evidence">
+                                itens em {work.itemsDir} · {Object.keys(work.observed).length} assunto(s)
+                                medidos agora
+                            </small>
+
+                            <div className="cap-actions">
+                                {this.input('work-id', 'id do item (sem / nem .)')}
+                                {this.input('work-title', 'título')}
+                            </div>
+                            <div className="cap-actions">
+                                {this.input('work-parent', 'id da feature que ele serve (opcional)')}
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy ||
+                                        this.draft('work-id').trim().length === 0 ||
+                                        this.draft('work-title').trim().length === 0
+                                    }
+                                    onClick={() => {
+                                        this.commands.executeCommand(
+                                            CMD_WORK_ADD,
+                                            this.draft('work-id').trim(),
+                                            this.draft('work-title').trim(),
+                                            'task',
+                                            this.draft('work-parent').trim() || undefined
+                                        );
+                                        this.setDraft('work-id', '');
+                                        this.setDraft('work-title', '');
+                                    }}
+                                >
+                                    Declarar task
+                                </button>
+                                <button
+                                    className="cap-btn"
+                                    disabled={
+                                        busy ||
+                                        this.draft('work-id').trim().length === 0 ||
+                                        this.draft('work-title').trim().length === 0
+                                    }
+                                    onClick={() => {
+                                        this.commands.executeCommand(
+                                            CMD_WORK_ADD,
+                                            this.draft('work-id').trim(),
+                                            this.draft('work-title').trim(),
+                                            'feature'
+                                        );
+                                        this.setDraft('work-id', '');
+                                        this.setDraft('work-title', '');
+                                    }}
+                                >
+                                    Declarar feature
+                                </button>
+                            </div>
+
+                            {work.items.map(item => {
+                                const status = statusOf(item.id);
+                                return (
+                                    <div className="cap-receipt" key={item.id}>
+                                        <span className="cap-receipt-action">
+                                            {item.kind}
+                                        </span>
+                                        <span className="cap-receipt-detail">
+                                            {item.title} · {this.statusLabel(status?.status ?? '—')}
+                                        </span>
+                                        <small>{status?.reason}</small>
+                                        {status && status.criteriaTotal > 0 && (
+                                            <small className="cap-evidence">
+                                                {status.criteriaVerified}/{status.criteriaTotal} critérios
+                                                {status.proposedCriteria > 0 &&
+                                                    ` · ${status.proposedCriteria} proposto(s) por agente, não contam`}
+                                                {status.staleCriteria.length > 0 &&
+                                                    ` · prova velha em ${status.staleCriteria.join(', ')}`}
+                                            </small>
+                                        )}
+                                        {item.parents && item.parents.length > 0 && (
+                                            <small className="cap-evidence">
+                                                serve {item.parents.join(', ')}
+                                            </small>
+                                        )}
+                                    </div>
+                                );
+                            })}
+
+                            {work.problems.map((problem, index) => (
+                                <small className="cap-remediation" key={`p:${index}`}>
+                                    {problem.id}: {problem.problem}
+                                </small>
+                            ))}
+                            {work.unreadable.map((problem, index) => (
+                                <small className="cap-remediation" key={`u:${index}`}>
+                                    {problem.path}: {problem.problem}
+                                </small>
+                            ))}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_WORK_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler trabalho'}
+                </button>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    title="Registra e ativa o provider padrão pelos mesmos slots exclusivos do §1"
+                    onClick={() => this.commands.executeCommand(CMD_WORK_PROVIDER)}
+                >
+                    Usar provider padrão
                 </button>
             </div>
         );

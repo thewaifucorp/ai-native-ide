@@ -16,6 +16,8 @@ import {
     PolicyDecision,
     ProjectSnapshot,
     PublishAttempt,
+    WorkItem,
+    WorkSnapshot,
     SettingsPatch,
     SettingsSnapshot,
     SyncProposal,
@@ -387,6 +389,14 @@ export class EngineSidecarService implements EngineService {
     }
 
     // ── §13 config ────────────────────────────────────────────────────────────
+
+    workSnapshot(root: string): Promise<WorkSnapshot> {
+        return this.call('work_snapshot', { root });
+    }
+
+    workWriteItem(root: string, item: WorkItem): Promise<WorkSnapshot> {
+        return this.call('work_write_item', { root, item });
+    }
 
     lifecycleSnapshot(root: string): Promise<LifecycleSnapshot> {
         return this.call('lifecycle_snapshot', { root });

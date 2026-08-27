@@ -16,6 +16,7 @@ members = [
   "crates/ide-model-loop",
   "crates/ide-references",
   "crates/ide-notes",
+  "crates/ide-work",
   "crates/benchmark-service",
   "apps/desktop/src-tauri",
 ]
