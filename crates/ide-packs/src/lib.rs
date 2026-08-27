@@ -202,11 +202,7 @@ pub fn validate_pack(pack: &Pack) -> anyhow::Result<()> {
             anyhow::bail!("pack {} has a check with no id", pack.id)
         }
         if check.criterion.trim().is_empty() {
-            anyhow::bail!(
-                "check {} in pack {} states no criterion",
-                check.id,
-                pack.id
-            )
+            anyhow::bail!("check {} in pack {} states no criterion", check.id, pack.id)
         }
         if seen.contains(&check.id.as_str()) {
             anyhow::bail!("pack {} repeats check id {}", pack.id, check.id)
@@ -659,7 +655,9 @@ mod tests {
         assert!(error.contains("revert it before"), "{error}");
 
         registry.revert("leilao-local").unwrap();
-        registry.install(local_pack()).expect("depois de reverter, entra");
+        registry
+            .install(local_pack())
+            .expect("depois de reverter, entra");
         fs::remove_dir_all(&root).unwrap();
     }
 

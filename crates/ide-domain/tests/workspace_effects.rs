@@ -26,7 +26,10 @@ async fn exact_approved_write_snapshots_and_rolls_back() {
         std::fs::read_to_string(&file).expect("read queued"),
         "before"
     );
-    broker.approve_effect("effect:write-1").await.expect("approve");
+    broker
+        .approve_effect("effect:write-1")
+        .await
+        .expect("approve");
     assert_eq!(
         broker.propose_write(&write).await.expect("write")["written"],
         json!(true)
@@ -64,7 +67,10 @@ async fn changed_payload_cannot_reuse_prior_approval() {
         content: "safe".into(),
     };
     broker.propose_write(&approved).await.expect("queue");
-    broker.approve_effect("effect:write-1").await.expect("approve");
+    broker
+        .approve_effect("effect:write-1")
+        .await
+        .expect("approve");
     let altered = WorkspaceWrite {
         content: "altered".into(),
         ..approved
@@ -102,7 +108,10 @@ async fn approved_new_file_is_removed_by_rollback() {
     );
     assert!(!file.exists(), "queuing cannot create a file");
 
-    broker.approve_effect("effect:create-1").await.expect("approve");
+    broker
+        .approve_effect("effect:create-1")
+        .await
+        .expect("approve");
     assert_eq!(
         broker.propose_write(&write).await.expect("write")["written"],
         json!(true)

@@ -170,7 +170,10 @@ pub enum NoteConflict {
     /// A link pointing at something the host did not observe.
     DanglingLink { note_id: String, link: String },
     /// A note leaning on guidance that exists but is not active any more.
-    StaleGuidanceLink { note_id: String, guidance_id: String },
+    StaleGuidanceLink {
+        note_id: String,
+        guidance_id: String,
+    },
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -413,7 +416,10 @@ pub fn conflicts(notes: &[Note], known: &KnownWorld) -> Vec<NoteConflict> {
     // Decisions that disagree: same subject, different text.
     let mut by_subject: BTreeMap<&str, Vec<&Note>> = BTreeMap::new();
     for note in open.iter().filter(|n| n.kind == NoteKind::Decision) {
-        by_subject.entry(note.subject.as_str()).or_default().push(note);
+        by_subject
+            .entry(note.subject.as_str())
+            .or_default()
+            .push(note);
     }
     for (subject, decisions) in &by_subject {
         let mut texts: Vec<&str> = decisions.iter().map(|note| note.text.as_str()).collect();
@@ -543,7 +549,10 @@ mod tests {
     fn notes_persist_and_mirror_by_theme() {
         let (mut store, root) = store("persist");
         store
-            .create(draft(NoteKind::Question, "desempate", "quem vence empate?"), 10)
+            .create(
+                draft(NoteKind::Question, "desempate", "quem vence empate?"),
+                10,
+            )
             .unwrap();
 
         let reopened = NoteStore::open(&root).unwrap();
@@ -560,7 +569,11 @@ mod tests {
         let (mut store, root) = store("disagree");
         store
             .create(
-                draft(NoteKind::Decision, "desempate", "vence o maior valor selado"),
+                draft(
+                    NoteKind::Decision,
+                    "desempate",
+                    "vence o maior valor selado",
+                ),
                 1,
             )
             .unwrap();
@@ -587,15 +600,24 @@ mod tests {
     fn agreement_and_history_are_not_conflicts() {
         let (mut store, root) = store("agreement");
         store
-            .create(draft(NoteKind::Decision, "desempate", "vence o maior valor"), 1)
+            .create(
+                draft(NoteKind::Decision, "desempate", "vence o maior valor"),
+                1,
+            )
             .unwrap();
         store
-            .create(draft(NoteKind::Decision, "desempate", "vence o maior valor"), 2)
+            .create(
+                draft(NoteKind::Decision, "desempate", "vence o maior valor"),
+                2,
+            )
             .unwrap();
         assert!(conflicts(&store.list(), &KnownWorld::default()).is_empty());
 
         let third = store
-            .create(draft(NoteKind::Decision, "desempate", "vence o mais antigo"), 3)
+            .create(
+                draft(NoteKind::Decision, "desempate", "vence o mais antigo"),
+                3,
+            )
             .unwrap();
         assert!(!conflicts(&store.list(), &KnownWorld::default()).is_empty());
 
@@ -649,11 +671,18 @@ mod tests {
     fn an_open_question_on_a_decided_subject_is_surfaced() {
         let (mut store, root) = store("question");
         store
-            .create(draft(NoteKind::Decision, "desempate", "vence o maior valor"), 1)
+            .create(
+                draft(NoteKind::Decision, "desempate", "vence o maior valor"),
+                1,
+            )
             .unwrap();
         store
             .create(
-                draft(NoteKind::Question, "desempate", "e se os dois forem iguais?"),
+                draft(
+                    NoteKind::Question,
+                    "desempate",
+                    "e se os dois forem iguais?",
+                ),
                 2,
             )
             .unwrap();
@@ -708,10 +737,17 @@ mod tests {
     fn guidance_that_stopped_being_active_is_stale_not_dangling() {
         let (mut store, root) = store("stale");
         let note = store
-            .create(draft(NoteKind::Decision, "desempate", "seguir a guidance"), 1)
+            .create(
+                draft(NoteKind::Decision, "desempate", "seguir a guidance"),
+                1,
+            )
             .unwrap();
         store
-            .link(&note.id, NoteLink::Guidance("guidance-000000".to_owned()), 2)
+            .link(
+                &note.id,
+                NoteLink::Guidance("guidance-000000".to_owned()),
+                2,
+            )
             .unwrap();
         let known = KnownWorld {
             known_guidance: vec!["guidance-000000".to_owned()],
@@ -742,19 +778,27 @@ mod tests {
             .create(draft(NoteKind::Decision, "desempate", "por valor"), 1)
             .unwrap();
         let second = store
-            .create(draft(NoteKind::Decision, "desempate", "por valor selado"), 2)
+            .create(
+                draft(NoteKind::Decision, "desempate", "por valor selado"),
+                2,
+            )
             .unwrap();
 
         assert!(store.resolve(&first.id, "   ", 3).is_err());
         assert!(store.supersede(&first.id, &second.id, "", 3).is_err());
         assert!(store.supersede(&first.id, &first.id, "motivo", 3).is_err());
-        assert!(store.supersede(&first.id, "note-999999", "motivo", 3).is_err());
+        assert!(store
+            .supersede(&first.id, "note-999999", "motivo", 3)
+            .is_err());
 
         let superseded = store
             .supersede(&first.id, &second.id, "mesma decisão, texto melhor", 4)
             .unwrap();
         assert_eq!(superseded.state, NoteState::Superseded);
-        assert_eq!(superseded.superseded_by.as_deref(), Some(second.id.as_str()));
+        assert_eq!(
+            superseded.superseded_by.as_deref(),
+            Some(second.id.as_str())
+        );
         assert_eq!(
             superseded.state_reason.as_deref(),
             Some("mesma decisão, texto melhor")

@@ -303,10 +303,7 @@ mod tests {
             forbidden: "ordem de criação".to_owned(),
         }];
 
-        let findings = contradictions(
-            "O desempate usa a ordem de criação do lance",
-            &declared,
-        );
+        let findings = contradictions("O desempate usa a ordem de criação do lance", &declared);
 
         assert_eq!(findings.len(), 1);
         let finding = &findings[0];

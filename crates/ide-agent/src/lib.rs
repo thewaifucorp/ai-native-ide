@@ -22,10 +22,9 @@ use bastion_agent_runtime::{
     acp::AcpAgentRuntime, AgentRuntime, ApprovalCoverage, ArtifactKind, AuthProfileRef,
     BudgetCoverage, CancelMode, DenyScope, EgressCoverage, EnvPolicy, PermissionAction,
     PermissionDecision, PermissionProfile, PermissionRequestId, PolicyCoverage, ProposedEdit,
-    ResumeSpec,
-    RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth, RuntimeSession, SandboxCoverage,
-    SandboxProfile, SessionHandle, SessionSpec, SessionStatus, TaskExpectation, TaskInput,
-    TaskOutcome, ToolVisibility, WorkspacePolicy,
+    ResumeSpec, RuntimeDescriptor, RuntimeError, RuntimeEvent, RuntimeHealth, RuntimeSession,
+    SandboxCoverage, SandboxProfile, SessionHandle, SessionSpec, SessionStatus, TaskExpectation,
+    TaskInput, TaskOutcome, ToolVisibility, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -580,17 +579,14 @@ impl AgentFacade {
         let managed = sessions
             .get_mut(session_id)
             .ok_or(AgentFacadeError::SessionNotFound)?;
-        let event = match tokio::time::timeout(
-            NEXT_EVENT_WAIT,
-            managed.runtime_session.next_event(),
-        )
-        .await
-        {
-            Ok(event) => event,
-            // Nothing arrived in the window. The session is untouched and the
-            // lock is about to be released, which is the entire point.
-            Err(_) => return Ok(None),
-        };
+        let event =
+            match tokio::time::timeout(NEXT_EVENT_WAIT, managed.runtime_session.next_event()).await
+            {
+                Ok(event) => event,
+                // Nothing arrived in the window. The session is untouched and the
+                // lock is about to be released, which is the entire point.
+                Err(_) => return Ok(None),
+            };
         if let Some(RuntimeEvent::Usage { delta, .. }) = &event {
             let usage = &mut managed.usage;
             usage.input_tokens = usage.input_tokens.saturating_add(delta.input_tokens);

@@ -503,7 +503,10 @@ mod tests {
             !temp.path().join("logo.png").exists(),
             "queuing writes nothing"
         );
-        broker.approve_effect("effect:asset-1").await.expect("approve");
+        broker
+            .approve_effect("effect:asset-1")
+            .await
+            .expect("approve");
         assert_eq!(
             broker.propose_asset_write(&write).await.expect("write")["written"],
             json!(true)
@@ -527,7 +530,10 @@ mod tests {
             bytes: vec![9u8, 8, 7],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_effect("effect:asset-2").await.expect("approve");
+        broker
+            .approve_effect("effect:asset-2")
+            .await
+            .expect("approve");
         broker.propose_asset_write(&write).await.expect("write");
         assert_eq!(fs::read(&file).expect("read new"), vec![9u8, 8, 7]);
         broker.rollback("effect:asset-2").await.expect("rollback");
@@ -545,7 +551,10 @@ mod tests {
             bytes: vec![0u8, 255, 128],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_effect("effect:asset-3").await.expect("approve");
+        broker
+            .approve_effect("effect:asset-3")
+            .await
+            .expect("approve");
         broker.propose_asset_write(&write).await.expect("write");
         assert!(file.exists());
         broker.rollback("effect:asset-3").await.expect("rollback");
@@ -565,7 +574,10 @@ mod tests {
             bytes: vec![1u8, 2, 3],
         };
         broker.propose_asset_write(&write).await.expect("queue");
-        broker.approve_effect("effect:asset-4").await.expect("approve");
+        broker
+            .approve_effect("effect:asset-4")
+            .await
+            .expect("approve");
         assert!(
             broker.propose_asset_write(&write).await.is_err(),
             "traversal path must be rejected for assets just as for text"

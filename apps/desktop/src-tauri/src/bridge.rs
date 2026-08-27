@@ -19,8 +19,8 @@
 
 use anyhow::{anyhow, bail, Context};
 use ide_agent::{
-    AgentFacade, AgentAvailability, AgentDescriptor, AgentExpectation, AgentHealth,
-    AgentSandbox, AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession, SwapReport,
+    AgentAvailability, AgentDescriptor, AgentExpectation, AgentFacade, AgentHealth, AgentSandbox,
+    AgentSessionId, AgentTask, IdeAgentEvent, StartAgentSession, SwapReport,
 };
 use ide_config::{
     available_profiles, ConfigField, ConfigPatch, ConfigStore, DetectedEnvironment, IdeConfig,

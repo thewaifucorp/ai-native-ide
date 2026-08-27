@@ -1142,13 +1142,22 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let mut registry = GuidanceRegistry::open(&root).unwrap();
         let kept = registry
-            .capture(draft("fica", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("fica", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
         let paused = registry
-            .capture(draft("pausa", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("pausa", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
         let over = registry
-            .capture(draft("fim", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("fim", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
 
         registry.suspend(&paused.id).unwrap();
@@ -1179,13 +1188,22 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let mut registry = GuidanceRegistry::open(&root).unwrap();
         let old = registry
-            .capture(draft("antiga", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("antiga", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
         let new = registry
-            .capture(draft("nova", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("nova", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
 
-        assert!(registry.supersede(&old.id, &old.id).is_err(), "nada substitui a si mesma");
+        assert!(
+            registry.supersede(&old.id, &old.id).is_err(),
+            "nada substitui a si mesma"
+        );
         assert!(
             registry.supersede(&old.id, "guidance-999999").is_err(),
             "substituta tem de existir"
@@ -1217,10 +1235,16 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let mut registry = GuidanceRegistry::open(&root).unwrap();
         let fresh = registry
-            .capture(draft("usada", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("usada", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
         let idle = registry
-            .capture(draft("esquecida", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("esquecida", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
 
         let never_used: Vec<String> = registry
@@ -1264,7 +1288,9 @@ mod tests {
             .unwrap();
         assert!(imported.provenance.contains("imported steering file"));
 
-        let updated = registry.set_provenance(&imported.id, "AGENTS.md:6").unwrap();
+        let updated = registry
+            .set_provenance(&imported.id, "AGENTS.md:6")
+            .unwrap();
         assert_eq!(updated.provenance, "AGENTS.md:6");
         assert!(registry.set_provenance(&imported.id, "   ").is_err());
         assert!(registry.set_provenance("guidance-999999", "x").is_err());
@@ -1279,7 +1305,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let mut registry = GuidanceRegistry::open(&root).unwrap();
         let entry = registry
-            .capture(draft("pausada", GuidanceScope::Person), CaptureDestination::CreateStable)
+            .capture(
+                draft("pausada", GuidanceScope::Person),
+                CaptureDestination::CreateStable,
+            )
             .unwrap();
         registry.suspend(&entry.id).unwrap();
 
