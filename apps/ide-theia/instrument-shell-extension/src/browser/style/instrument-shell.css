@@ -698,3 +698,32 @@ body.game .iws .strip .lvl-strip { display: inline; }
 /* Evidência de uma afirmação da análise (§5). Monospace porque é texto lido do
    arquivo, não prosa — a diferença importa para quem confere. */
 .iws .cap-evidence { display: block; font: 400 10px var(--mono); color: var(--faint); word-break: break-all; }
+
+/* Saída crua de um processo (§4 preview). Monospace e rolável: é o texto que o
+   processo escreveu, e ele sustenta a afirmação de que o preview quebrou. */
+.iws .cap-raw {
+    margin: 6px 0 0;
+    padding: 6px 8px;
+    max-height: 160px;
+    overflow: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: 400 10px/1.5 var(--mono);
+    color: var(--faint);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Justificativa de exceção (§4 reconciliação). Exceção sem justificativa é
+   recusada pelo motor, então o campo é parte da decisão, não enfeite. */
+.iws .cap-input {
+    flex: 1 1 140px;
+    min-width: 0;
+    padding: 4px 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: 400 11px var(--ui);
+    color: var(--text);
+}

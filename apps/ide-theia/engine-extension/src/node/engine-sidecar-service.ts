@@ -6,7 +6,18 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { AgentEvent, AgentProbe, BrokerActivity, EngineService, HarnessRun, Hunk } from '../common/engine-protocol';
+import {
+    AgentEvent,
+    AgentProbe,
+    BrokerActivity,
+    EngineService,
+    HarnessRun,
+    Hunk,
+    PacksSnapshot,
+    PreviewSnapshot,
+    ReconciliationChoice,
+    ReconciliationSnapshot
+} from '../common/engine-protocol';
 
 interface PendingRequest {
     resolve(value: unknown): void;
@@ -242,5 +253,51 @@ export class EngineSidecarService implements EngineService {
             allow,
             deny_ends_turn: denyEndsTurn
         });
+    }
+
+    // ── §4 preview ────────────────────────────────────────────────────────────
+
+    previewStart(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_start', { root });
+    }
+
+    previewStatus(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_status', { root });
+    }
+
+    previewStop(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_stop', { root });
+    }
+
+    // ── §4 reconciliation ─────────────────────────────────────────────────────
+
+    reconcileScan(root: string): Promise<ReconciliationSnapshot> {
+        return this.call('reconcile_scan', { root });
+    }
+
+    reconcileDecide(
+        root: string,
+        divergenceId: string,
+        choice: ReconciliationChoice
+    ): Promise<ReconciliationSnapshot> {
+        return this.call('reconcile_decide', { root, divergence_id: divergenceId, choice });
+    }
+
+    // ── §4 local packs ────────────────────────────────────────────────────────
+
+    packsSnapshot(root: string, passed: string[] = [], failed: string[] = []): Promise<PacksSnapshot> {
+        return this.call('packs_snapshot', { root, passed, failed });
+    }
+
+    packsInstall(root: string, path: string): Promise<PacksSnapshot> {
+        return this.call('packs_install', { root, path });
+    }
+
+    packsApply(root: string, packId: string): Promise<PacksSnapshot> {
+        return this.call('packs_apply', { root, pack_id: packId });
+    }
+
+    packsRevert(root: string, packId: string): Promise<PacksSnapshot> {
+        return this.call('packs_revert', { root, pack_id: packId });
     }
 }

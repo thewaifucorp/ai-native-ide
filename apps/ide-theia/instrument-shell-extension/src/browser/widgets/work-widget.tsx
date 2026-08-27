@@ -24,6 +24,11 @@ import {
     CMD_ADOPT_COMMAND,
     CMD_CHECKS_RUN,
     CMD_MATERIALS_ANALYZE,
+    CMD_PREVIEW_START,
+    CMD_PREVIEW_STATUS,
+    CMD_PREVIEW_STOP,
+    CMD_RECONCILE_SCAN,
+    CMD_RECONCILE_DECIDE,
     CMD_SESSION_CANCEL,
     CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
@@ -31,6 +36,17 @@ import {
     CMD_SESSION_SUBMIT
 } from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
+import { DivergenceView, PreviewHealth } from 'engine-extension';
+
+/** Word shown for each preview health. `stale` is a preview that WAS healthy and
+ *  stopped answering — recoverable, and deliberately not the same word as broken. */
+const PREVIEW_HEALTH_LABEL: Record<PreviewHealth, string> = {
+    starting: 'iniciando',
+    healthy: 'saudável',
+    stale: 'sem responder',
+    broken: 'quebrado',
+    reconnecting: 'reconectando'
+};
 
 /** State words shown on a finding.
  *
@@ -329,6 +345,311 @@ export class WorkWidget extends AbstractInstrumentWidget {
     }
 
     /**
+     * O PREVIEW (§4), supervisionado pelo motor do `ide-reconciliation`.
+     *
+     * Quatro estados que a tela não pode misturar, e é por isso que existem
+     * quatro ramos em vez de um badge:
+     *  • NÃO DECLARADO — o projeto não pediu preview nenhum. Não é falha.
+     *  • DECLARADO E NÃO INICIADO — ninguém mandou subir. Também não é falha.
+     *  • DE PÉ — e aí a linha da sonda mostra a resposta crua que sustenta isso.
+     *  • QUEBRADO — com a evidência que o motor aceitou registrar, incluindo o
+     *    rastro causal. Saída limpa NÃO aparece aqui como falha: o motor recusa,
+     *    e o detalhe diz que terminou sozinho.
+     */
+    protected renderPreview(): React.ReactNode {
+        const snapshot = this.store.preview;
+        const busy = this.store.previewBusy;
+
+        if (!snapshot) {
+            return (
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Preview</b>
+                        <span className="cap-pill not-installed">não consultado</span>
+                    </div>
+                    <small className="cap-hint">
+                        subir o processo que o projeto declara em `.instrument/preview.json` é ato
+                        explícito · atualizar painel nunca sobe servidor
+                    </small>
+                    <div className="cap-actions">
+                        <button
+                            className="cap-btn"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_PREVIEW_STATUS)}
+                        >
+                            {busy ? 'lendo…' : 'Ler estado'}
+                        </button>
+                        <button
+                            className="cap-btn primary"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_PREVIEW_START)}
+                        >
+                            Iniciar preview
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const declared = snapshot.declared;
+        const health = snapshot.state?.health;
+        const pill = !declared
+            ? 'not-installed'
+            : health === 'healthy'
+                ? 'ready'
+                : health === 'broken'
+                    ? 'unavailable'
+                    : 'not-installed';
+        const verdict = !declared
+            ? 'não declarado'
+            : !snapshot.state
+                ? 'não iniciado'
+                : snapshot.stopped
+                    ? 'parado por você'
+                    : PREVIEW_HEALTH_LABEL[health!];
+
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Preview</b>
+                    <span className={`cap-pill ${pill}`}>{verdict}</span>
+                </div>
+                {!declared && <p className="cap-detail">{snapshot.notDeclaredReason}</p>}
+                {declared && (
+                    <small className="cap-hint">
+                        declarado: `{declared.command}`
+                        {declared.cwd && ` (cwd ${declared.cwd})`}
+                        {declared.url ? ` · saúde em ${declared.url}` : ' · sem url de saúde'}
+                    </small>
+                )}
+                {snapshot.state?.detail && <p className="cap-detail">{snapshot.state.detail}</p>}
+                {snapshot.lastProbe && (
+                    <small className="cap-hint">última sonda: {snapshot.lastProbe}</small>
+                )}
+                {snapshot.failures.map(f => (
+                    <div className="cap-receipt" key={f.id}>
+                        <span className="cap-receipt-action check-failed">falha</span>
+                        <span className="cap-receipt-detail">{f.message}</span>
+                        <small>
+                            evidência {f.evidence_id} · rastro:{' '}
+                            {[...f.causal_links.file_paths, ...f.causal_links.effect_ids].join(', ')}
+                        </small>
+                    </div>
+                ))}
+                {snapshot.logTail && (
+                    <details>
+                        <summary>saída crua ({snapshot.logPath})</summary>
+                        <pre className="cap-raw">{snapshot.logTail}</pre>
+                    </details>
+                )}
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_PREVIEW_STATUS)}
+                    >
+                        {busy ? 'lendo…' : 'Reler'}
+                    </button>
+                    <button
+                        className="cap-btn primary"
+                        disabled={busy || !declared}
+                        onClick={() => this.commands.executeCommand(CMD_PREVIEW_START)}
+                    >
+                        {snapshot.running ? 'Reiniciar' : 'Iniciar'}
+                    </button>
+                    <button
+                        className="cap-btn"
+                        disabled={busy || !snapshot.running}
+                        onClick={() => this.commands.executeCommand(CMD_PREVIEW_STOP)}
+                    >
+                        Parar
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    /**
+     * RECONCILIAÇÃO (§4): o que o projeto DECLAROU contra o que foi OBSERVADO.
+     *
+     * Este eixo não é o do §3. Lá a intenção é conferida contra a implementação
+     * (claims de `.product/` contra arquivos reais); aqui uma DECLARAÇÃO é
+     * conferida contra COMPORTAMENTO observado, e a observação só existe porque o
+     * ledger do preview aceitou registrar evidência para ela.
+     *
+     * Três decisões, e nenhuma delas "resolve" sozinha:
+     *  • mudar a implementação fica PENDENTE DE VERIFICAÇÃO — falta código novo e
+     *    evidência nova. Só é oferecida quando existe um efeito proposto para
+     *    nomear, porque o motor recusa a decisão sem efeito.
+     *  • aceitar o observado como intenção grava a revisão no arquivo humano.
+     *  • exceção exige justificativa escrita, e vale só no escopo declarado.
+     */
+    protected renderReconciliation(): React.ReactNode {
+        const snapshot = this.store.reconciliation;
+        const busy = this.store.reconcileBusy;
+
+        if (!snapshot) {
+            return (
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Declarado × observado</b>
+                        <span className="cap-pill not-installed">não comparado</span>
+                    </div>
+                    <small className="cap-hint">
+                        compara `.instrument/intents.json` (e a url de saúde declarada) com o que o
+                        preview registrou como evidência
+                    </small>
+                    <div className="cap-actions">
+                        <button
+                            className="cap-btn"
+                            disabled={busy}
+                            onClick={() => this.commands.executeCommand(CMD_RECONCILE_SCAN)}
+                        >
+                            {busy ? 'comparando…' : 'Comparar'}
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const open = snapshot.divergences.filter(d => !d.reconciliation).length;
+        const pill = open > 0 ? 'unavailable' : 'not-installed';
+
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Declarado × observado</b>
+                    <span className={`cap-pill ${pill}`}>
+                        {open > 0 ? `${open} divergência(s) aberta(s)` : 'nenhuma divergência aberta'}
+                    </span>
+                </div>
+                <small className="cap-hint">
+                    {snapshot.intents.length} expectativa(s) declarada(s) ·{' '}
+                    {snapshot.observations.length} comportamento(s) observado(s)
+                </small>
+                {snapshot.nothingToCompare && (
+                    <p className="cap-detail">{snapshot.nothingToCompare}</p>
+                )}
+                {snapshot.problem && <p className="cap-detail">{snapshot.problem}</p>}
+                {snapshot.intents.map(i => (
+                    <small className="cap-hint" key={i.id}>
+                        {i.subject} espera {JSON.stringify(i.expected)} — dito em {i.source_path}{' '}
+                        (revisão {i.revision})
+                    </small>
+                ))}
+                {snapshot.divergences.map(d => this.renderDivergence(d, busy))}
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_RECONCILE_SCAN)}
+                    >
+                        {busy ? 'comparando…' : 'Comparar de novo'}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    /** Justificativas em digitação, por divergência. Exceção sem justificativa é
+     *  recusada pelo motor, então o botão fica desabilitado até haver texto. */
+    protected justifications: Record<string, string> = {};
+
+    protected renderDivergence(view: DivergenceView, busy: boolean): React.ReactNode {
+        const d = view.divergence;
+        const decision = view.reconciliation;
+        // O efeito que a decisão "mudar implementação" nomeia é o efeito REAL
+        // proposto ao broker. Sem proposta aberta não há o que nomear, e o motor
+        // recusaria — então o botão diz isso em vez de tentar e falhar.
+        const effectId = this.store.proposal?.id;
+        const justification = this.justifications[d.id] ?? '';
+
+        return (
+            <div className="cap-receipt" key={d.id}>
+                <span className={`cap-receipt-action ${decision ? 'check-unknown' : 'check-failed'}`}>
+                    {decision
+                        ? decision.status === 'pending_verification'
+                            ? 'pendente de verificação'
+                            : 'exceção aceita'
+                        : 'aberta'}
+                </span>
+                <span className="cap-receipt-detail">
+                    {d.subject}: declarado {JSON.stringify(d.expected)}, observado{' '}
+                    {JSON.stringify(d.actual)}
+                </span>
+                <small>evidência: {d.evidence_ids.join(', ')}</small>
+                {decision && (
+                    <small>
+                        decisão: {decision.choice.kind}
+                        {decision.status === 'pending_verification' &&
+                            ' — não está resolvida: falta código novo e evidência nova'}
+                    </small>
+                )}
+                {!decision && (
+                    <>
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={busy || !effectId}
+                                title={
+                                    effectId
+                                        ? `Nomeia o efeito proposto ${effectId}`
+                                        : 'Nenhum efeito proposto para nomear — proponha a mudança primeiro'
+                                }
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_RECONCILE_DECIDE, d.id, {
+                                        kind: 'change_implementation',
+                                        proposed_effect_id: effectId
+                                    })
+                                }
+                            >
+                                Mudar implementação
+                            </button>
+                            <button
+                                className="cap-btn"
+                                disabled={busy}
+                                title="Grava o observado como a expectativa, em .instrument/intents.json"
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_RECONCILE_DECIDE, d.id, {
+                                        kind: 'change_intent',
+                                        revised_expected: d.actual
+                                    })
+                                }
+                            >
+                                Aceitar o observado como intenção
+                            </button>
+                        </div>
+                        <div className="cap-actions">
+                            <input
+                                className="cap-input"
+                                placeholder="justificativa da exceção (obrigatória)"
+                                value={justification}
+                                onChange={event => {
+                                    this.justifications[d.id] = event.target.value;
+                                    this.update();
+                                }}
+                            />
+                            <button
+                                className="cap-btn"
+                                disabled={busy || justification.trim().length === 0}
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_RECONCILE_DECIDE, d.id, {
+                                        kind: 'accept_scoped_exception',
+                                        scope: { preview: { preview_id: 'preview' } },
+                                        justification
+                                    })
+                                }
+                            >
+                                Registrar exceção escopada
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        );
+    }
+
+    /**
      * Materiais do projeto (§5): stack, comandos, Git, serviços, integrações.
      *
      * Toda linha mostra a evidência junto da afirmação — arquivo, linha quando
@@ -499,6 +820,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
         return (
             <div className="h-sec">
                 {this.renderChecks()}
+                {this.renderPreview()}
+                {this.renderReconciliation()}
                 {this.renderMaterials()}
                 <div className="placeholder">
                     <b>Produto semântico e divergências</b>

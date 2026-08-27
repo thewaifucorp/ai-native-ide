@@ -16,6 +16,14 @@
 //!   - `broker_approve`  params `{ root, owner, effect_id }` -> `{ approved_id: <i64> }`
 //!   - `broker_rollback` params `{ root, owner, effect_id }` -> `{ rolledback: true }`
 //!   - `broker_activity` params `{ root, owner }`   -> `{ activity: [...] }`
+//!   - `harness_run`     params `{ root, owner, run_tools }` -> the §4 report
+//!   - `preview_start` / `preview_status` / `preview_stop` params `{ root }`
+//!                                                      -> the §4 preview snapshot
+//!   - `reconcile_scan`  params `{ root }`              -> intents vs observations
+//!   - `reconcile_decide` params `{ root, divergence_id, choice }`
+//!   - `packs_snapshot`  params `{ root, passed, failed }`
+//!   - `packs_install`   params `{ root, path }`
+//!   - `packs_apply` / `packs_revert` params `{ root, pack_id }`
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -24,6 +32,9 @@
 //! propose → approve → propose-executes → rollback lifecycle spans requests.
 
 mod harness;
+mod packs;
+mod preview;
+mod reconcile;
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -311,6 +322,111 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(run).map_err(|e| e.to_string())
+        }
+        // §4 — preview. Spawning a process, sleeping between probes and opening
+        // sockets is blocking work; it runs off the async worker like the checks.
+        // `preview_status` never starts anything: not started is its own state.
+        "preview_start" | "preview_status" | "preview_stop" => {
+            #[derive(Deserialize)]
+            struct RootParams {
+                root: String,
+            }
+            let p: RootParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            let snapshot = tokio::task::spawn_blocking(move || match method.as_str() {
+                "preview_start" => preview::start(&root),
+                "preview_stop" => preview::stop(&root),
+                _ => preview::status(&root),
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §4 — reconciliation of declared vs observed behavior.
+        "reconcile_scan" => {
+            #[derive(Deserialize)]
+            struct RootParams {
+                root: String,
+            }
+            let p: RootParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || reconcile::scan(&root))
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "reconcile_decide" => {
+            #[derive(Deserialize)]
+            struct DecideParams {
+                root: String,
+                divergence_id: String,
+                /// The engine's own `ReconciliationChoice`, deserialized by the
+                /// engine. A malformed decision fails to parse instead of falling
+                /// through to some assumed choice.
+                choice: ide_reconciliation::ReconciliationChoice,
+            }
+            let p: DecideParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                reconcile::reconcile(&root, &p.divergence_id, p.choice)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // §4 — local packs. `passed` / `failed` are the check ids the caller
+        // actually observed; an empty pair blocks readiness rather than emptying
+        // it, which is the honest state today (packs are Layer 1+, §4 is Layer 0).
+        "packs_snapshot" => {
+            #[derive(Deserialize)]
+            struct PacksParams {
+                root: String,
+                #[serde(default)]
+                passed: Vec<String>,
+                #[serde(default)]
+                failed: Vec<String>,
+            }
+            let p: PacksParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || packs::snapshot(&root, &p.passed, &p.failed))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "packs_install" => {
+            #[derive(Deserialize)]
+            struct InstallParams {
+                root: String,
+                path: String,
+            }
+            let p: InstallParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || packs::install(&root, &p.path))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "packs_apply" | "packs_revert" => {
+            #[derive(Deserialize)]
+            struct PackIdParams {
+                root: String,
+                pack_id: String,
+            }
+            let p: PackIdParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let revert = method == "packs_revert";
+            let snapshot = tokio::task::spawn_blocking(move || {
+                if revert {
+                    packs::revert(&root, &p.pack_id)
+                } else {
+                    packs::apply(&root, &p.pack_id)
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         "broker_activity" => {
             let p: BrokerScopeParams = serde_json::from_value(params).map_err(|e| e.to_string())?;

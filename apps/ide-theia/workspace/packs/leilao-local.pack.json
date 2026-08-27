@@ -1,0 +1,31 @@
+{
+  "id": "leilao-local",
+  "name": "Leilão — regras locais deste projeto",
+  "domain": "auction",
+  "description": "Pack local: desempate estrito e privacidade do leaderboard, escritos para este projeto.",
+  "checks": [
+    {
+      "id": "desempate-estrito",
+      "title": "Desempate não usa ordem de criação",
+      "subject": "auction",
+      "criterion": "Empate no valor selado não é resolvido por createdAt.",
+      "layer": 1
+    },
+    {
+      "id": "leaderboard-sem-id",
+      "title": "Leaderboard público não expõe id do lance",
+      "subject": "auction",
+      "criterion": "A resposta de /leaderboard não contém o campo id.",
+      "layer": 1
+    }
+  ],
+  "guides": [
+    {
+      "id": "desempate",
+      "title": "Desempate",
+      "text": "Um lance precisa exceder estritamente o atual para assumir a posição."
+    }
+  ],
+  "capabilities": ["read_workspace", "run_deterministic_check", "offer_guidance"],
+  "reversible": true
+}

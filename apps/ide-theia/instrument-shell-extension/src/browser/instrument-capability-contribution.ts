@@ -21,6 +21,7 @@ import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { MonacoWorkspace } from '@theia/monaco/lib/browser/monaco-workspace';
 import URI from '@theia/core/lib/common/uri';
+import { FileUri } from '@theia/core/lib/common/file-uri';
 import { CapabilityService } from '../common/capability-protocol';
 import { GovernedWriteService } from '../common/governed-protocol';
 import { ObserverService } from '../common/observer-protocol';
@@ -35,6 +36,7 @@ import {
     TEST_PROVIDER_V1,
     TEST_PROVIDER_V2
 } from '../common/harness-test-provider';
+import { EngineService, ReconciliationChoice } from 'engine-extension';
 import { InstrumentStore } from './instrument-store';
 
 export const CMD_CAP_REFRESH = 'instrument.capability.refresh';
@@ -66,6 +68,17 @@ export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
+
+// §4 — preview, reconciliação e packs locais.
+export const CMD_PREVIEW_START = 'instrument.preview.start';
+export const CMD_PREVIEW_STATUS = 'instrument.preview.status';
+export const CMD_PREVIEW_STOP = 'instrument.preview.stop';
+export const CMD_RECONCILE_SCAN = 'instrument.reconcile.scan';
+export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
+export const CMD_PACKS_REFRESH = 'instrument.packs.refresh';
+export const CMD_PACKS_INSTALL = 'instrument.packs.install';
+export const CMD_PACKS_APPLY = 'instrument.packs.apply';
+export const CMD_PACKS_REVERT = 'instrument.packs.revert';
 export const CMD_MATERIALS_ANALYZE = 'instrument.project.materials';
 export const CMD_ADOPT_COMMAND = 'instrument.project.adoptCommand';
 
@@ -97,6 +110,7 @@ export class InstrumentCapabilityContribution
     @inject(MonacoWorkspace) protected readonly monaco!: MonacoWorkspace;
     @inject(AgentSessionService) protected readonly session!: AgentSessionService;
     @inject(ProductService) protected readonly product!: ProductService;
+    @inject(EngineService) protected readonly engine!: EngineService;
 
     /** Polling handle while a task is running. */
     protected pollTimer: number | undefined;
@@ -220,6 +234,45 @@ export class InstrumentCapabilityContribution
                 label: 'Instrument: rodar checks determinísticos (§4)'
             },
             { execute: (runTools?: boolean) => this.runChecks(runTools === true) }
+        );
+        commands.registerCommand(
+            { id: CMD_PREVIEW_START, label: 'Instrument: iniciar preview declarado (§4)' },
+            { execute: () => this.previewStart() }
+        );
+        commands.registerCommand(
+            { id: CMD_PREVIEW_STATUS, label: 'Instrument: reler estado do preview (§4)' },
+            { execute: () => this.previewStatus() }
+        );
+        commands.registerCommand(
+            { id: CMD_PREVIEW_STOP, label: 'Instrument: parar preview (§4)' },
+            { execute: () => this.previewStop() }
+        );
+        commands.registerCommand(
+            { id: CMD_RECONCILE_SCAN, label: 'Instrument: comparar declarado com observado (§4)' },
+            { execute: () => this.reconcileScan() }
+        );
+        commands.registerCommand(
+            { id: CMD_RECONCILE_DECIDE, label: 'Instrument: decidir uma divergência (§4)' },
+            {
+                execute: (divergenceId?: string, choice?: ReconciliationChoice) =>
+                    divergenceId && choice ? this.reconcileDecide(divergenceId, choice) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_PACKS_REFRESH, label: 'Instrument: ler packs do projeto (§4)' },
+            { execute: () => this.packsRefresh() }
+        );
+        commands.registerCommand(
+            { id: CMD_PACKS_INSTALL, label: 'Instrument: instalar pack local (§4)' },
+            { execute: (relPath?: string) => (relPath ? this.packsInstall(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_PACKS_APPLY, label: 'Instrument: aplicar pack instalado (§4)' },
+            { execute: (packId?: string) => (packId ? this.packsSet(packId, true) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_PACKS_REVERT, label: 'Instrument: reverter pack aplicado (§4)' },
+            { execute: (packId?: string) => (packId ? this.packsSet(packId, false) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_SESSION_PERMISSION, label: 'Instrument: decidir permissão do agente' },
@@ -633,6 +686,199 @@ export class InstrumentCapabilityContribution
      * It is false unless the person asked for it: a repository file must never
      * get its commands run just because a panel refreshed.
      */
+    // ── §4 preview ────────────────────────────────────────────────────────
+    //
+    // Three separate commands because they are three different acts. `status`
+    // never starts anything: a panel refresh that could spawn a dev server would
+    // be the same mistake §4 refused for declared commands.
+
+    /** Path of the workspace root, as the sidecar needs it (not a URI). */
+    protected get rootPath(): string | undefined {
+        const root = this.root;
+        return root ? FileUri.fsPath(new URI(root)) : undefined;
+    }
+
+    protected async previewStart(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPreviewBusy(true);
+        try {
+            const snapshot = await this.engine.previewStart(root);
+            this.store.setPreview(snapshot);
+            const health = snapshot.state?.health;
+            if (health === 'healthy') {
+                this.messages.info(`Preview saudável · ${snapshot.lastProbe ?? ''}`);
+            } else if (snapshot.failures.length > 0) {
+                this.messages.error(
+                    `Preview não subiu: ${snapshot.failures[snapshot.failures.length - 1].message}`
+                );
+            }
+            // Uma falha registrada é observação nova; a comparação tem de refletir.
+            await this.reconcileScan();
+        } catch (err) {
+            // Nada declarado é motivo, não erro de sistema: mostrar o motivo e
+            // manter o painel dizendo que não há preview.
+            this.messages.warn(`Preview não iniciado: ${this.msg(err)}`);
+            this.store.setPreview(await this.safePreviewStatus(root));
+        } finally {
+            this.store.setPreviewBusy(false);
+        }
+    }
+
+    protected async previewStatus(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPreviewBusy(true);
+        try {
+            this.store.setPreview(await this.engine.previewStatus(root));
+            await this.reconcileScan();
+        } catch (err) {
+            this.messages.error(`Falha ao ler o preview: ${this.msg(err)}`);
+            this.store.setPreview(undefined);
+        } finally {
+            this.store.setPreviewBusy(false);
+        }
+    }
+
+    protected async previewStop(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPreviewBusy(true);
+        try {
+            this.store.setPreview(await this.engine.previewStop(root));
+        } catch (err) {
+            this.messages.error(`Falha ao parar o preview: ${this.msg(err)}`);
+        } finally {
+            this.store.setPreviewBusy(false);
+        }
+    }
+
+    protected async safePreviewStatus(root: string): Promise<undefined | Awaited<ReturnType<EngineService['previewStatus']>>> {
+        try {
+            return await this.engine.previewStatus(root);
+        } catch {
+            return undefined;
+        }
+    }
+
+    // ── §4 reconciliação ──────────────────────────────────────────────────
+
+    protected async reconcileScan(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReconcileBusy(true);
+        try {
+            this.store.setReconciliation(await this.engine.reconcileScan(root));
+        } catch (err) {
+            this.messages.error(`Falha ao comparar declarado com observado: ${this.msg(err)}`);
+            this.store.setReconciliation(undefined);
+        } finally {
+            this.store.setReconcileBusy(false);
+        }
+    }
+
+    protected async reconcileDecide(
+        divergenceId: string,
+        choice: ReconciliationChoice
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReconcileBusy(true);
+        try {
+            const after = await this.engine.reconcileDecide(root, divergenceId, choice);
+            this.store.setReconciliation(after);
+            const decided = after.divergences.find(d => d.divergence.id === divergenceId);
+            // "Pendente de verificação" NÃO é resolvido, e a mensagem diz isso —
+            // senão a decisão parece fechar o assunto que ela apenas encaminhou.
+            if (decided?.reconciliation?.status === 'pending_verification') {
+                this.messages.info(
+                    'Decisão registrada como pendente de verificação: falta mudar o código e ' +
+                        'produzir evidência nova.'
+                );
+            } else if (decided?.reconciliation?.status === 'accepted_scoped_exception') {
+                this.messages.info('Exceção escopada registrada, com justificativa, no projeto.');
+            } else if (!decided) {
+                // Revisar a intenção faz a divergência deixar de existir.
+                this.messages.info('Intenção revisada em .instrument/intents.json — a divergência fechou.');
+            }
+        } catch (err) {
+            this.messages.error(`Decisão recusada: ${this.msg(err)}`);
+        } finally {
+            this.store.setReconcileBusy(false);
+        }
+    }
+
+    // ── §4 packs locais ───────────────────────────────────────────────────
+
+    protected async packsRefresh(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPacksBusy(true);
+        try {
+            this.store.setPacks(await this.engine.packsSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Falha ao ler packs: ${this.msg(err)}`);
+            this.store.setPacks(undefined);
+        } finally {
+            this.store.setPacksBusy(false);
+        }
+    }
+
+    protected async packsInstall(relPath: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPacksBusy(true);
+        try {
+            const after = await this.engine.packsInstall(root, relPath);
+            this.store.setPacks(after);
+            this.messages.info(
+                `Pack instalado de ${relPath} — instalado é inerte: aplicar é o próximo ato.`
+            );
+        } catch (err) {
+            this.messages.error(`Pack não instalado: ${this.msg(err)}`);
+        } finally {
+            this.store.setPacksBusy(false);
+        }
+    }
+
+    protected async packsSet(packId: string, apply: boolean): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPacksBusy(true);
+        try {
+            const after = apply
+                ? await this.engine.packsApply(root, packId)
+                : await this.engine.packsRevert(root, packId);
+            this.store.setPacks(after);
+            const verdict = after.readiness.find(v => v.packId === packId);
+            if (apply && verdict && !verdict.ready) {
+                this.messages.info(
+                    `${packId} aplicado. Readiness bloqueada: ${verdict.note}`
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Pack não ${apply ? 'aplicado' : 'revertido'}: ${this.msg(err)}`);
+        } finally {
+            this.store.setPacksBusy(false);
+        }
+    }
+
     protected async runChecks(runTools: boolean): Promise<void> {
         const root = this.root;
         if (!root) {

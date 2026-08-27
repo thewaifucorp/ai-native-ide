@@ -164,6 +164,49 @@ export interface EngineService {
         allow: boolean,
         denyEndsTurn?: boolean
     ): Promise<{ answered: boolean }>;
+
+    // ── §4 preview (ide-reconciliation PreviewSupervisor + evidence ledger) ───
+    // The engine owns the lifecycle and refuses to record a clean exit as a
+    // failure; the sidecar owns spawning, probing and the log.
+
+    /** Starts the preview declared in `.instrument/preview.json` and waits for
+     *  its first honest verdict. Rejects when nothing is declared. */
+    previewStart(root: string): Promise<PreviewSnapshot>;
+
+    /** Re-reads the preview. NEVER starts one — `state: null` means not started. */
+    previewStatus(root: string): Promise<PreviewSnapshot>;
+
+    /** Stops it, keeping the recorded failures inspectable. */
+    previewStop(root: string): Promise<PreviewSnapshot>;
+
+    // ── §4 reconciliation: declared behavior vs observed behavior ─────────────
+    // Not §3's axis. §3 reconciles intent against implementation through
+    // `.product/` claims; this reconciles a declaration against what was
+    // OBSERVED, which is what the preview ledger produces.
+
+    /** Current intents, observations and the divergences between them. */
+    reconcileScan(root: string): Promise<ReconciliationSnapshot>;
+
+    /** Records one human decision. The engine refuses an implementation change
+     *  with no effect named, and an exception with no justification or scope. */
+    reconcileDecide(
+        root: string,
+        divergenceId: string,
+        choice: ReconciliationChoice
+    ): Promise<ReconciliationSnapshot>;
+
+    // ── §4 local packs (ide-packs) ────────────────────────────────────────────
+
+    /** Available / installed / applied packs, plus readiness for applied ones.
+     *  `passed` / `failed` are check ids actually observed; empty blocks. */
+    packsSnapshot(root: string, passed?: string[], failed?: string[]): Promise<PacksSnapshot>;
+
+    /** Installs one local `*.pack.json`. Installing does not apply it. */
+    packsInstall(root: string, path: string): Promise<PacksSnapshot>;
+
+    packsApply(root: string, packId: string): Promise<PacksSnapshot>;
+
+    packsRevert(root: string, packId: string): Promise<PacksSnapshot>;
 }
 
 /** A check's outcome. `unknown` and `not_run` are distinct absences of
@@ -258,3 +301,206 @@ export type AgentEvent =
     | { Usage: { task_id: number; input_tokens: number; output_tokens: number } }
     | { Warning: { task_id: number; code: string; detail: string } }
     | { Ended: { task_id: number; outcome: unknown } };
+
+// ── §4 PREVIEW (ide-reconciliation) ─────────────────────────────────────────
+//
+// Mirrors what `engine-sidecar/src/preview.rs` serializes. The WRAPPER fields are
+// camelCase; the fields that come straight out of `ide_reconciliation` keep that
+// crate's own snake_case. The two casings meeting inside one object is not sloppy
+// — it is where a silently-undefined field hides, so each side is named exactly
+// as it arrives instead of being "tidied" on the way through.
+
+/** Lifecycle state of a preview. `stale` is a preview that WAS healthy and
+ *  stopped answering — recoverable, and deliberately not `broken`. */
+export type PreviewHealth = 'starting' | 'healthy' | 'stale' | 'broken' | 'reconnecting';
+
+export interface PreviewState {
+    health: PreviewHealth;
+    changed_at_ms: number;
+    detail?: string | null;
+}
+
+/** Identifiers owned by other subsystems (broker effects, activity, files). A
+ *  recorded failure always has at least one — the engine refuses the rest. */
+export interface CausalLinks {
+    effect_ids: string[];
+    activity_ids: string[];
+    file_paths: string[];
+}
+
+/** Why the preview failed. A clean process exit can never appear here: the
+ *  engine rejects it as evidence. */
+export type PreviewFailureKind =
+    | { kind: 'process_exited'; process_id: string; exit_code: number }
+    | { kind: 'health_check_failed'; url: string; detail: string };
+
+export interface PreviewFailure {
+    id: string;
+    preview_id: string;
+    /** Points at the log line range that produced this failure. */
+    evidence_id: string;
+    message: string;
+    kind: PreviewFailureKind;
+    causal_links: CausalLinks;
+    observed_at_ms: number;
+}
+
+/** `.instrument/preview.json`, as declared by the project. */
+export interface DeclaredPreview {
+    command: string;
+    cwd?: string | null;
+    /** Absent means nothing can be probed — the preview never claims health. */
+    url?: string | null;
+    readyTimeoutMs?: number | null;
+}
+
+export interface PreviewSnapshot {
+    declared?: DeclaredPreview | null;
+    /** Why there is no usable declaration. Rendering it is not optional. */
+    notDeclaredReason?: string | null;
+    /** Null until someone started it: NOT STARTED is not broken. */
+    state?: PreviewState | null;
+    running: boolean;
+    /** True when a person stopped it, so `broken` is not read as a crash. */
+    stopped: boolean;
+    failures: PreviewFailure[];
+    /** The last probe attempt verbatim: URL and what came back. */
+    lastProbe?: string | null;
+    logTail?: string | null;
+    logPath?: string | null;
+}
+
+// ── §4 RECONCILIATION (ide-reconciliation) ──────────────────────────────────
+
+export interface IntentSpecRecord {
+    id: string;
+    subject: string;
+    expected: unknown;
+    /** The file that says so — `.instrument/intents.json` or `preview.json`. */
+    source_path: string;
+    revision: string;
+}
+
+export interface ObservedBehavior {
+    id: string;
+    subject: string;
+    actual: unknown;
+    /** Empty means the observation is not eligible for detection at all. */
+    evidence_ids: string[];
+    observed_at_ms: number;
+}
+
+export interface Divergence {
+    id: string;
+    intent_id: string;
+    observation_id: string;
+    subject: string;
+    expected: unknown;
+    actual: unknown;
+    evidence_ids: string[];
+}
+
+/** Externally tagged, exactly as `ide_reconciliation::ExceptionScope` serializes. */
+export type ExceptionScope =
+    | { project: { project_id: string } }
+    | { resource: { resource_id: string } }
+    | { path: { path: string } }
+    | { preview: { preview_id: string } };
+
+/** The three decisions a person can take about a divergence. */
+export type ReconciliationChoice =
+    | { kind: 'change_implementation'; proposed_effect_id: string }
+    | { kind: 'change_intent'; revised_expected: unknown }
+    | { kind: 'accept_scoped_exception'; scope: ExceptionScope; justification: string };
+
+/** `pending_verification` is NOT resolved: the code still has to change and
+ *  produce fresh evidence. Only an explicitly justified, explicitly scoped
+ *  exception closes on the spot. */
+export type ReconciliationStatus = 'pending_verification' | 'accepted_scoped_exception';
+
+export interface StoredReconciliation {
+    divergenceId: string;
+    choice: ReconciliationChoice;
+    status: ReconciliationStatus;
+    atMs: number;
+}
+
+export interface DivergenceView {
+    divergence: Divergence;
+    /** Null means OPEN. An open divergence is never rendered as decided. */
+    reconciliation?: StoredReconciliation | null;
+}
+
+export interface ReconciliationSnapshot {
+    intents: IntentSpecRecord[];
+    observations: ObservedBehavior[];
+    divergences: DivergenceView[];
+    /** Which silence this is: nothing declared, or nothing observed yet. */
+    nothingToCompare?: string | null;
+    problem?: string | null;
+}
+
+// ── §4 LOCAL PACKS (ide-packs) ──────────────────────────────────────────────
+
+/** Deliberately has no native-execution member: a pack observes and guides. */
+export type PackCapability = 'read_workspace' | 'run_deterministic_check' | 'offer_guidance';
+
+export interface PackCheck {
+    id: string;
+    title: string;
+    subject: string;
+    criterion: string;
+    layer: number;
+}
+
+export interface PackGuide {
+    id: string;
+    title: string;
+    text: string;
+}
+
+export interface Pack {
+    id: string;
+    name: string;
+    domain: string;
+    description: string;
+    checks: PackCheck[];
+    guides: PackGuide[];
+    capabilities: PackCapability[];
+    reversible: boolean;
+}
+
+export interface ReadinessVerdict {
+    packId: string;
+    ready: boolean;
+    /** Checks with no observed result. These BLOCK — unknown is not a pass. */
+    missingChecks: string[];
+    failedChecks: string[];
+    /** Failures accepted by a recorded disposition, kept visible on purpose. */
+    dispositionedChecks: string[];
+    note: string;
+}
+
+/** A `*.pack.json` found under the project's `packs/` directory. */
+export interface AvailablePack {
+    path: string;
+    id?: string | null;
+    name?: string | null;
+    domain?: string | null;
+    checks: number;
+    guides: number;
+    installed: boolean;
+    /** Present when the file exists but cannot be read as a valid pack. */
+    problem?: string | null;
+}
+
+export interface PacksSnapshot {
+    installed: Pack[];
+    applied: string[];
+    available: AvailablePack[];
+    /** One verdict per APPLIED pack. */
+    readiness: ReadinessVerdict[];
+    lookedIn: string;
+    /** Why no pack check has a result. Never omitted while it is true. */
+    noObservedResults?: string | null;
+}

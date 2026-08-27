@@ -25,6 +25,10 @@ import { HarnessProviderState, HarnessSnapshot } from '../../common/harness-prot
 import { CONFLICT_PROVIDER_ID, TEST_PROVIDER_ID } from '../../common/harness-test-provider';
 import {
     CMD_BROKER_TRAIL,
+    CMD_PACKS_APPLY,
+    CMD_PACKS_INSTALL,
+    CMD_PACKS_REFRESH,
+    CMD_PACKS_REVERT,
     CMD_EXT_ACCEPT,
     CMD_EXT_BASELINE,
     CMD_EXT_REVERT,
@@ -82,6 +86,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderCapabilities()}
                 {this.renderExternal()}
                 {this.renderWorkbench()}
+                {this.renderPacks()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
             </div>
@@ -402,6 +407,131 @@ export class ToolsWidget extends AbstractInstrumentWidget {
     }
 
     /** The broker's raw trail: what governance actually recorded, unedited. */
+    /**
+     * PACKS LOCAIS (§4).
+     *
+     * Três estados, nunca colapsados em um: DISPONÍVEL é um arquivo no projeto,
+     * INSTALADO é o registry conhecendo o pack e não valendo nada, APLICADO é o
+     * pack contando em checkpoint. E nem aplicado fica verde: check de pack sem
+     * resultado observado BLOQUEIA readiness — regra do `ide_packs`, e a razão
+     * pela qual um pack de domínio não consegue abençoar projeto nenhum.
+     */
+    protected renderPacks(): React.ReactNode {
+        const snapshot = this.store.packs;
+        const busy = this.store.packsBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !snapshot
+                ? 'não lidos'
+                : `${snapshot.applied.length}/${snapshot.installed.length} aplicados`;
+
+        return this.section(
+            'packs',
+            'Packs de domínio',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!snapshot && <small>não lidos — clique em “ler” para abrir o registry do projeto</small>}
+                    {snapshot && (
+                        <>
+                            <small>
+                                procurados em `{snapshot.lookedIn}/` · {snapshot.available.length}{' '}
+                                arquivo(s) de pack no projeto
+                            </small>
+                            {snapshot.noObservedResults && (
+                                <p className="cap-detail">{snapshot.noObservedResults}</p>
+                            )}
+                            {snapshot.available.map(a => (
+                                <div className="cap-receipt" key={a.path}>
+                                    <span className="cap-receipt-action">
+                                        {a.problem ? 'ilegível' : a.installed ? 'instalado' : 'disponível'}
+                                    </span>
+                                    <span className="cap-receipt-detail">
+                                        {a.name ?? a.path} {a.id && `· ${a.id}`}
+                                    </span>
+                                    <small>
+                                        {a.path}
+                                        {!a.problem && ` · ${a.checks} check(s), ${a.guides} guia(s)`}
+                                    </small>
+                                    {a.problem && <small className="cap-remediation">{a.problem}</small>}
+                                    {!a.problem && !a.installed && (
+                                        <div className="cap-actions">
+                                            <button
+                                                className="cap-btn primary"
+                                                disabled={busy}
+                                                title="Instalar não aplica: o pack fica inerte até você aplicar"
+                                                onClick={() =>
+                                                    this.commands.executeCommand(CMD_PACKS_INSTALL, a.path)
+                                                }
+                                            >
+                                                Instalar
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            {snapshot.installed.map(pack => {
+                                const applied = snapshot.applied.includes(pack.id);
+                                const verdict = snapshot.readiness.find(v => v.packId === pack.id);
+                                return (
+                                    <div className="cap-receipt" key={pack.id}>
+                                        <span
+                                            className={`cap-receipt-action ${
+                                                applied ? 'check-unknown' : ''
+                                            }`}
+                                        >
+                                            {applied ? 'aplicado' : 'inerte'}
+                                        </span>
+                                        <span className="cap-receipt-detail">{pack.name}</span>
+                                        <small>
+                                            {pack.checks.length} check(s) de domínio ·{' '}
+                                            {pack.guides.length} guia(s) ·{' '}
+                                            {pack.reversible ? 'reversível' : 'NÃO reversível'}
+                                        </small>
+                                        <small>
+                                            capacidades: {pack.capabilities.join(', ') || 'nenhuma'}
+                                        </small>
+                                        {verdict && (
+                                            <small className="cap-remediation">
+                                                readiness {verdict.ready ? 'liberada' : 'bloqueada'} ·{' '}
+                                                {verdict.note}
+                                                {verdict.missingChecks.length > 0 &&
+                                                    ` · sem resultado: ${verdict.missingChecks.join(', ')}`}
+                                            </small>
+                                        )}
+                                        <div className="cap-actions">
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                onClick={() =>
+                                                    this.commands.executeCommand(
+                                                        applied ? CMD_PACKS_REVERT : CMD_PACKS_APPLY,
+                                                        pack.id
+                                                    )
+                                                }
+                                            >
+                                                {applied ? 'Reverter' : 'Aplicar'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_PACKS_REFRESH)}
+                >
+                    {busy ? 'lendo…' : 'Ler packs'}
+                </button>
+            </div>
+        );
+    }
+
     protected renderBrokerTrail(): React.ReactNode {
         const trail = this.store.brokerActivity;
         const summary = this.store.brokerActivityBusy

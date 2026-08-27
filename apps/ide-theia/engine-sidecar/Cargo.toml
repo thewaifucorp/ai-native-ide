@@ -23,10 +23,17 @@ ide-domain = { path = "../../../crates/ide-domain" }
 #  - ide-agent: the REAL AcpxAgentFacade (descriptor + honest health probe) so the
 #               dock's "Contexto ativo" reflects a real agent adapter, not mock text (M5)
 ide-agent = { path = "../../../crates/ide-agent" }
+#  - ide-reconciliation: the REAL preview supervisor + evidence ledger + literal
+#                       intent-vs-observed reconciliation (§4). Shell-neutral by
+#                       design, same as ide-harness: it starts no process and
+#                       opens no socket, so `preview.rs` is the half that does.
+#  - ide-packs:   the REAL declarative pack registry (§4 local packs)
 #  - ide-harness: the REAL deterministic Layer-0 checks (§4). Shell-neutral by
 #                 design — it evaluates facts a host observed and never runs a
 #                 process itself, so gathering those facts is this sidecar's job.
 ide-harness = { path = "../../../crates/ide-harness" }
+ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
+ide-packs = { path = "../../../crates/ide-packs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

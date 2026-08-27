@@ -173,6 +173,54 @@ pub fn readiness_with_dispositions(
     }
 }
 
+/// Checks a pack before it is allowed into a registry.
+///
+/// Nothing here is about taste. Each rule exists because breaking it makes a
+/// later readiness verdict unexplainable: an unnamed pack cannot be reverted by
+/// name, two checks sharing an id collapse into one row that reports the other's
+/// outcome, and a pack with neither checks nor guides has nothing to answer for.
+///
+/// Note what is NOT validated: capabilities. [`PackCapability`] has no
+/// native-execution variant, so "a pack cannot run arbitrary code" is held by the
+/// type, not by a check that could be forgotten.
+pub fn validate_pack(pack: &Pack) -> anyhow::Result<()> {
+    if pack.id.trim().is_empty() {
+        anyhow::bail!("pack has no id")
+    }
+    if pack.name.trim().is_empty() {
+        anyhow::bail!("pack {} has no name", pack.id)
+    }
+    if pack.domain.trim().is_empty() {
+        anyhow::bail!("pack {} declares no domain", pack.id)
+    }
+    if pack.checks.is_empty() && pack.guides.is_empty() {
+        anyhow::bail!("pack {} declares neither checks nor guides", pack.id)
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for check in &pack.checks {
+        if check.id.trim().is_empty() {
+            anyhow::bail!("pack {} has a check with no id", pack.id)
+        }
+        if check.criterion.trim().is_empty() {
+            anyhow::bail!(
+                "check {} in pack {} states no criterion",
+                check.id,
+                pack.id
+            )
+        }
+        if seen.contains(&check.id.as_str()) {
+            anyhow::bail!("pack {} repeats check id {}", pack.id, check.id)
+        }
+        seen.push(&check.id);
+    }
+    for guide in &pack.guides {
+        if guide.id.trim().is_empty() || guide.text.trim().is_empty() {
+            anyhow::bail!("pack {} has a guide with no id or no text", pack.id)
+        }
+    }
+    Ok(())
+}
+
 /// How a user dispositions a pack finding, recorded and reversible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -249,6 +297,45 @@ impl PackRegistry {
 
     pub fn list(&self) -> Vec<Pack> {
         self.installed.values().cloned().collect()
+    }
+
+    /// Installs a pack the person supplied — the local-pack path.
+    ///
+    /// Installing is not applying: the pack becomes available and inert, and a
+    /// separate explicit [`Self::apply`] is what puts it in force.
+    ///
+    /// Two refusals, both deliberate:
+    ///
+    ///  * A pack that fails [`validate_pack`] is not stored at all. A registry
+    ///    that accepted a pack with two checks sharing an id would produce
+    ///    readiness verdicts nobody can trace back to a rule.
+    ///  * A pack whose id is already installed **and applied** is refused.
+    ///    Overwriting it would change the rules in force under a readiness
+    ///    verdict already taken; reverting first makes that visible.
+    pub fn install(&mut self, pack: Pack) -> anyhow::Result<()> {
+        validate_pack(&pack)?;
+        if self.applied.iter().any(|id| *id == pack.id) {
+            anyhow::bail!(
+                "pack {} is applied — revert it before installing over it",
+                pack.id
+            )
+        }
+        self.installed.insert(pack.id.clone(), pack);
+        self.persist()
+    }
+
+    /// Reads a pack from a local JSON file and installs it.
+    ///
+    /// The parse error is propagated with the path rather than collapsing into
+    /// "invalid pack": a file that cannot be read and a file that declares an
+    /// invalid pack are different problems for whoever wrote it.
+    pub fn install_from_path(&mut self, path: impl AsRef<Path>) -> anyhow::Result<Pack> {
+        let path = path.as_ref();
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let pack: Pack = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse pack {}", path.display()))?;
+        self.install(pack.clone())?;
+        Ok(pack)
     }
 
     pub fn applied(&self) -> Vec<String> {
@@ -481,5 +568,111 @@ mod tests {
         let registry = PackRegistry::open(&root).unwrap();
         assert_eq!(registry.applied(), vec!["auction-starter".to_owned()]);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn local_pack() -> Pack {
+        Pack {
+            id: "leilao-local".to_owned(),
+            name: "Pack local de leilão".to_owned(),
+            domain: "auction".to_owned(),
+            description: "Instalado de um arquivo local.".to_owned(),
+            checks: vec![PackCheck {
+                id: "lance-estrito".to_owned(),
+                title: "Lance precisa exceder o atual".to_owned(),
+                subject: "auction".to_owned(),
+                criterion: "Um lance igual ao atual é recusado.".to_owned(),
+                layer: 0,
+            }],
+            guides: Vec::new(),
+            capabilities: vec![PackCapability::RunDeterministicCheck],
+            reversible: true,
+        }
+    }
+
+    /// Installing is not applying: a freshly installed pack is available and
+    /// inert until someone applies it.
+    #[test]
+    fn installing_a_local_pack_does_not_apply_it() {
+        let root = temp_root("install");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = PackRegistry::open(&root).unwrap();
+
+        registry.install(local_pack()).unwrap();
+
+        assert!(registry.list().iter().any(|p| p.id == "leilao-local"));
+        assert!(
+            registry.applied().is_empty(),
+            "instalar não pode ligar nada"
+        );
+
+        // And it survives a reopen, because installing persisted it.
+        let reopened = PackRegistry::open(&root).unwrap();
+        assert!(reopened.list().iter().any(|p| p.id == "leilao-local"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_pack_read_from_a_local_file_is_installed() {
+        let root = temp_root("install-file");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("leilao-local.pack.json");
+        fs::write(&file, serde_json::to_vec_pretty(&local_pack()).unwrap()).unwrap();
+        let mut registry = PackRegistry::open(&root).unwrap();
+
+        let pack = registry.install_from_path(&file).unwrap();
+
+        assert_eq!(pack.id, "leilao-local");
+        assert_eq!(registry.list().len(), 2, "o starter continua lá");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A pack with two checks sharing an id would produce a readiness verdict
+    /// nobody can trace back to a rule, so it never enters the registry.
+    #[test]
+    fn a_pack_that_repeats_a_check_id_is_refused() {
+        let root = temp_root("dup-check");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = PackRegistry::open(&root).unwrap();
+        let mut pack = local_pack();
+        let repeated = pack.checks[0].clone();
+        pack.checks.push(repeated);
+
+        let error = registry.install(pack).unwrap_err().to_string();
+
+        assert!(error.contains("repeats check id"), "{error}");
+        assert!(!registry.list().iter().any(|p| p.id == "leilao-local"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Overwriting an APPLIED pack would change the rules in force under a
+    /// readiness verdict already taken. Reverting first makes that explicit.
+    #[test]
+    fn installing_over_an_applied_pack_is_refused() {
+        let root = temp_root("install-applied");
+        let _ = fs::remove_dir_all(&root);
+        let mut registry = PackRegistry::open(&root).unwrap();
+        registry.install(local_pack()).unwrap();
+        registry.apply("leilao-local").unwrap();
+
+        let error = registry.install(local_pack()).unwrap_err().to_string();
+        assert!(error.contains("revert it before"), "{error}");
+
+        registry.revert("leilao-local").unwrap();
+        registry.install(local_pack()).expect("depois de reverter, entra");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A pack with nothing to say — no checks, no guides — has nothing to answer
+    /// for at a checkpoint, so it is not a pack.
+    #[test]
+    fn an_empty_pack_is_refused() {
+        let mut pack = local_pack();
+        pack.checks.clear();
+        pack.guides.clear();
+
+        let error = validate_pack(&pack).unwrap_err().to_string();
+
+        assert!(error.contains("neither checks nor guides"), "{error}");
     }
 }

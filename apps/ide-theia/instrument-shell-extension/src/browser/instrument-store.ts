@@ -11,7 +11,13 @@ import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { WriteProposal } from '../common/governed-protocol';
 import { CapabilityState } from '../common/capability-protocol';
-import { BrokerActivity, HarnessRun } from 'engine-extension';
+import {
+    BrokerActivity,
+    HarnessRun,
+    PacksSnapshot,
+    PreviewSnapshot,
+    ReconciliationSnapshot
+} from 'engine-extension';
 import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
 import { ProjectAnalysis } from '../common/analysis-protocol';
@@ -90,6 +96,26 @@ export class InstrumentStore {
     checks: HarnessRun | undefined;
     checksBusy = false;
 
+    // ── REAL preview (§4): o processo que o projeto declara, supervisionado
+    //    pelo motor do ide-reconciliation. `undefined` = nem consultado; um
+    //    snapshot com `state: null` = declarado mas não iniciado. Não iniciado
+    //    não é quebrado, e as duas coisas nunca se misturam na tela.
+    preview: PreviewSnapshot | undefined;
+    previewBusy = false;
+
+    // ── REAL reconciliação (§4): o que o projeto DECLAROU contra o que foi
+    //    OBSERVADO. Outro eixo do §3 (que confere intenção contra implementação
+    //    pelos claims de `.product/`) — aqui a observação vem do ledger do
+    //    preview, e divergência sem evidência não existe.
+    reconciliation: ReconciliationSnapshot | undefined;
+    reconcileBusy = false;
+
+    // ── REAL packs locais (§4): disponíveis (arquivo no projeto), instalados
+    //    (no registry, inertes) e aplicados (valendo em checkpoint). Três
+    //    estados distintos de propósito.
+    packs: PacksSnapshot | undefined;
+    packsBusy = false;
+
     // ── REAL análise do projeto (§5): stack, comandos, Git, serviços e
     //    integrações, cada afirmação com a evidência que a sustenta.
     analysis: ProjectAnalysis | undefined;
@@ -101,7 +127,7 @@ export class InstrumentStore {
     productBusy = false;
 
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
-    collapsedSections: string[] = ['workbench', 'broker', 'harness'];
+    collapsedSections: string[] = ['workbench', 'broker', 'harness', 'packs'];
 
     // ── REAL broker trail (M9): the raw audit the Rust broker recorded for this
     //    project — propose / awaiting / snapshot / execute / rollback. Fetched on
@@ -266,6 +292,43 @@ export class InstrumentStore {
     setAnalysisBusy(busy: boolean): void {
         this.analysisBusy = busy;
         this.emit();
+    }
+
+    setPreview(snapshot: PreviewSnapshot | undefined): void {
+        this.preview = snapshot;
+        this.emit();
+    }
+
+    setPreviewBusy(busy: boolean): void {
+        this.previewBusy = busy;
+        this.emit();
+    }
+
+    setReconciliation(snapshot: ReconciliationSnapshot | undefined): void {
+        this.reconciliation = snapshot;
+        this.emit();
+    }
+
+    setReconcileBusy(busy: boolean): void {
+        this.reconcileBusy = busy;
+        this.emit();
+    }
+
+    setPacks(snapshot: PacksSnapshot | undefined): void {
+        this.packs = snapshot;
+        this.emit();
+    }
+
+    setPacksBusy(busy: boolean): void {
+        this.packsBusy = busy;
+        this.emit();
+    }
+
+    /** Divergências declarado-vs-observado ainda sem decisão registrada. */
+    get openDivergenceCount(): number {
+        return this.reconciliation
+            ? this.reconciliation.divergences.filter(d => !d.reconciliation).length
+            : 0;
     }
 
     setChecks(run: HarnessRun | undefined): void {
