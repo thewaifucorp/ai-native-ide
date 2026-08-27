@@ -41,6 +41,7 @@ import {
     CMD_RECONCILE_SCAN,
     CMD_RECONCILE_DECIDE,
     CMD_SESSION_CANCEL,
+    CMD_SESSION_DISCARD,
     CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
     CMD_SESSION_START,
@@ -1238,21 +1239,49 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             {session?.worktree && (
                                 <small>worktree: {session.worktree.split('/').slice(-3).join('/')}</small>
                             )}
+                            {session?.baseline && (
+                                <small className="cap-hint">
+                                    baseline: {session.baseline.files} arquivo(s) em{' '}
+                                    {session.baseline.at}
+                                    {session.baseline.commit
+                                        ? ` (commit ${session.baseline.commit.slice(0, 7)})`
+                                        : ' (projeto sem git — cópia isolada)'}
+                                    {session.baseline.reused &&
+                                        ' · worktree de sessão anterior: o agente vê o projeto daquele momento'}
+                                    {session.baseline.recovered &&
+                                        ' · baseline RECUPERADA: mudança anterior a ela não é distinguível da sua'}
+                                </small>
+                            )}
                             {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
                             <small className="cap-hint">
-                                o agente trabalha na worktree e só o broker traz mudança para o projeto ·
+                                o agente trabalha na worktree e só o broker traz mudança de ARQUIVO para o
+                                projeto · comando que o agente roda não deixa recibo no broker e não tem
+                                rollback: só o portão de permissão o cobre, e só nos bridges que perguntam ·
+                                exclusão é vista mas não é proposta (o broker não tem efeito de exclusão) ·
                                 não é jaula: o adapter não aplica sandbox · permissão do agente é
                                 decidida aqui, e o agente fica parado até a decisão
                             </small>
                             <div className="cap-actions">
                                 {phase === 'none' || phase === 'failed' ? (
-                                    <button
-                                        className="cap-btn primary"
-                                        disabled={busy}
-                                        onClick={() => this.commands.executeCommand(CMD_SESSION_START, 'claude')}
-                                    >
-                                        {busy ? 'abrindo…' : 'Abrir sessão'}
-                                    </button>
+                                    <>
+                                        <button
+                                            className="cap-btn primary"
+                                            disabled={busy}
+                                            onClick={() => this.commands.executeCommand(CMD_SESSION_START, 'claude')}
+                                        >
+                                            {busy ? 'abrindo…' : 'Abrir sessão'}
+                                        </button>
+                                        {session?.worktree && (
+                                            <button
+                                                className="cap-btn"
+                                                disabled={busy}
+                                                title="Apaga a worktree e a baseline; o que não foi colhido é perdido"
+                                                onClick={() => this.commands.executeCommand(CMD_SESSION_DISCARD)}
+                                            >
+                                                Descartar worktree
+                                            </button>
+                                        )}
+                                    </>
                                 ) : (
                                     <>
                                         <button
@@ -1282,6 +1311,14 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                             onClick={() => this.commands.executeCommand(CMD_SESSION_CANCEL)}
                                         >
                                             Encerrar
+                                        </button>
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title="Encerra a sessão e apaga a worktree; o que não foi colhido é perdido"
+                                            onClick={() => this.commands.executeCommand(CMD_SESSION_DISCARD)}
+                                        >
+                                            Descartar worktree
                                         </button>
                                     </>
                                 )}
@@ -1380,16 +1417,49 @@ export class WorkWidget extends AbstractInstrumentWidget {
 
                         {session && session.changes.length > 0 && (
                             <div className="cap-card">
-                                <div className="cap-head"><b>Mudanças na worktree</b></div>
+                                <div className="cap-head"><b>Mudanças do agente na worktree</b></div>
+                                <small className="cap-hint">
+                                    só edição e criação de arquivo passam pelo broker · exclusão e
+                                    conflito com o seu trabalho ficam reportados, sem proposta
+                                </small>
                                 {session.changes.map(c => (
                                     <div className="cap-receipt" key={c.relPath}>
                                         <span className="cap-receipt-action">
-                                            {c.proposed ? 'proposto' : 'na fila'}
+                                            {c.proposed
+                                                ? 'proposto'
+                                                : c.kind === 'delete'
+                                                    ? 'exclusão'
+                                                    : c.conflict
+                                                        ? 'conflito'
+                                                        : 'na fila'}
                                         </span>
                                         <span className="cap-receipt-detail">
+                                            {c.kind === 'create' ? 'criar ' : c.kind === 'delete' ? 'apagar ' : ''}
                                             {c.relPath} +{c.addedLines}/-{c.removedLines}
                                         </span>
                                         <small>{c.detail ?? c.proposalId ?? ''}</small>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {session && session.skipped.length > 0 && (
+                            <div className="cap-card">
+                                <div className="cap-head">
+                                    <b>Não comparados</b>
+                                    <span className="cap-pill not-installed">
+                                        {session.skipped.length}
+                                    </span>
+                                </div>
+                                <small className="cap-hint">
+                                    a colheita não leu estes arquivos — se o agente mudou algum, você
+                                    NÃO está vendo
+                                </small>
+                                {session.skipped.map(s => (
+                                    <div className="cap-receipt" key={s.relPath}>
+                                        <span className="cap-receipt-action">pulado</span>
+                                        <span className="cap-receipt-detail">{s.relPath}</span>
+                                        <small>{s.reason}</small>
                                     </div>
                                 ))}
                             </div>

@@ -85,6 +85,11 @@ jobs:
       # native postinstall steps (drivelist, nsfw, theia prepare) are dead weight.
       - name: Install Theia app dependencies
         run: yarn --cwd apps/ide-theia install --frozen-lockfile --ignore-scripts
+      # `engine-extension` is a `link:` package whose .d.ts files are produced by
+      # tsc, so without building it first every import of it is an unresolved
+      # module and the shell extension fails to type-check.
+      - name: Build extensions
+        run: yarn --cwd apps/ide-theia build:ext
       - name: Extension tests
         run: yarn --cwd apps/ide-theia test:ext
 

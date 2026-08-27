@@ -16,6 +16,7 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
+import { ConfirmDialog } from '@theia/core/lib/browser/dialogs';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -74,6 +75,7 @@ export const CMD_SESSION_START = 'instrument.session.start';
 export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
+export const CMD_SESSION_DISCARD = 'instrument.session.discard';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
@@ -263,6 +265,10 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SESSION_CANCEL, label: 'Instrument: encerrar sessão de agente' },
             { execute: () => this.sessionCancel() }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_DISCARD, label: 'Instrument: descartar a worktree do agente' },
+            { execute: () => this.sessionDiscard() }
         );
         commands.registerCommand(
             { id: CMD_MATERIALS_ANALYZE, label: 'Instrument: analisar materiais do projeto (§5)' },
@@ -1741,6 +1747,33 @@ export class InstrumentCapabilityContribution
             this.store.setSession(await this.session.cancel(root));
         } catch (err) {
             this.messages.error(`Falha ao encerrar: ${this.msg(err)}`);
+        }
+    }
+
+    /** Discarding is destructive — what the agent wrote and nobody harvested is
+     *  gone — so it asks first, and the question names the loss. */
+    protected async sessionDiscard(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        const pendingChanges = (this.store.session?.changes ?? []).filter(c => !c.proposed).length;
+        const confirmed = await new ConfirmDialog({
+            title: 'Descartar a worktree do agente?',
+            msg: pendingChanges > 0
+                ? `${pendingChanges} mudança(s) do agente ainda não foram colhidas e serão perdidas. ` +
+                  'A próxima sessão parte do estado atual do projeto.'
+                : 'A próxima sessão parte do estado atual do projeto. Nada do projeto é tocado.',
+            ok: 'Descartar',
+            cancel: 'Manter'
+        }).open();
+        if (!confirmed) {
+            return;
+        }
+        try {
+            this.store.setSession(await this.session.discard(root));
+        } catch (err) {
+            this.messages.error(`Falha ao descartar a worktree: ${this.msg(err)}`);
         }
     }
 

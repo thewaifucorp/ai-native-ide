@@ -40,6 +40,27 @@
 //    `harvest` reports how many changes are still queued behind the current one;
 //  • the agent sees the project as of the worktree's commit, not uncommitted
 //    working-tree edits.
+//
+// ── O QUE `harvest` COBRE, E O QUE NÃO ────────────────────────────────────
+// A comparação é de TRÊS lados: a baseline de que a worktree nasceu, a worktree
+// agora e o projeto agora. Sem a baseline, `harvest` só sabia comparar worktree
+// com projeto — então o que a PESSOA editou depois aparecia como mudança do
+// agente, e aprovar revertia o trabalho dela. Com ela:
+//  • worktree ≠ baseline  → ato do agente, proposto pelo broker;
+//  • projeto ≠ baseline e worktree = baseline → ato da pessoa, ignorado;
+//  • os dois mudaram → CONFLITO: reportado, nunca proposto;
+//  • a baseline tinha e a worktree não → EXCLUSÃO: reportada, nunca proposta,
+//    porque o broker não tem efeito de exclusão (logo não há snapshot nem
+//    rollback para ela). Propor um arquivo vazio no lugar seria escrever mentira.
+//
+// COMANDO NÃO É COBERTO PELO BROKER. O que o agente roda passa só pelo portão de
+// permissão (e só nos bridges que perguntam): não deixa recibo no broker, não tem
+// snapshot e não tem rollback. Efeito de comando fora de arquivo colhido está
+// fora do caminho governado, e a tela diz isso em vez de sugerir o contrário.
+//
+// Binário, arquivo acima de 512 KiB e link simbólico não são comparados. Eles
+// entram em `skipped` com o motivo: "não comparado" é um fato que o usuário
+// precisa ver, não um silêncio.
 
 import { AgentEvent } from 'engine-extension';
 
@@ -93,9 +114,18 @@ export interface PermissionEditView {
     truncated: boolean;
 }
 
+/** What the agent did to the file, relative to the worktree's BASELINE. */
+export type HarvestKind = 'create' | 'modify' | 'delete';
+
 /** A change the agent made inside the worktree, not yet in the project. */
 export interface HarvestedChange {
     relPath: string;
+    /**
+     * Which act this is. `delete` exists because comparing only the files the
+     * worktree still has makes a deletion invisible, and an invisible write is
+     * exactly what this panel must never produce.
+     */
+    kind: HarvestKind;
     addedLines: number;
     removedLines: number;
     /** True when this one was proposed to the broker in this harvest. */
@@ -104,6 +134,44 @@ export interface HarvestedChange {
     proposalId?: string;
     /** Why it was not proposed (another decision is pending, unreadable, …). */
     detail?: string;
+    /**
+     * The PERSON also changed this file in the project since the baseline. The
+     * broker's write replaces bytes, so proposing this one would silently discard
+     * their work — it is reported and NOT proposed.
+     */
+    conflict?: boolean;
+}
+
+/** A file the comparison did not read, and why. Never dropped in silence. */
+export interface SkippedFile {
+    relPath: string;
+    /** `binário`, `grande demais (…)`, `ilegível: …`, `link simbólico`. */
+    reason: string;
+}
+
+/**
+ * What the worktree was made from — the third side of the comparison.
+ *
+ * Without it `harvest` can only compare worktree bytes against project bytes,
+ * which reports the PERSON's later edits as the agent's, and offers to revert
+ * them. With it, "the agent changed this" and "you changed this" are different
+ * facts.
+ */
+export interface WorktreeBaseline {
+    /** When the baseline was taken (ISO). */
+    at: string;
+    /** `git rev-parse HEAD` at that moment, when the project is a repository. */
+    commit?: string;
+    /** How many files it recorded. */
+    files: number;
+    /** True when this session adopted a worktree an earlier session left behind. */
+    reused: boolean;
+    /**
+     * True when the baseline had to be reconstructed from the project because the
+     * worktree existed without one. Everything the agent did BEFORE that moment
+     * is indistinguishable from what the person did, and the UI must say so.
+     */
+    recovered?: boolean;
 }
 
 export interface AgentSessionSnapshot {
@@ -117,6 +185,10 @@ export interface AgentSessionSnapshot {
     lastError?: string;
     /** Changes seen in the worktree at the last harvest. */
     changes: HarvestedChange[];
+    /** Files the last harvest could not compare, with the reason for each. */
+    skipped: SkippedFile[];
+    /** What the worktree was made from, when there is a worktree. */
+    baseline?: WorktreeBaseline;
     /** Permissions awaiting a decision. Non-empty means the agent is blocked. */
     pending: PendingPermission[];
 }
@@ -154,4 +226,15 @@ export interface AgentSessionService {
 
     /** End the session. The worktree is left in place for inspection. */
     cancel(rootUri: string): Promise<AgentSessionSnapshot>;
+
+    /**
+     * Throw the worktree and its baseline away.
+     *
+     * `cancel` deliberately keeps the worktree so unharvested work can still be
+     * inspected — but keeping it forever is its own defect: the next session
+     * inherits the leftovers and keeps looking at the project as of an old commit.
+     * Discarding is therefore an explicit act, with a real loss to state: anything
+     * the agent wrote and nobody harvested is gone.
+     */
+    discard(rootUri: string): Promise<AgentSessionSnapshot>;
 }
