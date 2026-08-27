@@ -207,7 +207,7 @@ pub fn report(items: &[WorkItem], observed: &BTreeMap<String, String>) -> WorkRe
     let mut statuses: Vec<StatusReport> = Vec::new();
     for item in items {
         let mut seen = BTreeSet::new();
-        match status_of(item, &by_id, &children, observed, &mut seen) {
+        match status_of(item, &children, observed, &mut seen) {
             Ok(report) => statuses.push(report),
             Err(problem) => {
                 problems.push(problem);
@@ -226,14 +226,12 @@ pub fn report(items: &[WorkItem], observed: &BTreeMap<String, String>) -> WorkRe
         }
     }
     statuses.sort_by(|a, b| a.id.cmp(&b.id));
-    problems
-        .sort_by(|a, b| (a.id.clone(), a.problem.clone()).cmp(&(b.id.clone(), b.problem.clone())));
+    problems.sort_by_key(|problem| (problem.id.clone(), problem.problem.clone()));
     WorkReport { statuses, problems }
 }
 
 fn status_of<'a>(
     item: &'a WorkItem,
-    by_id: &BTreeMap<&'a str, &'a WorkItem>,
     children: &BTreeMap<&'a str, Vec<&'a WorkItem>>,
     observed: &BTreeMap<String, String>,
     seen: &mut BTreeSet<String>,
@@ -271,7 +269,7 @@ fn status_of<'a>(
     // what its children are, and a child's problem is the parent's problem.
     let mut child_reports = Vec::new();
     for child in children.get(item.id.as_str()).into_iter().flatten() {
-        child_reports.push(status_of(child, by_id, children, observed, seen)?);
+        child_reports.push(status_of(child, children, observed, seen)?);
     }
     seen.remove(&item.id);
     let child_ids: Vec<String> = child_reports.iter().map(|r| r.id.clone()).collect();
