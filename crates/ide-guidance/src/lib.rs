@@ -1020,14 +1020,14 @@ mod tests {
             .iter()
             .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
 
-        registry.mark_used(&[captured.id.clone()], 0).unwrap();
+        registry.mark_used(std::slice::from_ref(&captured.id), 0).unwrap();
         // Used at 0. Idle (1_000ms) within the window: not yet obsolete.
         let fresh = registry.hygiene_with_staleness(1_000, window_ms);
         assert!(!fresh
             .iter()
             .any(|finding| matches!(finding, HygieneFinding::Obsolete { .. })));
 
-        registry.mark_used(&[captured.id.clone()], 1).unwrap();
+        registry.mark_used(std::slice::from_ref(&captured.id), 1).unwrap();
         // Idle beyond the window: obsolete surfaces for review.
         let stale = registry.hygiene_with_staleness(5_001, window_ms);
         assert!(stale.iter().any(|finding| matches!(
@@ -1261,8 +1261,8 @@ mod tests {
         );
 
         // Usada há muito tempo (window 5s, agora 10s, uso em 1s) → obsoleta.
-        assert_eq!(registry.mark_used(&[idle.id.clone()], 1_000).unwrap(), 1);
-        assert_eq!(registry.mark_used(&[fresh.id.clone()], 9_000).unwrap(), 1);
+        assert_eq!(registry.mark_used(std::slice::from_ref(&idle.id), 1_000).unwrap(), 1);
+        assert_eq!(registry.mark_used(std::slice::from_ref(&fresh.id), 9_000).unwrap(), 1);
 
         let after: Vec<String> = registry
             .hygiene_with_staleness(10_000, 5_000)
@@ -1312,7 +1312,7 @@ mod tests {
             .unwrap();
         registry.suspend(&entry.id).unwrap();
 
-        assert_eq!(registry.mark_used(&[entry.id.clone()], 5_000).unwrap(), 0);
+        assert_eq!(registry.mark_used(std::slice::from_ref(&entry.id), 5_000).unwrap(), 0);
         assert_eq!(
             registry.list()[0].last_used_ms,
             0,
