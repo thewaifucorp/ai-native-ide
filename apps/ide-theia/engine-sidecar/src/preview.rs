@@ -279,11 +279,24 @@ impl PreviewRuntime {
         }
     }
 
+    /// Id of one recorded failure, unique to the OCCURRENCE.
+    ///
+    /// The observation timestamp is part of it on purpose. A per-session counter
+    /// alone restarts at 1, so a decision taken about yesterday's failure would
+    /// silently attach to today's — the reconciliation store keys decisions by
+    /// divergence id, and the divergence id is built from this one. An exception
+    /// accepted for a failure somebody looked at must not quietly cover the next
+    /// one that happens to have the same shape.
     fn next_id(&mut self, kind: &str) -> (String, String) {
-        self.seq += 1;
+        // Process-wide counter, not per-runtime: a restarted preview gets a fresh
+        // runtime, and a counter that restarted with it could repeat an id inside
+        // the same millisecond.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        self.seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let at = now_ms();
         (
-            format!("preview-failure:{kind}:{}", self.seq),
-            format!("evidence:{LOG_REL}#{}", self.seq),
+            format!("preview-failure:{kind}:{at}:{}", self.seq),
+            format!("evidence:{LOG_REL}#{at}:{}", self.seq),
         )
     }
 
@@ -545,6 +558,14 @@ pub fn status(root: &Path) -> Result<PreviewSnapshot, String> {
             if code != Some(0) {
                 refusal = runtime.record_exit(code.unwrap_or(-1), &detail);
             }
+            // The last probe now describes a process that no longer exists. Left
+            // unlabelled next to a broken state it reads as a contradiction —
+            // "HTTP/1.1 200 OK" under "quebrado" — so it is marked as being from
+            // before the death. This branch runs once: the child is cleared here.
+            runtime.last_probe = runtime
+                .last_probe
+                .take()
+                .map(|probe| format!("antes de terminar: {probe}"));
             runtime.child = None;
             runtime.move_to(PreviewHealth::Broken, Some(detail));
         } else if let Some(url) = declared.as_ref().and_then(|d| d.url.as_deref()) {
@@ -742,6 +763,28 @@ mod tests {
             "saída limpa não pode virar evidência de falha"
         );
         assert!(!snapshot.running);
+    }
+
+    /// Two failures recorded in different sessions must not share an id: a
+    /// decision taken about one would silently cover the other.
+    #[test]
+    fn failure_ids_are_unique_per_occurrence() {
+        let dir = project(Some(
+            r#"{"command":"exit 3","url":"http://127.0.0.1:1/","readyTimeoutMs":200}"#,
+        ));
+
+        let first = start(dir.path()).expect("start");
+        let id_first = first.failures[0].id.clone();
+        // A restart resets the per-session counter; the id must still differ.
+        stop(dir.path()).expect("stop");
+        registry().lock().unwrap().remove(&dir.path().to_string_lossy().into_owned());
+        let second = start(dir.path()).expect("restart");
+        let id_second = second.failures[0].id.clone();
+
+        assert_ne!(
+            id_first, id_second,
+            "contador por sessão sozinho reinicia em 1 e cola decisão antiga em falha nova"
+        );
     }
 
     /// A command that dies with a non-zero code IS evidence, and the evidence

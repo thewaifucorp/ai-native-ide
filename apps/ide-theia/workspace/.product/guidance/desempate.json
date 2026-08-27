@@ -1,0 +1,12 @@
+{
+  "id": "guidance:AGENTS.md#desempate",
+  "title": "Desempate",
+  "strength": "suggestion",
+  "text": "Um lance precisa exceder estritamente o valor atual para assumir a posição.",
+  "provenance": {
+    "path": "AGENTS.md",
+    "line": 6,
+    "excerpt": "Um lance precisa exceder estritamente o valor atual para assumir a posição."
+  },
+  "adoptedFrom": "analise-de-materiais-§5"
+}

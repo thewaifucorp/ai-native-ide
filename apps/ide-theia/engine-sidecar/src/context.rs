@@ -240,9 +240,19 @@ pub fn compile_package(root: &Path, budget_chars: Option<usize>, evidence: Vec<E
                     version: version_of(&root.join(&rel)),
                 });
                 applied.push(AppliedGuidance {
-                    reason: format!("adotada no projeto ({rel})"),
+                    // Short on purpose: the compiler uses `reason` for BOTH the
+                    // segment's scope and its reason, so a long sentence here
+                    // shows up twice on screen.
+                    reason: format!("adotada em {rel}"),
                     guidance: Guidance {
-                        id: file.id,
+                        // §5 writes ids like `guidance:AGENTS.md#desempate`, and
+                        // the compiler prefixes `guidance:` itself — keeping both
+                        // renders `guidance:guidance:…`.
+                        id: file
+                            .id
+                            .strip_prefix("guidance:")
+                            .unwrap_or(&file.id)
+                            .to_string(),
                         name: file.title,
                         guidance_type: GuidanceType::Convention,
                         scope: GuidanceScope::Project {

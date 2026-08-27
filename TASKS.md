@@ -316,40 +316,54 @@ Preview, checks, findings e reconciliação reais; evidence/comandos raw sob dem
 
 **Pronto:** mudar projeto muda Overview e suas evidências.
 
-**CÓDIGO COMPLETO (2026-08-27), PROVA DO PREVIEW/PACK PENDENTE DE BUILD.**
-Checks, findings, evidência e a regra de honestidade estão provados no app desde
-2026-08-26. Preview, reconciliação e pack local foram escritos e ligados, com
-testes, mas a prova na tela depende de `cargo build --release` no
-`engine-sidecar` — cargo não roda nesta máquina (trava o PC), então esse passo é
-do Mario. Enquanto o binário for o antigo, os três botões novos respondem
-`unknown method` — erro honesto, não silêncio.
+**PROVADO (2026-08-27, app Theia ativo, sidecar recompilado).** Item fechado:
+checks/findings/evidência desde 2026-08-26, e agora preview, reconciliação e pack
+local medidos na tela.
 
-**O que foi ligado:**
+**Preview** (`engine-sidecar/src/preview.rs`) — declarado em
+`.instrument/preview.json`, nunca detectado. O módulo é a única parte do caminho
+que toca o sistema (spawn, sonda TCP crua, log); o motor (`PreviewSupervisor`,
+`PreviewEvidenceLedger`) continua sem abrir socket. Duas recusas do motor ficam
+de pé: saída limpa NÃO vira evidência de falha, e falha sem rastro causal não é
+registrada. Uma recusa própria: `https://` é dito não-sondável em vez de
+adivinhado pelo handshake.
 
-- `engine-sidecar/src/preview.rs` — declarado em `.instrument/preview.json`,
-  nunca detectado. Spawn, sonda HTTP crua e log ficam aqui; o motor
-  (`PreviewSupervisor`, `PreviewEvidenceLedger`) continua sem tocar sistema.
-  Saída limpa não vira evidência de falha (o motor recusa) e `https://` é dito
-  não-sondável em vez de adivinhado. 6 testes.
-- `engine-sidecar/src/reconcile.rs` — eixo **declarado × observado**, distinto do
-  §3 (que confere intenção contra implementação por claims de `.product/`).
-  Intenção de `.instrument/intents.json`, e url de saúde declarada conta como
-  expectativa, com `source_path` apontando o arquivo. Decidir não resolve:
-  implementação fica `pending_verification` e só é oferecida quando existe efeito
-  real para nomear. 9 testes.
-- `engine-sidecar/src/packs.rs` + `PackRegistry::install`/`install_from_path`/
-  `validate_pack` — disponível, instalado e aplicado são três estados, e nem
-  aplicado fica verde: check de pack sem resultado observado bloqueia readiness
-  (packs são camada 1+, o §4 é camada 0). 6 testes no sidecar, 5 no crate.
-- Tela: cards de Preview e Declarado × observado no Overview, seção de Packs em
-  Ferramentas.
-- Fixtures do workspace: `src/server.ts` (leaderboard que não vaza id de lance) e
-  `packs/leilao-local.pack.json`.
+Medido na tela: `saudável` com a linha crua
+`http://127.0.0.1:8787/health: HTTP/1.1 200 OK`; depois de matar o processo por
+fora, `quebrado` com
+`falha · o processo do preview terminou (código encerrado por sinal)`, evidência
+`evidence:.instrument/preview.log#…` e rastro
+`.instrument/preview.json, .instrument/preview.log`.
 
-**Falta para fechar:** `cargo build --release` + `cargo test` no
-`apps/ide-theia/engine-sidecar`, e a passada na tela (iniciar preview, matar o
-processo para ver a evidência, decidir a divergência, instalar/aplicar/reverter o
-pack local).
+**Reconciliação** (`reconcile.rs`) — eixo declarado × observado, distinto do §3
+(que confere intenção contra implementação pelos claims de `.product/`). A url de
+saúde declarada conta como expectativa, com `source_path` apontando o arquivo.
+Medido: `1 divergência aberta · preview:health: declarado "healthy", observado
+"broken"`, com `Mudar implementação` **desabilitado** porque não havia efeito
+proposto para nomear — o motor recusaria. Exceção registrada com justificativa
+gravou `.instrument/reconciliation.json` e a divergência passou a `exceção
+aceita`.
+
+**Packs** (`packs.rs` + `PackRegistry::install`/`install_from_path`/
+`validate_pack`) — medido: `disponível` → `Instalar` → `instalado` (inerte, com
+aviso na tela de que aplicar é o próximo ato) → `Aplicar` → `readiness bloqueada
+· sem resultado: desempate-estrito, leaderboard-sem-id` → `Reverter` → registry
+com `applied: []`.
+
+**Dois defeitos meus achados só rodando, ambos com teste:**
+
+- id de falha era um contador por sessão, então reiniciava em 1 e uma decisão
+  antiga colava silenciosamente numa falha nova de mesma forma. Agora o id
+  carrega o instante da observação e um contador do processo.
+- a linha "última sonda" ficava mostrando `HTTP/1.1 200 OK` embaixo de
+  `quebrado`. Agora vem marcada: `antes de terminar: …`.
+
+**Mudar projeto muda o Overview:** provado abrindo um segundo projeto
+(`scratchpad/proj2`, sem nada declarado) — contexto `0 segmento(s)` com os quatro
+desconhecidos, preview `não declarado` com `Iniciar` desabilitado, `2 arquivo(s)
+do projeto fora do pacote`.
+
+50 testes em `cargo test` no sidecar, 5 novos em `crates/ide-packs`.
 
 **Feito e provado:**
 
@@ -467,29 +481,37 @@ Mostrar prompt/contexto efetivo, inclusões/exclusões, origem, versão, escopo,
 
 **Pronto:** pessoa sabe o que o agente recebeu, sem despejo do projeto inteiro.
 
-**CÓDIGO COMPLETO (2026-08-27), PROVA PENDENTE DO MESMO BUILD DO §4.**
+**PROVADO (2026-08-27, app Theia ativo, sidecar recompilado).**
 
 - `engine-sidecar/src/context.rs` liga o `ide-context` real: o pacote mínimo sai
   de material DECLARADO — guidance adotada em `.product/guidance/` (o que o §5
   grava) e autoridades de `.product/sot/` — mais a evidência que os motores do §4
   registraram. Varredura de projeto não entra em nenhum caminho.
 - A tela divide em INCLUÍDO (origem, escopo, motivo, verbatim, prioridade), FORA
-  (material real deixado de fora, com motivo, e a contagem de arquivos do projeto
-  que não entraram — "nada foi despejado" é número), DESCONHECIDO (o que material
-  declarado não responde), POLICY e LIMITES (orçamento e cortes).
+  (material real deixado de fora com o motivo, e a contagem de arquivos do
+  projeto que não entraram — "nada foi despejado" é número), DESCONHECIDO,
+  POLICY e LIMITES.
+- Medido na tela, workspace de demonstração: `2 segmento(s) · 171 de 4000
+  caracteres · 17 arquivo(s) do projeto fora do pacote`, com `verbatim intent`
+  (as afirmações do SoT, não o documento — `docs/product-intent.md` aparece na
+  lista FORA com o motivo) e `verbatim truth:intent:ranking` (autoridade
+  `docs/product-intent.md`). Fonte com versão observada:
+  `authority · .product/sot/intent.json · mtime:… bytes:693`.
+- **O laço §5 → §6 fechado na tela:** adotar a guidance `Desempate` gerou
+  proposta `Criar arquivo .product/guidance/desempate.json?` (+12/-0) no dock;
+  `Permitir` criou o arquivo com a procedência `AGENTS.md:6` dentro; recompilar
+  passou a `3 segmento(s)` com o segmento `guidance:AGENTS.md#desempate`
+  (prioridade 45, não-verbatim porque é sugestão), e o desconhecido "nenhuma
+  orientação adotada" desapareceu.
 - Retrieval governado não existe: o que falta continua `unknown` em vez de ser
-  preenchido por varredura. Isso está dito na policy do pacote, na tela.
+  preenchido por varredura, e isso está na policy do pacote, na tela.
 - Força de guidance: o §5 só escreve `suggestion`; `blocking`/`required` escritos
-  à mão por uma pessoa são honrados e ficam verbatim, imunes ao orçamento.
-  Palavra desconhecida degrada para `suggestion`, nunca promove.
+  à mão são honrados e ficam verbatim, imunes ao orçamento (teste com orçamento
+  zero). Palavra desconhecida degrada para `suggestion`, nunca promove.
 - Activity: a trilha do broker é dos efeitos Bastion DESTE projeto — evento com
-  caminho fora da raiz é descartado e contado, e a tela diz o escopo ("Control
-  Tower não é lido aqui"). Coberto por teste.
-- 8 testes em `context.rs` (pendentes do cargo) e 1 novo em
-  `governed-write.spec.ts` (rodando).
-
-**Falta para fechar:** mesmo `cargo build --release` do §4, e compilar o contexto
-na tela.
+  caminho fora da raiz é descartado e contado, e a tela declara o escopo
+  ("Control Tower não é lido aqui"). Coberto por teste.
+- 8 testes em `context.rs`, 1 novo em `governed-write.spec.ts`.
 
 ### 7. Anotações e reconciliação
 
