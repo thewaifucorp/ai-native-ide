@@ -976,6 +976,16 @@ export interface SettingRow {
     explain: string;
     /** True when nothing consumes this value yet — marked, never hidden. */
     declaredNotWired: boolean;
+    /**
+     * Values this field accepts, spelled as the file spells them.
+     *
+     * The engine declares them because the schema is the engine's: a list
+     * repeated in the widget would be a second place where `full_vibes` can be
+     * misspelled, and then the panel and the file would stop being the same
+     * thing. Empty means no closed choice (a number, a boolean) and the panel
+     * offers no buttons for it.
+     */
+    options: string[];
 }
 
 // ── §13 references: a service has an address, not a path ─────────────────────

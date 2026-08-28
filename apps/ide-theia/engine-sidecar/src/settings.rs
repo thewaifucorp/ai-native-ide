@@ -80,6 +80,14 @@ pub struct SettingRow {
     pub explain: String,
     /// True when nothing consumes this value yet.
     pub declared_not_wired: bool,
+    /// Os valores que este campo aceita, na grafia exata do arquivo.
+    ///
+    /// §14 precisa que a pessoa TROQUE de modo pelo painel, não só leia o modo.
+    /// A lista vem do motor porque o schema é dele: repeti-la no widget criaria
+    /// um segundo lugar onde "full_vibes" pode ser escrito errado, e aí painel e
+    /// arquivo deixariam de ser a mesma coisa. Vazia = campo sem escolha fechada
+    /// (número, booleano), que o painel não oferece como botão.
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,12 +192,19 @@ fn rows(config: &IdeConfig) -> Vec<SettingRow> {
     FIELDS
         .iter()
         .map(|(id, field, label)| {
+            // Valor e opções na MESMA grafia, a do serde.
+            //
+            // O valor saía em `Debug` (`FullVibes`) e as opções em serde
+            // (`full_vibes`), então o painel não conseguia reconhecer a opção em
+            // vigor: ele marcava nenhuma e oferecia o valor atual como se
+            // clicar nele fosse trocar de modo. Um painel que não sabe qual é o
+            // estado atual não pode ser a mesma coisa que o arquivo.
             let (value, source) = match field {
-                ConfigField::Mode => (format!("{:?}", config.mode.value), config.mode.source),
-                ConfigField::Depth => (format!("{:?}", config.depth.value), config.depth.source),
-                ConfigField::Layout => (format!("{:?}", config.layout.value), config.layout.source),
+                ConfigField::Mode => (wire_value(&config.mode.value), config.mode.source),
+                ConfigField::Depth => (wire_value(&config.depth.value), config.depth.source),
+                ConfigField::Layout => (wire_value(&config.layout.value), config.layout.source),
                 ConfigField::Permissions => (
-                    format!("{:?}", config.permissions.value),
+                    wire_value(&config.permissions.value),
                     config.permissions.source,
                 ),
                 ConfigField::HarnessLayers => (
@@ -215,9 +230,45 @@ fn rows(config: &IdeConfig) -> Vec<SettingRow> {
                 source: source_of(source),
                 explain: explain(*field).to_string(),
                 declared_not_wired: DECLARED_NOT_WIRED.contains(id),
+                options: options_of(*field),
             }
         })
         .collect()
+}
+
+/// Um valor de enum na grafia do arquivo. Cai para `Debug` só se a serialização
+/// falhar, o que para estes enums não acontece — e nesse caso um valor estranho
+/// na tela é melhor do que um pânico.
+fn wire_value<T: Serialize + std::fmt::Debug>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|json| json.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{value:?}"))
+}
+
+/// As opções de um campo, serializadas pelo serde.
+///
+/// Serializar a variante em vez de escrever a string à mão é o que garante que o
+/// botão do painel manda exatamente o que o parser aceita.
+fn options_of(field: ConfigField) -> Vec<String> {
+    fn wire<T: Serialize>(values: &[T]) -> Vec<String> {
+        values
+            .iter()
+            .filter_map(|value| serde_json::to_value(value).ok())
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect()
+    }
+    match field {
+        ConfigField::Mode => wire(&BuildMode::ALL),
+        ConfigField::Depth => wire(&Depth::ALL),
+        ConfigField::Layout => wire(&Layout::ALL),
+        ConfigField::Permissions => wire(&Permissions::ALL),
+        // Camadas, booleanos e o grafo local não são escolha fechada de botão.
+        ConfigField::HarnessLayers
+        | ConfigField::AutomaticCheckpoints
+        | ConfigField::IdlePaidInference
+        | ConfigField::LocalAag => Vec::new(),
+    }
 }
 
 fn snapshot_of(config: &IdeConfig) -> SettingsSnapshot {
@@ -306,6 +357,32 @@ pub fn detected(
 
 #[cfg(test)]
 mod tests {
+
+    /// §14 — o painel tem de poder TROCAR de modo, não só mostrar o modo. As
+    /// opções vêm do motor e na grafia do serde: se alguém renomear a variante,
+    /// isto quebra aqui em vez de virar um botão que manda valor inválido.
+    #[test]
+    fn campos_de_escolha_fechada_declaram_as_opcoes_na_grafia_do_arquivo() {
+        let dir = tempfile::tempdir().expect("dir");
+        let snapshot = snapshot(dir.path()).expect("snapshot");
+        let by = |field: &str| {
+            snapshot
+                .rows
+                .iter()
+                .find(|row| row.field == field)
+                .unwrap_or_else(|| panic!("campo {field} não existe no painel"))
+                .options
+                .clone()
+        };
+
+        assert_eq!(by("mode"), ["full_vibes", "hybrid", "spec"]);
+        assert_eq!(by("permissions"), ["cautious", "balanced", "yolo"]);
+        assert_eq!(by("depth"), ["essential", "detailed", "raw"]);
+        assert_eq!(by("layout"), ["focused", "balanced", "expanded"]);
+        // Sem escolha fechada não vira botão: o painel não inventa alternativa.
+        assert!(by("automaticCheckpoints").is_empty());
+        assert!(by("harnessLayers").is_empty());
+    }
     use super::*;
 
     fn project() -> tempfile::TempDir {
@@ -349,7 +426,7 @@ mod tests {
             .find(|row| row.field == "permissions")
             .expect("linha de permissões");
         assert_eq!(permissions.source, "user");
-        assert_eq!(permissions.value, "Yolo", "detecção não desfaz escolha");
+        assert_eq!(permissions.value, "yolo", "detecção não desfaz escolha");
     }
 
     /// With no agent detected, the cautious default is applied AS DETECTED, so it
@@ -364,7 +441,7 @@ mod tests {
             .iter()
             .find(|row| row.field == "permissions")
             .unwrap();
-        assert_eq!(permissions.value, "Cautious");
+        assert_eq!(permissions.value, "cautious");
         assert_eq!(permissions.source, "detected");
 
         let reset_back = reset(dir.path(), "permissions").expect("reset");
@@ -373,7 +450,7 @@ mod tests {
             .iter()
             .find(|row| row.field == "permissions")
             .unwrap();
-        assert_eq!(permissions.value, "Balanced");
+        assert_eq!(permissions.value, "balanced");
         assert_eq!(permissions.source, "default");
     }
 

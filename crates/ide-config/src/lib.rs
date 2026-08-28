@@ -48,6 +48,27 @@ pub enum Permissions {
     Yolo,
 }
 
+/// As variantes que a UI pode oferecer.
+///
+/// A grafia de cada opção NÃO é repetida aqui: quem renderiza serializa a
+/// variante com serde, então o botão do painel e o valor aceito no arquivo têm
+/// por construção a mesma ortografia. Duas listas seriam duas verdades.
+impl BuildMode {
+    pub const ALL: [Self; 3] = [Self::FullVibes, Self::Hybrid, Self::Spec];
+}
+
+impl Depth {
+    pub const ALL: [Self; 3] = [Self::Essential, Self::Detailed, Self::Raw];
+}
+
+impl Layout {
+    pub const ALL: [Self; 3] = [Self::Focused, Self::Balanced, Self::Expanded];
+}
+
+impl Permissions {
+    pub const ALL: [Self; 3] = [Self::Cautious, Self::Balanced, Self::Yolo];
+}
+
 /// Where a setting's current value came from. A detected or default value can be
 /// explained and reset; a user value is never overwritten by detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

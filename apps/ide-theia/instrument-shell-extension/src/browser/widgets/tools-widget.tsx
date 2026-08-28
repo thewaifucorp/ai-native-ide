@@ -43,6 +43,7 @@ import {
     CMD_WORK_PROVIDER,
     CMD_WORK_READ,
     CMD_SETTINGS_PROFILE,
+    CMD_SETTINGS_PATCH,
     CMD_SETTINGS_READ,
     CMD_SETTINGS_RESET,
     CMD_TRUTH_DECLARE,
@@ -900,20 +901,54 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                             declarado e ainda não consumido por nada
                                         </small>
                                     )}
-                                    {row.source !== 'default' && (
+                                    {/* §14 — trocar de modo é ato de painel, não de
+                                        editar JSON na mão. As opções são as que o
+                                        MOTOR declarou, na grafia do arquivo: o
+                                        botão manda exatamente o que o parser
+                                        aceita. A opção em vigor aparece marcada e
+                                        desabilitada — reaplicar o valor atual não
+                                        é uma troca, e oferecer isso como ação
+                                        sugeriria que algo aconteceria. */}
+                                    {(row.options.length > 0 || row.source !== 'default') && (
                                         <div className="cap-actions">
-                                            <button
-                                                className="cap-btn"
-                                                disabled={busy}
-                                                onClick={() =>
-                                                    this.commands.executeCommand(
-                                                        CMD_SETTINGS_RESET,
-                                                        row.field
-                                                    )
-                                                }
-                                            >
-                                                Voltar ao default
-                                            </button>
+                                            {row.options.map(option => {
+                                                const current =
+                                                    option === row.value.toLowerCase();
+                                                return (
+                                                    <button
+                                                        className={`cap-btn${current ? ' primary' : ''}`}
+                                                        key={option}
+                                                        disabled={busy || current}
+                                                        title={
+                                                            current
+                                                                ? `${option} é o valor em vigor`
+                                                                : `passa ${row.field} para ${option} em ${settings.path}`
+                                                        }
+                                                        onClick={() =>
+                                                            this.commands.executeCommand(
+                                                                CMD_SETTINGS_PATCH,
+                                                                { [row.field]: option }
+                                                            )
+                                                        }
+                                                    >
+                                                        {option}
+                                                    </button>
+                                                );
+                                            })}
+                                            {row.source !== 'default' && (
+                                                <button
+                                                    className="cap-btn"
+                                                    disabled={busy}
+                                                    onClick={() =>
+                                                        this.commands.executeCommand(
+                                                            CMD_SETTINGS_RESET,
+                                                            row.field
+                                                        )
+                                                    }
+                                                >
+                                                    Voltar ao default
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>

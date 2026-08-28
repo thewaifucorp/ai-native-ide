@@ -253,6 +253,44 @@ describe('§12 — jornada ponta a ponta no artefato Theia', function () {
             'ou existe divergência, ou existe o motivo declarado de não haver'
         );
 
+        // ── 7b. §14 — TROCAR DE MODO NÃO PERDE O QUE ESTÁ EM CURSO ─────────
+        // O "Pronto" do §14 é troca sem migração e sem perda. Trocar no meio da
+        // jornada é o teste honesto: o preview de pé, a evidência gravada e a
+        // divergência decidida têm de continuar exatamente onde estavam. E a
+        // regra nova vale do próximo efeito em diante — nunca para trás (isso
+        // está pinado em `governed-write.spec.ts`).
+        const antes = await engine.settingsSnapshot(root);
+        const modoAntes = antes.rows.find(row => row.field === 'mode');
+        assert.ok(modoAntes, 'o painel tem de ter a linha do modo');
+        assert.deepStrictEqual(
+            modoAntes!.options,
+            ['full_vibes', 'hybrid', 'spec'],
+            'as opções vêm do motor, na grafia do arquivo — o painel não as inventa'
+        );
+
+        const depois = await engine.settingsPatch(root, { mode: 'full_vibes' });
+        const modoDepois = depois.rows.find(row => row.field === 'mode');
+        assert.strictEqual(modoDepois?.value.toLowerCase(), 'full_vibes', 'a troca tem de pegar');
+        assert.strictEqual(
+            modoDepois?.source,
+            'user',
+            'escolha de pessoa é escolha de pessoa: a detecção não sobrescreve'
+        );
+
+        // Nada em curso se perdeu com a troca.
+        const previewApos = await engine.previewStatus(root);
+        assert.strictEqual(previewApos.running, true, 'trocar de modo não derruba o preview');
+        assert.ok(
+            (previewApos.logTail ?? '').includes('leaderboard falhou'),
+            'a evidência observada antes da troca continua lá'
+        );
+        const reconApos = await engine.reconcileScan(root);
+        assert.deepStrictEqual(
+            reconApos.divergences.map(view => view.divergence.id),
+            reconciliation.divergences.map(view => view.divergence.id),
+            'as divergências são as mesmas: troca de modo não é migração'
+        );
+
         // ── 8. PARAR PARA DE VERDADE ───────────────────────────────────────
         // Não estava no texto do §12; entrou porque a jornada achou o contrário:
         // `stop` matava o `sh` e deixava o servidor vivo, e a execução seguinte

@@ -309,6 +309,55 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         );
     });
 
+    /// §14 — TROCAR DE MODO NÃO DECIDE O QUE JÁ ESTAVA ESPERANDO.
+    ///
+    /// A política é consultada no PROPOSE, e o que ela respondeu fica gravado na
+    /// proposta. Se trocar para `full_vibes`/`yolo` valesse retroativamente, uma
+    /// escrita que a pessoa deixou parada para pensar seria aplicada sem ela
+    /// pedir nada — o efeito aconteceria por causa de uma configuração mudada
+    /// depois, não por causa de uma decisão. A regra nova vale para o efeito
+    /// SEGUINTE, e é isso que este teste separa.
+    it('modo novo não aprova retroativamente proposta que já aguardava', async () => {
+        const { service, engine, rootUri, file } = fixture();
+
+        // Projeto cauteloso: a escrita para para a pessoa decidir.
+        const parada = await service.proposeWrite(rootUri, 'alvo.md', 'antes\ndepois\n');
+        assert.strictEqual(parada.state, 'awaiting');
+        assert.strictEqual(parada.policy?.decision, 'require_approval');
+
+        // Agora o projeto vira yolo — depois da proposta já existir.
+        engine.policyAnswer = {
+            mode: 'full_vibes',
+            permissions: 'yolo',
+            scoped: false,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'none',
+            explain: 'Full vibes (permissão yolo): efeito durável é aplicado e registrado'
+        };
+
+        // A proposta parada continua parada, com a regra que a parou.
+        const aindaPendentes = await service.pending(rootUri);
+        const mesma = aindaPendentes.find(p => p.id === parada.id);
+        assert.ok(mesma, 'a proposta não pode desaparecer por troca de modo');
+        assert.strictEqual(mesma!.state, 'awaiting', 'trocar de modo não decide o que esperava');
+        assert.strictEqual(
+            mesma!.policy?.decision,
+            'require_approval',
+            'a proposta carrega a regra do momento em que foi proposta, não a de agora'
+        );
+        assert.strictEqual(
+            fs.readFileSync(file, 'utf8'),
+            'antes\n',
+            'nada pode ter sido escrito no arquivo real'
+        );
+
+        // E a regra nova vale para o efeito SEGUINTE, que é o ponto de trocar.
+        const nova = await service.proposeWrite(rootUri, 'alvo.md', 'antes\noutra\n');
+        assert.strictEqual(nova.state, 'approved', 'o modo novo vale para o próximo efeito');
+        assert.strictEqual(nova.policy?.autoApproved, true, 'e o cartão diz que ninguém foi perguntado');
+    });
+
     it('recusa alvo que existe e não é arquivo', async () => {
         const { service, root, rootUri } = fixture();
         fs.mkdirSync(path.join(root, 'uma-pasta'));
