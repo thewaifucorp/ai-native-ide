@@ -50,7 +50,7 @@ import {
     CMD_SESSION_SUBMIT
 } from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
-import { DivergenceView, PreviewHealth } from 'engine-extension';
+import { AdapterCard, DivergenceView, PreviewHealth } from 'engine-extension';
 
 /** Word shown for each preview health. `stale` is a preview that WAS healthy and
  *  stopped answering — recoverable, and deliberately not the same word as broken. */
@@ -1531,6 +1531,33 @@ export class WorkWidget extends AbstractInstrumentWidget {
     }
 
     /**
+     * Quem decide a permissão deste adaptador — e não é o mesmo que "ele fala o
+     * protocolo".
+     *
+     * DEFEITO QUE APARECEU NA TELA: esta linha vinha de
+     * `supportsPermissionBridge`, que é true para os quatro bridges porque todos
+     * SABEM falar `session/request_permission`. Com isso o `codex` aparecia como
+     * "pergunta antes de agir" quando o `approvals: harness_owned` dele diz
+     * exatamente o contrário: quem decide é o harness do agente, e o card do IDE
+     * não governa nada ali. Era a promessa de um portão que aquele agente não usa
+     * — o §1e já tinha MEDIDO isso e a tela desmentia a medição.
+     *
+     * Quem responde a pergunta é `policy.approvals`, sempre.
+     */
+    protected approvalSentence(adapter: AdapterCard): string {
+        switch (adapter.policy?.approvals) {
+            case 'enforced':
+                return 'o portão do IDE decide: o agente para no card';
+            case 'harness_owned':
+                return 'o HARNESS DO AGENTE decide — o card do IDE não governa este';
+            case 'declared_only':
+                return 'só declarado: ninguém confere se o portão foi respeitado';
+            default:
+                return 'quem decide a permissão não está declarado';
+        }
+    }
+
+    /**
      * §10 — os adaptadores que o MOTOR conhece, com o que cada um cobre.
      *
      * A lista vem de `bridge_command_for`, nunca desta tela: oferecer um
@@ -1575,11 +1602,11 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                 egress: {adapter.policy.egress} · budget: {adapter.policy.budget}
                             </small>
                         )}
-                        <small className="cap-evidence">
+                        <small className={
+                            adapter.policy?.approvals === 'enforced' ? 'cap-evidence' : 'cap-remediation'
+                        }>
                             {adapter.supportsResume ? 'retoma sessão' : 'não retoma sessão'} ·{' '}
-                            {adapter.supportsPermissionBridge
-                                ? 'pergunta antes de agir'
-                                : 'NÃO pergunta: resolve internamente'}
+                            {this.approvalSentence(adapter)}
                         </small>
                         {adapter.degradations.map((degradation, index) => (
                             <small className="cap-remediation" key={index}>{degradation}</small>
