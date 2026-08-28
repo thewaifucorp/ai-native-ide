@@ -35,6 +35,7 @@ import { WriteSourceLedger } from './write-source-ledger';
 import {
     EffectPolicy,
     GovernedWriteService,
+    RuntimeStateNotice,
     WriteProposal,
     DiffLinePreview
 } from '../common/governed-protocol';
@@ -429,6 +430,73 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
         this.ledger.note(rec.rootFsPath, rec.relPath, 'governed', `efeito ${id} revertido`);
         rec.proposal.state = 'rolledback';
         return rec.proposal;
+    }
+
+    async runtimeState(rootUri: string): Promise<RuntimeStateNotice> {
+        const root = FileUri.fsPath(new URI(rootUri));
+        const dir = '.instrument';
+        const abs = path.join(root, dir);
+        const exists = fs.existsSync(abs);
+        const gitRepo = fs.existsSync(path.join(root, '.git'));
+
+        // O que existe lá dentro, dito em português: "banco sqlite" não explica
+        // nada a quem só quer saber por que o repositório dela mudou.
+        const known: [string, string][] = [
+            ['effects.sqlite3', 'o registro de efeitos do broker (o que foi proposto, aprovado, revertido)'],
+            ['baseline', 'a linha de base dos arquivos, usada para ver mudança feita fora do IDE'],
+            ['config.json', 'a configuração deste projeto (modo, permissões, camadas)'],
+            ['preview.json', 'a declaração do preview deste projeto'],
+            ['preview.log', 'a saída crua do último preview']
+        ];
+        const contents = exists
+            ? known.filter(([name]) => fs.existsSync(path.join(abs, name))).map(([, what]) => what)
+            : [];
+
+        return { dir, exists, gitRepo, ignored: this.ignoresRuntimeDir(root, dir), contents };
+    }
+
+    /**
+     * Lê as regras de `.gitignore` da raiz — só as que cobrem este diretório.
+     *
+     * Não chama `git check-ignore`: um projeto pode não ter git instalado, e o
+     * aviso não pode depender disso. A leitura é conservadora de propósito: se
+     * houver dúvida, o aviso aparece. Um aviso a mais custa um clique; um aviso
+     * de menos deixa a pessoa com o repositório sujo sem saber por quê.
+     */
+    protected ignoresRuntimeDir(root: string, dir: string): boolean {
+        const file = path.join(root, '.gitignore');
+        if (!fs.existsSync(file)) {
+            return false;
+        }
+        let text: string;
+        try {
+            text = fs.readFileSync(file, 'utf8');
+        } catch {
+            return false;
+        }
+        return text
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0 && !line.startsWith('#'))
+            .some(line => {
+                const bare = line.replace(/^\//, '').replace(/\/$/, '');
+                return bare === dir || bare === `${dir}/**` || bare === '*';
+            });
+    }
+
+    async proposeIgnoreRuntimeState(rootUri: string): Promise<WriteProposal> {
+        const root = FileUri.fsPath(new URI(rootUri));
+        const notice = await this.runtimeState(rootUri);
+        if (notice.ignored) {
+            throw new Error('`.instrument/` já está ignorado neste projeto');
+        }
+        const file = path.join(root, '.gitignore');
+        const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+        const linha = `${notice.dir}/`;
+        const comentario = '# Estado de runtime do IDE (broker, baseline, config deste projeto).';
+        const prefixo = current.length === 0 || current.endsWith('\n') ? '' : '\n';
+        const proposto = `${current}${prefixo}${comentario}\n${linha}\n`;
+        return this.proposeWrite(rootUri, '.gitignore', proposto);
     }
 
     protected require(id: string): StoredRecord {

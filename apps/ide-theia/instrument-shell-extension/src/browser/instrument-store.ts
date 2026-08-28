@@ -9,7 +9,7 @@
 
 import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event } from '@theia/core/lib/common/event';
-import { WriteProposal } from '../common/governed-protocol';
+import { RuntimeStateNotice, WriteProposal } from '../common/governed-protocol';
 import { CapabilityState } from '../common/capability-protocol';
 import {
     BrokerActivity,
@@ -95,6 +95,8 @@ export class InstrumentStore {
     // ── REAL observation of writes the IDE did not make (WORK-05): the person's
     //    own agent, a script or the terminal. `undefined` = not scanned yet.
     observer: ObserverReport | undefined;
+    /** O que o IDE escreveu no projeto só por ter sido aberto (§1/§13). */
+    runtimeState: RuntimeStateNotice | undefined;
     observerBusy = false;
 
     // ── REAL hosted ACP session: the agent works in a worktree and its changes
@@ -547,6 +549,11 @@ export class InstrumentStore {
     /** Failed findings, which is what the status strip counts. */
     get checksFailed(): number {
         return this.checks ? this.checks.report.failed : 0;
+    }
+
+    setRuntimeState(notice: RuntimeStateNotice | undefined): void {
+        this.runtimeState = notice;
+        this.emit();
     }
 
     setObserver(report: ObserverReport | undefined): void {

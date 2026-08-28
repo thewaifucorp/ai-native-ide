@@ -39,12 +39,20 @@ class FakeEngine implements Partial<EngineService> {
         }];
     }
 
+    /** Os bytes que o adaptador mandou o broker escrever, por effect id. */
+    readonly proposedContent = new Map<string, string>();
+
     async brokerPropose(
         _root: string,
         _owner: string,
-        effectId: string
+        effectId: string,
+        _relativePath?: string,
+        content?: string
     ): Promise<ProposeResult> {
         this.calls.push(`propose:${effectId}`);
+        if (typeof content === 'string') {
+            this.proposedContent.set(effectId, content);
+        }
         if (this.proposeAnswers.length > 0) {
             return this.proposeAnswers.shift()!;
         }
@@ -356,6 +364,93 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         const nova = await service.proposeWrite(rootUri, 'alvo.md', 'antes\noutra\n');
         assert.strictEqual(nova.state, 'approved', 'o modo novo vale para o próximo efeito');
         assert.strictEqual(nova.policy?.autoApproved, true, 'e o cartão diz que ninguém foi perguntado');
+    });
+
+    /// ABRIR UM PROJETO ESCREVE NELE — E ISSO TEM DE SER DITO.
+    ///
+    /// Aberto um repositório qualquer, o IDE cria `.instrument/` (broker, baseline,
+    /// config). Achado abrindo um projeto cru fora do workspace de fixture: o
+    /// diretório aparecia no `git status` da pessoa sem ninguém ter avisado. O
+    /// aviso só faz sentido quando é repositório Git e o diretório ainda não é
+    /// ignorado; e o conserto é uma PROPOSTA, nunca uma escrita direta.
+    describe('estado de runtime é declarado, não silencioso', () => {
+
+        it('avisa quando é repo Git e `.instrument/` não está ignorado', async () => {
+            const { service, root, rootUri } = fixture();
+            fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+            fs.mkdirSync(path.join(root, '.instrument'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.instrument/config.json'), '{}', 'utf8');
+
+            const notice = await service.runtimeState(rootUri);
+
+            assert.strictEqual(notice.exists, true);
+            assert.strictEqual(notice.gitRepo, true);
+            assert.strictEqual(notice.ignored, false);
+            assert.ok(
+                notice.contents.some(item => /configuração deste projeto/.test(item)),
+                'o aviso diz o que há lá dentro, em português, não "arquivos"'
+            );
+        });
+
+        it('não avisa quando o .gitignore já cobre o diretório', async () => {
+            const { service, root, rootUri } = fixture();
+            fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+            fs.mkdirSync(path.join(root, '.instrument'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.gitignore'), '# nada\n.instrument/\n', 'utf8');
+
+            const notice = await service.runtimeState(rootUri);
+
+            assert.strictEqual(notice.ignored, true, 'já ignorado não vira aviso repetido');
+        });
+
+        it('fora de um repo Git não há nada a ignorar', async () => {
+            const { service, root, rootUri } = fixture();
+            fs.mkdirSync(path.join(root, '.instrument'), { recursive: true });
+
+            const notice = await service.runtimeState(rootUri);
+
+            assert.strictEqual(notice.gitRepo, false);
+        });
+
+        it('ignorar é PROPOSTA: o .gitignore não muda antes da decisão', async () => {
+            const { service, engine, root, rootUri } = fixture();
+            fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+            fs.mkdirSync(path.join(root, '.instrument'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\n', 'utf8');
+
+            const proposal = await service.proposeIgnoreRuntimeState(rootUri);
+
+            assert.strictEqual(proposal.state, 'awaiting');
+            assert.strictEqual(proposal.relPath, '.gitignore');
+            assert.strictEqual(
+                fs.readFileSync(path.join(root, '.gitignore'), 'utf8'),
+                'node_modules/\n',
+                'consertar escrita silenciosa com escrita silenciosa seria o mesmo defeito'
+            );
+
+            // O que a proposta CONTÉM: acrescenta a regra sem apagar o que a
+            // pessoa já tinha. (Quem escreve os bytes é o broker; aqui ele é um
+            // dublê, então a prova é sobre o diff proposto, não sobre o disco —
+            // a escrita real está provada na jornada do §12.)
+            // Os bytes que foram ao broker: a regra nova entra e o que a pessoa
+            // já tinha continua. (Quem escreve é o broker; aqui ele é dublê, e a
+            // escrita real está provada na jornada do §12.)
+            const bytes = engine.proposedContent.get(proposal.id);
+            assert.ok(bytes, 'o adaptador tem de mandar os bytes ao broker');
+            assert.ok(bytes!.startsWith('node_modules/\n'), 'o que a pessoa já tinha continua');
+            assert.ok(bytes!.includes('\n.instrument/\n'), 'e a regra nova entra');
+        });
+
+        it('recusa propor de novo quando já está ignorado', async () => {
+            const { service, root, rootUri } = fixture();
+            fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.gitignore'), '.instrument/\n', 'utf8');
+
+            await assert.rejects(
+                () => service.proposeIgnoreRuntimeState(rootUri),
+                /já está ignorado/
+            );
+        });
     });
 
     it('recusa alvo que existe e não é arquivo', async () => {

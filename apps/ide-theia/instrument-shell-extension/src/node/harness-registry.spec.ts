@@ -13,7 +13,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { HarnessRegistryService } from './harness-registry-service';
 import { WriteSourceLedger } from './write-source-ledger';
-import { GovernedWriteService, WriteProposal } from '../common/governed-protocol';
+import {
+    GovernedWriteService,
+    RuntimeStateNotice,
+    WriteProposal
+} from '../common/governed-protocol';
 import { BrokerActivity } from 'engine-extension';
 import {
     CONFLICT_PROVIDER,
@@ -42,6 +46,14 @@ class FakeGovernedWriteService implements GovernedWriteService {
         };
     }
     async activity(): Promise<BrokerActivity[]> { return []; }
+
+    async runtimeState(): Promise<RuntimeStateNotice> {
+        return { dir: '.instrument', exists: false, gitRepo: false, ignored: true, contents: [] };
+    }
+
+    async proposeIgnoreRuntimeState(): Promise<WriteProposal> {
+        throw new Error('não usado neste teste');
+    }
     async pending(): Promise<WriteProposal[]> { return []; }
     async approve(): Promise<WriteProposal> { throw new Error('não usado'); }
     async rollback(): Promise<WriteProposal> { throw new Error('não usado'); }

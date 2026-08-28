@@ -44,6 +44,7 @@ import {
     NoteLink,
     NoteRequest,
     GuidanceState,
+    PreviewSnapshot,
     ReconciliationChoice,
     SettingsPatch
 } from 'engine-extension';
@@ -121,6 +122,7 @@ export const CMD_TRUTH_DECLARE = 'instrument.truth.declare';
 export const CMD_TRUTH_CONSUMER = 'instrument.truth.consumer';
 export const CMD_TRUTH_SYNC = 'instrument.truth.sync';
 export const CMD_SETTINGS_READ = 'instrument.settings.read';
+export const CMD_IGNORE_RUNTIME_STATE = 'instrument.runtimeState.ignore';
 export const CMD_SETTINGS_PATCH = 'instrument.settings.patch';
 export const CMD_SETTINGS_PROFILE = 'instrument.settings.profile';
 export const CMD_SETTINGS_RESET = 'instrument.settings.reset';
@@ -182,6 +184,8 @@ export class InstrumentCapabilityContribution
             this.brokerTrail();
             this.adoptPendingProposal();
             this.scanExternal();
+            // O IDE já escreveu no projeto ao abrir: dizer isso é parte de abrir.
+            this.readRuntimeState();
             this.watchForExternalWrites();
             this.refreshProduct();
             this.readLibrary();
@@ -194,6 +198,7 @@ export class InstrumentCapabilityContribution
         });
         this.workspace.onWorkspaceChanged(() => {
             this.refreshCapabilities();
+            this.readRuntimeState();
             this.refreshHarness();
         });
     }
@@ -495,6 +500,13 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_TRUTH_SYNC, label: 'Instrument: propor sincronizar consumidores (§13)' },
             { execute: (id?: string) => (id ? this.proposeSync(id) : undefined) }
+        );
+        commands.registerCommand(
+            {
+                id: CMD_IGNORE_RUNTIME_STATE,
+                label: 'Instrument: propor ignorar o estado de runtime no Git'
+            },
+            { execute: () => this.proposeIgnoreRuntimeState() }
         );
         commands.registerCommand(
             { id: CMD_SETTINGS_READ, label: 'Instrument: ler configuração do projeto (§13)' },
@@ -1061,7 +1073,7 @@ export class InstrumentCapabilityContribution
         this.store.setPreviewBusy(true);
         try {
             const snapshot = restart
-                ? await this.engine.previewRestart(root)
+                ? await this.restartPreview(root)
                 : await this.engine.previewStart(root);
             this.store.setPreview(snapshot);
             const health = snapshot.state?.health;
@@ -1098,6 +1110,27 @@ export class InstrumentCapabilityContribution
             this.store.setPreview(undefined);
         } finally {
             this.store.setPreviewBusy(false);
+        }
+    }
+
+    /**
+     * Reinicia pelo motor e, se ele não conhecer o método, para e sobe aqui.
+     *
+     * O sidecar é um binário separado que pode estar velho em relação ao
+     * frontend — nesta máquina compilar Rust é caro, então rodar com um sidecar
+     * defasado é o caso comum, não a exceção. Sem o fallback, "Reiniciar"
+     * mostraria um erro de JSON-RPC cru para quem só queria subir o preview de
+     * novo. Parar-e-subir é equivalente e funciona em qualquer versão.
+     */
+    protected async restartPreview(root: string): Promise<PreviewSnapshot> {
+        try {
+            return await this.engine.previewRestart(root);
+        } catch (err) {
+            if (!/unknown method|method not found|preview_restart/i.test(this.msg(err))) {
+                throw err;
+            }
+            await this.engine.previewStop(root);
+            return this.engine.previewStart(root);
         }
     }
 
@@ -2219,6 +2252,43 @@ export class InstrumentCapabilityContribution
             this.scanTimer = undefined;
             this.scanExternal();
         }, 900);
+    }
+
+    /**
+     * O que o IDE escreveu no projeto só por ter sido aberto — e se o Git vê.
+     *
+     * Roda junto do primeiro scan porque é sobre um efeito que JÁ aconteceu: a
+     * pessoa não precisa clicar em nada para descobrir que o repositório dela
+     * mudou. Falha aqui é silenciosa de propósito: um aviso que não pôde ser
+     * calculado não vira erro na cara de quem só abriu um projeto.
+     */
+    async readRuntimeState(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            this.store.setRuntimeState(undefined);
+            return;
+        }
+        try {
+            this.store.setRuntimeState(await this.governed.runtimeState(root));
+        } catch {
+            this.store.setRuntimeState(undefined);
+        }
+    }
+
+    /** Propõe ignorar o diretório de estado — efeito governado, como os outros. */
+    async proposeIgnoreRuntimeState(): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        try {
+            const proposal = await this.governed.proposeIgnoreRuntimeState(root);
+            this.store.governedProposed(proposal);
+            this.store.focusDecision();
+            await this.readRuntimeState();
+        } catch (err) {
+            this.messages.error(`Não foi possível propor o .gitignore: ${this.msg(err)}`);
+        }
     }
 
     /** Compare disk against the baseline. `loud` reports failures to the user;

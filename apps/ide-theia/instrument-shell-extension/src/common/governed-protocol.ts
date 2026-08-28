@@ -128,4 +128,38 @@ export interface GovernedWriteService {
      * claim the UI makes on the broker's behalf.
      */
     activity(rootUri: string): Promise<BrokerActivity[]>;
+
+    /**
+     * What the IDE escreveu no projeto só por ter sido aberto, e se o Git vê isso.
+     *
+     * Abrir um projeto cria `.instrument/` — banco de efeitos, baseline, config —
+     * porque o broker e a linha de base precisam existir antes do primeiro efeito.
+     * Isso é defensável; ser SILENCIOSO não é: num repositório de verdade a pessoa
+     * ganha um diretório não rastreado e um `git status` sujo sem nunca ter sido
+     * avisada. Aqui o IDE declara o que fez, e o painel oferece o conserto —
+     * ignorar o diretório — como efeito GOVERNADO, decidido por ela.
+     */
+    runtimeState(rootUri: string): Promise<RuntimeStateNotice>;
+
+    /**
+     * Propõe (nunca escreve) acrescentar `.instrument/` ao `.gitignore`.
+     *
+     * Consertar uma escrita silenciosa com outra escrita silenciosa seria o mesmo
+     * defeito de novo: isto vai ao broker como qualquer efeito.
+     */
+    proposeIgnoreRuntimeState(rootUri: string): Promise<WriteProposal>;
+}
+
+/** O que o IDE criou no projeto ao abrir, e o que o Git faz com isso. */
+export interface RuntimeStateNotice {
+    /** Diretório de estado, relativo à raiz. */
+    dir: string;
+    /** Existe em disco (o IDE já o criou). */
+    exists: boolean;
+    /** O projeto é um repositório Git — sem isso, ignorar não faz sentido. */
+    gitRepo: boolean;
+    /** Já está coberto por alguma regra de `.gitignore`. */
+    ignored: boolean;
+    /** O que existe lá dentro, em linguagem de gente, para o aviso não ser vago. */
+    contents: string[];
 }

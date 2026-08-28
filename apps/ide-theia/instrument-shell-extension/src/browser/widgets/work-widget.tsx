@@ -35,6 +35,7 @@ import {
     CMD_NOTES_PROMOTE,
     CMD_NOTES_READ,
     CMD_NOTES_RESOLVE,
+    CMD_IGNORE_RUNTIME_STATE,
     CMD_PREVIEW_RESTART,
     CMD_PREVIEW_START,
     CMD_PREVIEW_STATUS,
@@ -160,10 +161,42 @@ export class WorkWidget extends AbstractInstrumentWidget {
         const proposal = this.store.proposal;
         const awaiting = proposal && proposal.state === 'awaiting' ? proposal : undefined;
         const drifts = this.store.observer?.drifts ?? [];
+        // Abrir o projeto CRIA `.instrument/`, e num repositório de verdade isso
+        // aparece como diretório não rastreado. Enquanto ninguém disse isso, a
+        // pessoa descobre pelo `git status` — que é a pior forma de descobrir.
+        const runtime = this.store.runtimeState;
+        const avisaRuntime = !!runtime && runtime.exists && runtime.gitRepo && !runtime.ignored;
         return (
             <div className="h-sec">
                 <span className="tag">Precisa de você</span>
                 <div className="need">
+                    {avisaRuntime && (
+                        <div className="need-item">
+                            <div className="txt">
+                                <b>
+                                    O IDE criou <code>{runtime!.dir}/</code> neste repositório
+                                </b>
+                                <small>
+                                    {runtime!.contents.length > 0
+                                        ? `Guarda ${runtime!.contents.join('; ')}. `
+                                        : ''}
+                                    Precisa existir antes do primeiro efeito, e o Git ainda não o
+                                    ignora — então ele aparece no seu <code>git status</code>. Ignorar
+                                    é uma escrita como qualquer outra: vai ao broker e espera você.
+                                </small>
+                            </div>
+                            <div className="acts">
+                                <button
+                                    className="btn"
+                                    onClick={() =>
+                                        this.commands.executeCommand(CMD_IGNORE_RUNTIME_STATE)
+                                    }
+                                >
+                                    Propor ignorar
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     {drifts.length > 0 && (
                         <div className="need-item">
                             <div className="txt">
@@ -187,7 +220,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             </div>
                         </div>
                     )}
-                    {!awaiting && drifts.length === 0 && (
+                    {!awaiting && drifts.length === 0 && !avisaRuntime && (
                         <div className="need-item">
                             <div className="txt">
                                 <b>Nada aguardando decisão</b>
