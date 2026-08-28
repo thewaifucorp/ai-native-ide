@@ -32,6 +32,7 @@
 //!   - `references_*` the §13 services and environments (address, never a path)
 //!   - `work_*`       the §9 items and the status they DERIVE (never a written one)
 //!   - `lifecycle_*`  the §16 export / consolidate / reopen, with honest compensation
+//!   - `release_*`    the §16 Git adapter: tag (local), push and GitHub release
 //!   - `policy_decide` the §14 mode + permission policy for ONE effect
 //!   - `agent_adapters` the §10 adapters the engine knows, each with its coverage
 //!   - `agent_capture_state` / `agent_resume` / `agent_swap` the §10 session
@@ -55,6 +56,7 @@ mod preview;
 mod project;
 mod reconcile;
 mod references;
+mod release;
 mod settings;
 mod work;
 
@@ -828,6 +830,48 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 .await
                 .map_err(|e| e.to_string())??;
             serde_json::to_value(reopened).map_err(|e| e.to_string())
+        }
+        // §16 — publicar por adapter Git. Três métodos porque são três atos com
+        // classes de efeito diferentes: criar tag é local, empurrar e criar
+        // release saem da máquina e por isso exigem `confirmed`.
+        "release_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || release::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "release_tag" | "release_delete_tag" | "release_push" | "release_github" => {
+            #[derive(Deserialize)]
+            struct ReleaseParams {
+                root: String,
+                version: String,
+                /// O ato explícito da pessoa. Default FALSE: campo ausente nunca
+                /// pode valer como consentimento para efeito externo.
+                #[serde(default)]
+                confirmed: bool,
+            }
+            let p: ReleaseParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            let value = tokio::task::spawn_blocking(move || match method.as_str() {
+                "release_tag" => release::create_tag(&root, &p.version)
+                    .and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string())),
+                "release_delete_tag" => release::delete_tag(&root, &p.version)
+                    .and_then(|s| serde_json::to_value(s).map_err(|e| e.to_string())),
+                "release_push" => release::push_tag(&root, &p.version, p.confirmed)
+                    .and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string())),
+                _ => release::github_release(&root, &p.version, p.confirmed)
+                    .and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string())),
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            Ok(value)
         }
         "lifecycle_delete_export" => {
             #[derive(Deserialize)]

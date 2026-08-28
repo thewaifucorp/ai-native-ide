@@ -35,6 +35,11 @@ import {
     CMD_LIFECYCLE_DELETE_EXPORT,
     CMD_LIFECYCLE_EXPORT,
     CMD_LIFECYCLE_CONSOLIDATE,
+    CMD_RELEASE_DELETE_TAG,
+    CMD_RELEASE_GITHUB,
+    CMD_RELEASE_PUSH,
+    CMD_RELEASE_READ,
+    CMD_RELEASE_TAG,
     CMD_LIFECYCLE_READ,
     CMD_LIFECYCLE_RELATE,
     CMD_LIFECYCLE_REOPEN,
@@ -117,6 +122,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderDurable()}
                 {this.renderWork()}
                 {this.renderLifecycle()}
+                {this.renderRelease()}
                 {this.renderPacks()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
@@ -1496,6 +1502,154 @@ export class ToolsWidget extends AbstractInstrumentWidget {
         );
     }
 
+    /**
+     * PUBLICAR (§16) — o adapter Git, e os três atos que ele tem.
+     *
+     * Esta seção é o "publicar" de verdade, separado do consolidar: aqui a
+     * versão sai da máquina. Ela existe porque um botão "Publicar" genérico
+     * mentiria de novo — publicar é sempre POR ALGUM destino, e cada destino tem
+     * a sua classe de efeito e a sua compensação:
+     *
+     *  • criar a tag é local e apagar desfaz;
+     *  • empurrar é externo e apagar no remoto apenas MITIGA;
+     *  • a release do GitHub exige `gh` autenticado — instalado não basta.
+     *
+     * O estado das ferramentas é dito pelo motor, com a remediação de cada
+     * ausência. Nenhum botão aparece habilitado sobre uma ferramenta que não
+     * respondeu.
+     */
+    protected renderRelease(): React.ReactNode {
+        const release = this.store.release;
+        const busy = this.store.releaseBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !release
+                ? 'não lido'
+                : release.blockedReason
+                    ? 'indisponível'
+                    : `${release.versions.filter(v => v.pushed).length}/${release.versions.length} no remoto`;
+
+        return this.section(
+            'release',
+            'Publicar (Git)',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!release && <small>não lido — clique em “ler” para ver git, gh e as versões</small>}
+                    {release?.blockedReason && <p className="cap-detail">{release.blockedReason}</p>}
+                    {release && (
+                        <>
+                            <div className="cap-receipt">
+                                <span className="cap-receipt-action">git</span>
+                                <span className="cap-receipt-detail">{release.git.detail}</span>
+                                <small>{release.git.usable ? 'pronto' : 'não utilizável'}</small>
+                            </div>
+                            {release.git.remediation && (
+                                <small className="cap-remediation">{release.git.remediation}</small>
+                            )}
+                            <div className="cap-receipt">
+                                <span className="cap-receipt-action">gh</span>
+                                <span className="cap-receipt-detail">{release.gh.detail}</span>
+                                <small>{release.gh.usable ? 'autenticado' : 'não utilizável'}</small>
+                            </div>
+                            {release.gh.remediation && (
+                                <small className="cap-remediation">{release.gh.remediation}</small>
+                            )}
+                            {/* A ÁRVORE SUJA MUDA O QUE A TAG SIGNIFICA.
+                                A tag aponta para o último COMMIT; o que está
+                                aberto no editor fica de fora. Descobrir isso
+                                depois de empurrar é tarde. */}
+                            {release.dirty && (
+                                <small className="cap-remediation">
+                                    árvore suja: a tag apontaria para o último commit
+                                    {release.headCommit ? ` (${release.headCommit})` : ''}, não para o
+                                    que está aberto no editor
+                                </small>
+                            )}
+
+                            {release.versions.map(version => (
+                                <div className="cap-receipt" key={version.version}>
+                                    <span className="cap-receipt-action">{version.tag}</span>
+                                    <span className="cap-receipt-detail">
+                                        {version.tagged
+                                            ? `tag local${version.tagCommit ? ` em ${version.tagCommit}` : ''}`
+                                            : 'sem tag'}
+                                        {version.pushed ? ' · no remoto' : ''}
+                                        {version.releaseUrl ? ` · release: ${version.releaseUrl}` : ''}
+                                    </span>
+                                    {!version.tagged && (
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy || !release.git.usable}
+                                            title="Cria a tag anotada nesta máquina, com as notas do registro da versão"
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_RELEASE_TAG, version.version)
+                                            }
+                                        >
+                                            Criar tag
+                                        </button>
+                                    )}
+                                    {version.tagged && !version.pushed && (
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy}
+                                            title="Compensação da tag local: apagar desfaz por completo"
+                                            onClick={() =>
+                                                this.commands.executeCommand(
+                                                    CMD_RELEASE_DELETE_TAG,
+                                                    version.version
+                                                )
+                                            }
+                                        >
+                                            Apagar tag
+                                        </button>
+                                    )}
+                                    {version.tagged && !version.pushed && (
+                                        <button
+                                            className="cap-btn primary"
+                                            disabled={busy || !release.remote}
+                                            title={release.remote
+                                                ? `Empurra ${version.tag} para ${release.remote}. Efeito externo: apagar no remoto mitiga, não desfaz`
+                                                : 'Nenhum remoto configurado neste repositório'}
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_RELEASE_PUSH, version.version)
+                                            }
+                                        >
+                                            Empurrar
+                                        </button>
+                                    )}
+                                    {version.pushed && !version.releaseUrl && (
+                                        <button
+                                            className="cap-btn primary"
+                                            disabled={busy || !release.gh.usable}
+                                            title={release.gh.usable
+                                                ? 'Cria a release no GitHub com as notas do registro'
+                                                : release.gh.remediation ?? 'gh não está utilizável'}
+                                            onClick={() =>
+                                                this.commands.executeCommand(CMD_RELEASE_GITHUB, version.version)
+                                            }
+                                        >
+                                            Release no GitHub
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_RELEASE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler'}
+                </button>
+            </div>
+        );
+    }
+
     protected renderLifecycle(): React.ReactNode {
         const cycle = this.store.lifecycle;
         const busy = this.store.lifecycleBusy;
@@ -1651,6 +1805,17 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                         {record.relatedResources.length > 0 &&
                                             ` · ligado a ${record.relatedResources.length} recurso(s)`}
                                     </span>
+                                    <small>
+                                        {/* Onde a versão FOI PARAR, que é outra
+                                            pergunta que a linha precisa responder:
+                                            consolidada e em lugar nenhum é o estado
+                                            normal, e some se a tela calar. */}
+                                        {record.deployments?.length
+                                            ? record.deployments
+                                                .map(d => `${d.target}: ${d.reference}`)
+                                                .join(' · ')
+                                            : 'em nenhum destino'}
+                                    </small>
                                     <small>
                                         {record.reversibility === 'irreversible'
                                             ? 'irreversível, sem compensação'

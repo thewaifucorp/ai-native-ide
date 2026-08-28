@@ -16,6 +16,8 @@ import {
     PolicyDecision,
     ProjectSnapshot,
     PublishAttempt,
+    ReleaseAttempt,
+    ReleaseSnapshot,
     ReopenedExport,
     ReferencesSnapshot,
     WorkItem,
@@ -479,6 +481,27 @@ export class EngineSidecarService implements EngineService {
             problem: options.problem,
             related_resources: options.relatedResources ?? []
         });
+    }
+
+    releaseSnapshot(root: string): Promise<ReleaseSnapshot> {
+        return this.call('release_snapshot', { root });
+    }
+
+    releaseTag(root: string, version: string): Promise<ReleaseAttempt> {
+        return this.call('release_tag', { root, version });
+    }
+
+    releaseDeleteTag(root: string, version: string): Promise<ReleaseSnapshot> {
+        return this.call('release_delete_tag', { root, version });
+    }
+
+    releasePush(root: string, version: string, confirmed = false): Promise<ReleaseAttempt> {
+        // Consentimento se declara: `false` é o único default possível aqui.
+        return this.call('release_push', { root, version, confirmed: confirmed === true });
+    }
+
+    releaseGithub(root: string, version: string, confirmed = false): Promise<ReleaseAttempt> {
+        return this.call('release_github', { root, version, confirmed: confirmed === true });
     }
 
     policyDecide(

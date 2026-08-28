@@ -93,6 +93,11 @@ export const CMD_LIFECYCLE_DELETE_EXPORT = 'instrument.lifecycle.deleteExport';
 export const CMD_LIFECYCLE_REOPEN = 'instrument.lifecycle.reopen';
 export const CMD_LIFECYCLE_RELATE = 'instrument.lifecycle.relate';
 export const CMD_LIFECYCLE_CONSOLIDATE = 'instrument.lifecycle.consolidate';
+export const CMD_RELEASE_READ = 'instrument.release.read';
+export const CMD_RELEASE_TAG = 'instrument.release.tag';
+export const CMD_RELEASE_DELETE_TAG = 'instrument.release.deleteTag';
+export const CMD_RELEASE_PUSH = 'instrument.release.push';
+export const CMD_RELEASE_GITHUB = 'instrument.release.github';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
@@ -354,6 +359,26 @@ export class InstrumentCapabilityContribution
                 label: 'Instrument: ligar/desligar um recurso do problema observado'
             },
             { execute: (id?: string) => (id ? this.store.toggleLifecycleRelated(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_RELEASE_READ, label: 'Instrument: ler o caminho de publicação (Git)' },
+            { execute: () => this.readRelease() }
+        );
+        commands.registerCommand(
+            { id: CMD_RELEASE_TAG, label: 'Instrument: criar tag da versão (local)' },
+            { execute: (version?: string) => (version ? this.releaseTag(version) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_RELEASE_DELETE_TAG, label: 'Instrument: apagar a tag local (compensação)' },
+            { execute: (version?: string) => (version ? this.releaseDeleteTag(version) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_RELEASE_PUSH, label: 'Instrument: empurrar a tag (efeito externo)' },
+            { execute: (version?: string) => (version ? this.releasePush(version) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_RELEASE_GITHUB, label: 'Instrument: criar release no GitHub (efeito externo)' },
+            { execute: (version?: string) => (version ? this.releaseGithub(version) : undefined) }
         );
         commands.registerCommand(
             {
@@ -2277,6 +2302,118 @@ export class InstrumentCapabilityContribution
             `${ligados ? `${ligados} recurso(s) ligado(s) ao problema · ` : ''}` +
             `estado medido: ${done.evaluation.summary}`
         );
+    }
+
+    // ── §16 publicar pelo adapter Git ───────────────────────────────────────
+
+    protected async readRelease(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReleaseBusy(true);
+        try {
+            this.store.setRelease(await this.engine.releaseSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Caminho de publicação não foi lido: ${this.msg(err)}`);
+            this.store.setRelease(undefined);
+        } finally {
+            this.store.setReleaseBusy(false);
+        }
+    }
+
+    /** Criar a tag é LOCAL: não pergunta, e apagar desfaz por completo. */
+    protected async releaseTag(version: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReleaseBusy(true);
+        try {
+            const done = await this.engine.releaseTag(root, version);
+            this.store.setRelease(done.snapshot);
+            this.messages.info(done.explain);
+        } catch (err) {
+            this.messages.error(`Tag não foi criada: ${this.msg(err)}`);
+        } finally {
+            this.store.setReleaseBusy(false);
+        }
+    }
+
+    protected async releaseDeleteTag(version: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setReleaseBusy(true);
+        try {
+            this.store.setRelease(await this.engine.releaseDeleteTag(root, version));
+            this.messages.info(`Tag v${version} apagada — ela nunca saiu desta máquina.`);
+        } catch (err) {
+            this.messages.error(`Tag não foi apagada: ${this.msg(err)}`);
+        } finally {
+            this.store.setReleaseBusy(false);
+        }
+    }
+
+    /**
+     * Empurrar a tag e criar a release são os PRIMEIROS efeitos externos reais
+     * deste produto, e seguem a mesma forma de duas chamadas: o motor diz o que
+     * o ato é, a pessoa confirma com essa frase na frente, e só então acontece.
+     * A diferença para o consolidar é que aqui a irreversibilidade é de verdade.
+     */
+    protected async releaseExternal(
+        version: string,
+        kind: 'push' | 'github'
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        const call = (confirmed: boolean) =>
+            kind === 'push'
+                ? this.engine.releasePush(root, version, confirmed)
+                : this.engine.releaseGithub(root, version, confirmed);
+        this.store.setReleaseBusy(true);
+        try {
+            const asked = await call(false);
+            this.store.setRelease(asked.snapshot);
+            if (!asked.needsConfirmation) {
+                this.messages.info(asked.explain);
+                return;
+            }
+            const confirmed = await new ConfirmDialog({
+                title: kind === 'push'
+                    ? `Empurrar v${version} para o remoto?`
+                    : `Criar a release de v${version} no GitHub?`,
+                msg: asked.explain,
+                ok: kind === 'push' ? 'Empurrar' : 'Criar release',
+                cancel: 'Não publicar'
+            }).open();
+            if (!confirmed) {
+                this.messages.info('Nada foi publicado.');
+                return;
+            }
+            const done = await call(true);
+            this.store.setRelease(done.snapshot);
+            this.messages.info(done.explain);
+            // O registro de versões mudou (ganhou o destino alcançado): reler,
+            // senão a seção Versões continuaria dizendo que ela está em lugar
+            // nenhum.
+            await this.readLifecycle();
+        } catch (err) {
+            this.messages.error(`Publicação não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setReleaseBusy(false);
+        }
+    }
+
+    protected releasePush(version: string): Promise<void> {
+        return this.releaseExternal(version, 'push');
+    }
+
+    protected releaseGithub(version: string): Promise<void> {
+        return this.releaseExternal(version, 'github');
     }
 
     // ── external writes (WORK-05) ───────────────────────────────────────────

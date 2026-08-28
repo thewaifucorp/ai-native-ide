@@ -20,6 +20,7 @@ import {
     LifecycleSnapshot,
     AdapterCard,
     PublishAttempt,
+    ReleaseSnapshot,
     ReopenedExport,
     ReferencesSnapshot,
     WorkSnapshot,
@@ -180,6 +181,11 @@ export class InstrumentStore {
     lifecycle: LifecycleSnapshot | undefined;
     lifecycleBusy = false;
     lifecycleAttempt: PublishAttempt | undefined;
+    // ── REAL publicação pelo adapter Git (§16): estado de git/gh/remoto e, por
+    //    versão consolidada, onde ela chegou. `undefined` = nem lido.
+    release: ReleaseSnapshot | undefined;
+    releaseBusy = false;
+
     /** O export reaberto (LIFE-03) e o que mudou desde ele; `undefined` = nenhum. */
     lifecycleReopened: ReopenedExport | undefined;
     /** Recursos que a pessoa ligou ao problema observado, por id portátil. */
@@ -506,6 +512,16 @@ export class InstrumentStore {
         if (attempt) {
             this.lifecycle = attempt.snapshot;
         }
+        this.emit();
+    }
+
+    setRelease(snapshot: ReleaseSnapshot | undefined): void {
+        this.release = snapshot;
+        this.emit();
+    }
+
+    setReleaseBusy(busy: boolean): void {
+        this.releaseBusy = busy;
         this.emit();
     }
 

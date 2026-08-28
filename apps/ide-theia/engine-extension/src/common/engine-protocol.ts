@@ -415,6 +415,22 @@ export interface EngineService {
         }
     ): Promise<PublishAttempt>;
 
+    // ── §16 publicar pelo adapter Git ─────────────────────────────────────────
+
+    /** Estado do caminho de release: git, gh, remoto, e cada versão consolidada. */
+    releaseSnapshot(root: string): Promise<ReleaseSnapshot>;
+    /** Cria a tag anotada LOCALMENTE. Não sai da máquina; apagar desfaz. */
+    releaseTag(root: string, version: string): Promise<ReleaseAttempt>;
+    /** A compensação da tag local, executada: apagar. */
+    releaseDeleteTag(root: string, version: string): Promise<ReleaseSnapshot>;
+    /**
+     * Empurra a tag para o remoto — efeito externo. Sem `confirmed` volta como
+     * `needsConfirmation` e NADA é empurrado nem registrado.
+     */
+    releasePush(root: string, version: string, confirmed?: boolean): Promise<ReleaseAttempt>;
+    /** Cria a release no GitHub para uma tag já empurrada. Externo, exige `gh`. */
+    releaseGithub(root: string, version: string, confirmed?: boolean): Promise<ReleaseAttempt>;
+
     /**
      * §14 — what the project's mode and permissions require for ONE effect.
      *
@@ -1147,6 +1163,8 @@ export interface PublishRecord {
     note: string;
     reversibility: string;
     compensation?: CompensationPlan;
+    /** Os destinos que esta versão alcançou. Vazio = em lugar nenhum. */
+    deployments: Deployment[];
 }
 
 export interface LifecycleSnapshot {
@@ -1241,6 +1259,63 @@ export interface ReopenedExport {
     recorded?: PublishRecord;
     /** Frase para a tela. Nunca vazia. */
     summary: string;
+}
+
+/** Onde uma versão foi parar, de fato. Vazio = consolidada e em lugar nenhum. */
+export interface Deployment {
+    /** `git-tag` | `github-release`. */
+    target: string;
+    /** A referência concreta: `origin/v0.0.4`, a URL da release. */
+    reference: string;
+    atEpochSecs: number;
+    compensation?: CompensationPlan;
+}
+
+/**
+ * Uma ferramenta externa, dita pelo que ela consegue fazer AQUI.
+ *
+ * `present` e `usable` são estados diferentes de propósito: `gh` instalado e
+ * deslogado existe e não cria release. Foi a mesma lição do shim do
+ * `rust-analyzer`, que respondia e não servia.
+ */
+export interface ToolState {
+    present: boolean;
+    usable: boolean;
+    detail: string;
+    remediation?: string;
+}
+
+/** Uma versão consolidada, vista do lado do release. */
+export interface ReleasableVersion {
+    version: string;
+    tag: string;
+    tagged: boolean;
+    tagCommit?: string;
+    pushed: boolean;
+    releaseUrl?: string;
+    problem?: string;
+    /** As notas geradas do registro — não escritas à mão. */
+    notes: string;
+}
+
+export interface ReleaseSnapshot {
+    git: ToolState;
+    gh: ToolState;
+    remote?: string;
+    headCommit?: string;
+    /** Árvore suja: a tag pega o último COMMIT, não o que está na tela. */
+    dirty: boolean;
+    versions: ReleasableVersion[];
+    blockedReason?: string;
+}
+
+export interface ReleaseAttempt {
+    needsConfirmation: boolean;
+    reversibility: string;
+    compensation?: CompensationPlan;
+    explain: string;
+    record?: PublishRecord;
+    snapshot: ReleaseSnapshot;
 }
 
 /** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */

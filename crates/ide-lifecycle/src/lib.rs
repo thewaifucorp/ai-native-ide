@@ -142,6 +142,16 @@ pub enum LifecycleEffect {
         version: String,
         target: PublishTarget,
     },
+    /// An annotated Git tag created LOCALLY for a consolidated version.
+    ///
+    /// Criar a tag e empurrá-la são atos separados de propósito: a tag local não
+    /// saiu da máquina e apagá-la é undo de verdade. Juntá-los faria o ato
+    /// reversível carregar o peso do irreversível.
+    CreateLocalTag { tag: String },
+    /// A tag pushed to a remote — o primeiro efeito externo real deste caminho.
+    PushTag { tag: String, remote: String },
+    /// A GitHub release created for a tag already on the remote.
+    CreateGithubRelease { tag: String },
 }
 
 impl LifecycleEffect {
@@ -155,6 +165,13 @@ impl LifecycleEffect {
             // reescrever a história; o que existe é consolidar uma versão
             // corrigida por cima.
             LifecycleEffect::ConsolidateVersion { .. } => Reversibility::CompensationOnly,
+            // Tag local não saiu da máquina: apagar não deixa rastro.
+            LifecycleEffect::CreateLocalTag { .. } => Reversibility::Reversible,
+            // Empurrada, a tag pode ter sido buscada por qualquer um antes de
+            // ser apagada. Apagar no remoto mitiga; não desfaz.
+            LifecycleEffect::PushTag { .. } | LifecycleEffect::CreateGithubRelease { .. } => {
+                Reversibility::CompensationOnly
+            }
             LifecycleEffect::Publish { target, .. } | LifecycleEffect::Republish { target, .. } => {
                 match target {
                     PublishTarget::ExternalCompensable => Reversibility::CompensationOnly,
@@ -177,6 +194,13 @@ pub enum CompensationKind {
     /// Consolidate a corrected version over a wrong one, in the local record.
     /// The wrong version stays in the history — that is the point of a record.
     ConsolidateCorrectedVersion,
+    /// Delete the local tag — a true undo, nothing left it.
+    DeleteLocalTag,
+    /// Delete the tag on the remote. Mitigates; whoever already fetched it keeps
+    /// their copy, so it is never a rollback.
+    DeleteRemoteTag,
+    /// Delete the GitHub release. The tag itself survives unless deleted too.
+    DeleteGithubRelease,
 }
 
 /// A concrete, honest description of what can be undone and how. A plan is only
@@ -221,6 +245,30 @@ pub fn compensation_for(effect: &LifecycleEffect) -> Option<CompensationPlan> {
                    no registro, que é para isso que ele serve."
                 .to_owned(),
         }),
+        LifecycleEffect::CreateLocalTag { tag } => Some(CompensationPlan {
+            reversibility: Reversibility::Reversible,
+            kind: CompensationKind::DeleteLocalTag,
+            target: tag.clone(),
+            note: format!("Apagar a tag local {tag} desfaz por completo: ela nunca saiu daqui."),
+        }),
+        LifecycleEffect::PushTag { tag, remote } => Some(CompensationPlan {
+            reversibility: Reversibility::CompensationOnly,
+            kind: CompensationKind::DeleteRemoteTag,
+            target: format!("{remote}/{tag}"),
+            note: format!(
+                "Apagar {tag} em {remote} mitiga, mas não desfaz: quem já buscou a tag \
+                 continua com ela, e quem depende dela verá o histórico mudar."
+            ),
+        }),
+        LifecycleEffect::CreateGithubRelease { tag } => Some(CompensationPlan {
+            reversibility: Reversibility::CompensationOnly,
+            kind: CompensationKind::DeleteGithubRelease,
+            target: tag.clone(),
+            note: format!(
+                "Apagar a release de {tag} no GitHub tira a página e os anexos; a tag \
+                 continua no remoto, e quem já baixou continua com o que baixou."
+            ),
+        }),
         LifecycleEffect::Publish {
             project_id,
             version,
@@ -264,6 +312,28 @@ fn default_record_kind() -> RecordKind {
     RecordKind::Published
 }
 
+/// Onde uma versão foi parar, de fato.
+///
+/// ── POR QUE FICA NA LINHA DA VERSÃO ───────────────────────────────────────
+/// Publicar não cria versão nova: publica UMA versão que já existe. Registrar a
+/// publicação como outra linha faria o projeto ganhar uma 0.0.5 sem que nada
+/// tenha mudado nele — e a pergunta "esta versão está no ar?" deixaria de ter
+/// resposta. Cada destino alcançado é um item aqui, com a compensação que
+/// aquele destino realmente tem.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Deployment {
+    /// Que destino foi alcançado: `git-tag`, `github-release`, …
+    pub target: String,
+    /// A referência concreta: `origin/v0.0.4`, a URL da release.
+    pub reference: String,
+    /// Quando, em segundos desde a época. Sem isto, duas publicações da mesma
+    /// versão viram uma só na leitura.
+    pub at_epoch_secs: u64,
+    /// A compensação daquele destino, ou `None` quando não existe nenhuma.
+    pub compensation: Option<CompensationPlan>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishRecord {
@@ -285,6 +355,10 @@ pub struct PublishRecord {
     /// irreversible with no compensation possible.
     #[serde(default)]
     pub compensation: Option<CompensationPlan>,
+    /// Os destinos que esta versão realmente alcançou. Vazio = consolidada e
+    /// nada mais: ela existe no projeto e não está em lugar nenhum.
+    #[serde(default)]
+    pub deployments: Vec<Deployment>,
 }
 
 fn default_publish_reversibility() -> Reversibility {
@@ -380,6 +454,7 @@ impl PublishLog {
             },
             reversibility: effect.reversibility(),
             compensation: compensation_for(&effect),
+            deployments: Vec::new(),
         };
         self.records
             .entry(project_id.to_owned())
@@ -432,6 +507,7 @@ impl PublishLog {
             },
             reversibility: effect.reversibility(),
             compensation: compensation_for(&effect),
+            deployments: Vec::new(),
         };
         self.records
             .entry(project_id.to_owned())
@@ -485,6 +561,7 @@ impl PublishLog {
             note: "Republicação corrigindo um problema observado.".to_owned(),
             reversibility: effect.reversibility(),
             compensation: compensation_for(&effect),
+            deployments: Vec::new(),
         };
         self.records
             .entry(project_id.to_owned())
@@ -492,6 +569,57 @@ impl PublishLog {
             .push(record.clone());
         self.persist()?;
         Ok(record)
+    }
+
+    /// Anota, na linha da versão, um destino que ela alcançou.
+    ///
+    /// Falha quando a versão não existe: registrar publicação de uma versão que
+    /// nunca foi consolidada afirmaria que foi para o ar algo que o projeto não
+    /// congelou.
+    pub fn record_deployment(
+        &mut self,
+        project_id: &str,
+        version: &str,
+        deployment: Deployment,
+    ) -> anyhow::Result<PublishRecord> {
+        let record = self
+            .records
+            .get_mut(project_id)
+            .and_then(|records| records.iter_mut().find(|entry| entry.version == version))
+            .ok_or_else(|| {
+                anyhow::anyhow!("versão {version} não está consolidada em {project_id}")
+            })?;
+        record.deployments.push(deployment);
+        let updated = record.clone();
+        self.persist()?;
+        Ok(updated)
+    }
+
+    /// Remove um destino da linha da versão, depois que a compensação dele foi
+    /// executada de verdade. Devolve `true` quando havia o que remover.
+    pub fn forget_deployment(
+        &mut self,
+        project_id: &str,
+        version: &str,
+        target: &str,
+        reference: &str,
+    ) -> anyhow::Result<bool> {
+        let record = self
+            .records
+            .get_mut(project_id)
+            .and_then(|records| records.iter_mut().find(|entry| entry.version == version))
+            .ok_or_else(|| {
+                anyhow::anyhow!("versão {version} não está consolidada em {project_id}")
+            })?;
+        let before = record.deployments.len();
+        record
+            .deployments
+            .retain(|entry| !(entry.target == target && entry.reference == reference));
+        let removed = record.deployments.len() != before;
+        if removed {
+            self.persist()?;
+        }
+        Ok(removed)
     }
 
     fn persist(&self) -> anyhow::Result<()> {
@@ -597,6 +725,96 @@ mod tests {
         let record: PublishRecord = serde_json::from_str(raw).unwrap();
 
         assert_eq!(record.kind, RecordKind::Published);
+    }
+
+    /// Os três atos do release têm classes DIFERENTES, e é por isso que são três.
+    #[test]
+    fn tag_local_e_reversivel_e_empurrar_nao_e() {
+        let local = LifecycleEffect::CreateLocalTag {
+            tag: "v0.0.4".to_owned(),
+        };
+        let empurrada = LifecycleEffect::PushTag {
+            tag: "v0.0.4".to_owned(),
+            remote: "origin".to_owned(),
+        };
+        let release = LifecycleEffect::CreateGithubRelease {
+            tag: "v0.0.4".to_owned(),
+        };
+
+        assert_eq!(local.reversibility(), Reversibility::Reversible);
+        assert_eq!(empurrada.reversibility(), Reversibility::CompensationOnly);
+        assert_eq!(release.reversibility(), Reversibility::CompensationOnly);
+
+        let plano = compensation_for(&empurrada).expect("apagar no remoto mitiga");
+        assert_eq!(plano.kind, CompensationKind::DeleteRemoteTag);
+        assert!(
+            plano.note.contains("não desfaz"),
+            "quem já buscou a tag continua com ela, e a frase tem de dizer isso: {}",
+            plano.note
+        );
+    }
+
+    /// Publicar não cria versão: publica uma que já existe. Se virasse linha
+    /// nova, o projeto ganharia uma 0.0.5 sem nada ter mudado nele.
+    #[test]
+    fn destino_alcancado_entra_na_linha_da_versao_e_nao_cria_outra() {
+        let root = temp_root("deployment");
+        let _ = fs::remove_dir_all(&root);
+        let mut log = PublishLog::open(&root).unwrap();
+        log.consolidate("auction", None, vec![]).unwrap();
+
+        let atualizado = log
+            .record_deployment(
+                "auction",
+                "0.0.1",
+                Deployment {
+                    target: "git-tag".to_owned(),
+                    reference: "origin/v0.0.1".to_owned(),
+                    at_epoch_secs: 1_700_000_000,
+                    compensation: compensation_for(&LifecycleEffect::PushTag {
+                        tag: "v0.0.1".to_owned(),
+                        remote: "origin".to_owned(),
+                    }),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(atualizado.deployments.len(), 1);
+        assert_eq!(log.history("auction").len(), 1, "nenhuma versão nova");
+        assert!(atualizado.deployments[0].compensation.is_some());
+
+        // A compensação executada de verdade tira o destino da linha.
+        assert!(log
+            .forget_deployment("auction", "0.0.1", "git-tag", "origin/v0.0.1")
+            .unwrap());
+        assert!(log.history("auction")[0].deployments.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Registrar destino de uma versão que ninguém consolidou afirmaria que foi
+    /// para o ar algo que o projeto nunca congelou.
+    #[test]
+    fn destino_de_versao_inexistente_e_recusado() {
+        let root = temp_root("deployment-orfao");
+        let _ = fs::remove_dir_all(&root);
+        let mut log = PublishLog::open(&root).unwrap();
+
+        let erro = log
+            .record_deployment(
+                "auction",
+                "9.9.9",
+                Deployment {
+                    target: "git-tag".to_owned(),
+                    reference: "origin/v9.9.9".to_owned(),
+                    at_epoch_secs: 0,
+                    compensation: None,
+                },
+            )
+            .expect_err("deve recusar");
+
+        assert!(erro.to_string().contains("não está consolidada"));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

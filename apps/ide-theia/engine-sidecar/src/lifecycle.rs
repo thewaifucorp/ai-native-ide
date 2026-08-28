@@ -152,6 +152,12 @@ fn log(root: &Path) -> Result<PublishLog, String> {
     PublishLog::open(root.join(LOG_REL)).map_err(|error| format!("{error:#}"))
 }
 
+/// O mesmo registro, para quem publica: o §16 anota o destino alcançado NA linha
+/// da versão, e quem faz isso é o módulo de release.
+pub fn open_log(root: &Path) -> Result<PublishLog, String> {
+    log(root)
+}
+
 /// Exports already on disk, newest name last. A listing failure is reported as an
 /// empty list only when the directory does not exist; anything else is an error.
 fn exports(root: &Path) -> Result<Vec<ExportedFile>, String> {
@@ -633,7 +639,7 @@ fn applied_packs(root: &Path) -> Vec<String> {
 ///
 /// A parte depois do prefixo vira hash (o mesmo `content_hash` do §8), então o
 /// id continua estável para o mesmo projeto e deixa de descrever a máquina.
-fn portable_id(raw: &str) -> String {
+pub(crate) fn portable_id(raw: &str) -> String {
     match raw.split_once(':') {
         Some((prefix, rest)) if rest.starts_with('/') || rest.contains('\\') => {
             format!("{prefix}:{}", content_hash(rest))
