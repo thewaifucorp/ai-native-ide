@@ -10,15 +10,14 @@
 //!   - `diff`            params `{ original, proposed }`            -> `{ "hunks": [...] }`
 //!   - `merge_selected`  params `{ original, proposed, selected }`  -> `{ "merged": "..." }`
 //!   - `broker_propose`  params `{ root, owner, effect_id, relative_path, content }`
-//!                                                                  -> the broker's Value
-//!                        (`{ awaiting_approval: true }` on the first call, then
-//!                         `{ written: true, path }` once the effect is approved)
+//!     -> the broker's Value: `{ awaiting_approval: true }` on the first call,
+//!     then `{ written: true, path }` once the effect is approved
 //!   - `broker_approve`  params `{ root, owner, effect_id }` -> `{ approved_id: <i64> }`
 //!   - `broker_rollback` params `{ root, owner, effect_id }` -> `{ rolledback: true }`
 //!   - `broker_activity` params `{ root, owner }`   -> `{ activity: [...] }`
 //!   - `harness_run`     params `{ root, owner, run_tools }` -> the §4 report
 //!   - `preview_start` / `preview_status` / `preview_stop` params `{ root }`
-//!                                                      -> the §4 preview snapshot
+//!     -> the §4 preview snapshot
 //!   - `reconcile_scan`  params `{ root }`              -> intents vs observations
 //!   - `reconcile_decide` params `{ root, divergence_id, choice }`
 //!   - `packs_snapshot`  params `{ root, passed, failed }`
@@ -30,6 +29,10 @@
 //!   - `project_*`   the §13 durable project (identity, intent, resources)
 //!   - `intent_review` / `intent_decide` the §8 guided intent (Layer-1 hypotheses)
 //!   - `notes_*`      the §7 notes by theme and their reconciliation
+//!   - `references_*` the §13 services and environments (address, never a path)
+//!   - `work_*`       the §9 items and the status they DERIVE (never a written one)
+//!   - `lifecycle_*`  the §16 export / publish / republish, with honest compensation
+//!   - `policy_decide` the §14 mode + permission policy for ONE effect
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`

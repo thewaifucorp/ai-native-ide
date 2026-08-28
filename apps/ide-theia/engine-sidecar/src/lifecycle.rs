@@ -30,7 +30,7 @@ use ide_lifecycle::{
 };
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::project;
 
