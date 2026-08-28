@@ -328,6 +328,11 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             return;
         }
         for (const request of [...state.pending]) {
+            // Já avaliado é já avaliado: ver a nota em `PendingPermission`.
+            if (request.policyChecked) {
+                continue;
+            }
+            request.policyChecked = true;
             let decision;
             try {
                 decision = await this.engine.policyDecide(root, 'durable', {
@@ -341,6 +346,9 @@ export class AgentSessionServiceImpl implements AgentSessionService {
                     `política de efeito indisponível (${this.msg(err)}) — o pedido continua ` +
                     'esperando você, que é o lado que não causa efeito'
                 );
+                // Marcado como avaliado de propósito: tentar de novo num poll
+                // seguinte auto-aprovaria mais tarde, sem ninguém olhando ESTE
+                // pedido. Ele espera a pessoa, e o evento acima diz por quê.
                 return;
             }
             if (decision.effect !== 'auto_approve_recorded') {

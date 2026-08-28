@@ -100,6 +100,17 @@ export interface PendingPermission {
     detail: string;
     /** When the IDE saw the request. */
     at: string;
+    /**
+     * True once §14 já respondeu a este pedido — inclusive quando a resposta foi
+     * "não decide, continua esperando".
+     *
+     * A política é lida UMA vez, quando o pedido chega. Reavaliar a cada poll fazia
+     * um pedido que parou para a pessoa virar auto-aprovado só porque o modo mudou
+     * depois: o efeito aconteceria por causa de uma configuração, não por causa de
+     * uma decisão sobre AQUELE pedido. A regra nova vale para os pedidos que
+     * chegarem depois dela.
+     */
+    policyChecked?: boolean;
 }
 
 /** One proposed edit, ready to render as a diff. */

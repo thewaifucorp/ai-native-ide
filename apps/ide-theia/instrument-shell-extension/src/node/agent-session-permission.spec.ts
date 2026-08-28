@@ -274,6 +274,59 @@ describe('AgentSessionServiceImpl — permissão é decisão, não aviso', () =>
         assert.ok(snapshot.pending[0].detail.includes('Write src/main.rs'));
     });
 
+    /// §14 — TROCAR DE MODO NÃO RESPONDE O PEDIDO QUE JÁ ESPERAVA A PESSOA.
+    ///
+    /// A política era reavaliada a cada poll. Então um pedido do agente que parou
+    /// para a pessoa decidir — `run-command`, por exemplo — virava auto-aprovado
+    /// se o projeto passasse a yolo depois, por qualquer motivo. O efeito
+    /// aconteceria por causa de uma configuração mudada, não por causa de uma
+    /// decisão sobre AQUELE pedido. A regra nova vale para o que chegar depois.
+    it('modo novo não responde pedido que já estava pendente', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.events = [permissionEvent(7)];
+
+        const parado = await service.poll(rootUri);
+        assert.strictEqual(parado.pending.length, 1, 'cauteloso para para a pessoa');
+        assert.strictEqual(engine.answered.length, 0, 'ninguém respondeu ainda');
+
+        // O projeto vira yolo DEPOIS de o pedido já estar esperando.
+        engine.policyAnswer = {
+            mode: 'full_vibes',
+            permissions: 'yolo',
+            scoped: false,
+            class: 'durable',
+            effect: 'auto_approve_recorded',
+            interruption: 'none',
+            explain: 'Full vibes (yolo): efeito durável é aplicado e registrado'
+        };
+        engine.events = [];
+
+        const depois = await service.poll(rootUri);
+
+        assert.strictEqual(
+            depois.pending.length,
+            1,
+            'o pedido continua esperando: quem decide sobre ele é a pessoa'
+        );
+        assert.strictEqual(
+            engine.answered.length,
+            0,
+            'nenhuma resposta pode ter sido enviada ao agente por troca de modo'
+        );
+
+        // E a regra nova vale para o pedido SEGUINTE, que é o ponto de trocar.
+        engine.events = [permissionEvent(8)];
+        const novo = await service.poll(rootUri);
+        assert.ok(
+            engine.answered.some(answer => answer.requestId === 8),
+            'o modo novo responde o pedido que chegou depois dele'
+        );
+        assert.ok(
+            !novo.pending.some(request => request.requestId === 8),
+            'e esse já não fica pendente'
+        );
+    });
+
     it('leva o diff proposto até o card, com o corte marcado', async () => {
         const { service, engine, rootUri } = fixture();
         engine.events = [
