@@ -55,6 +55,7 @@ mod notes;
 mod packs;
 mod policy;
 mod preview;
+mod proc;
 mod project;
 mod providers;
 mod reconcile;

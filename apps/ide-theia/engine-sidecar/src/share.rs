@@ -30,7 +30,6 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -396,7 +395,8 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
     fs::write(&config, nginx_config(listen, preview_port, &dir))
         .map_err(|error| format!("gravar {}: {error}", config.display()))?;
 
-    let proxy = Command::new("nginx")
+    let mut nginx = Command::new("nginx");
+    nginx
         .args([
             "-c",
             &config.display().to_string(),
@@ -404,7 +404,15 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
             &dir.display().to_string(),
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        // O erro do nginx já vai para o `error_log` da configuração gerada. Um
+        // pipe que ninguém lê enche e trava quem escreve nele — foi assim que o
+        // túnel morreu (ver `start_tunnel`).
+        .stderr(Stdio::null());
+    // MASTER + WORKERS: sem grupo próprio, parar o master deixa os workers
+    // segurando a porta. Medido com um GET de fora depois de clicar em "parar
+    // de mostrar": a tela dizia fechado e o endereço respondia 401. Ver `proc`.
+    crate::proc::own_group(&mut nginx);
+    let proxy = nginx
         .spawn()
         .map_err(|error| format!("nginx não subiu: {error}"))?;
 
@@ -422,7 +430,7 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
             (format!("http://{host}:{listen}"), None)
         }
         ShareMode::Tunnel => {
-            let (endereco, filho) = start_tunnel(listen)?;
+            let (endereco, filho) = start_tunnel(listen, &dir)?;
             (endereco, Some(filho))
         }
     };
@@ -457,67 +465,100 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
     snapshot(root)
 }
 
-/// Sobe o túnel e espera o endereço aparecer na saída do cloudflared.
+/// Sobe o túnel e espera o endereço aparecer no log do cloudflared.
 ///
 /// O endereço não é escolhido por nós: um quick tunnel recebe um nome sorteado
 /// pelo serviço, e ele só existe na saída do processo. Esperar por ele é a única
 /// forma honesta — inventar a URL daria um link que não abre.
-fn start_tunnel(local_port: u16) -> Result<(String, Child), String> {
-    let mut filho = Command::new("cloudflared")
+///
+/// ── POR QUE O LOG É ARQUIVO, E NÃO PIPE ───────────────────────────────────
+/// A primeira versão lia o stderr por um pipe e PARAVA de ler assim que achava a
+/// URL. O `cloudflared` continua escrevendo log; com a ponta de leitura fechada,
+/// ele levava SIGPIPE e morria segundos depois de subir. O sintoma foi exato: a
+/// tela dizia "aberto na internet", o endereço não resolvia em DNS nenhum, e o
+/// processo aparecia como `<defunct>`. Arquivo não fecha, não enche e ainda
+/// deixa o log para quem precisar entender por que um túnel não subiu.
+fn start_tunnel(local_port: u16, dir: &Path) -> Result<(String, Child), String> {
+    let log_path = dir.join("cloudflared.log");
+    let log = fs::File::create(&log_path)
+        .map_err(|error| format!("criar {}: {error}", log_path.display()))?;
+    let log_err = log
+        .try_clone()
+        .map_err(|error| format!("duplicar o log do túnel: {error}"))?;
+
+    let mut comando = Command::new("cloudflared");
+    comando
         .args([
             "tunnel",
             "--no-autoupdate",
             "--url",
             &format!("http://127.0.0.1:{local_port}"),
         ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
+    crate::proc::own_group(&mut comando);
+    let mut filho = comando
         .spawn()
         .map_err(|error| format!("cloudflared não subiu: {error}"))?;
 
-    let stderr = filho
-        .stderr
-        .take()
-        .ok_or_else(|| "cloudflared não deu saída para ler".to_string())?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        for linha in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if let Some(inicio) = linha.find("https://") {
-                let url: String = linha[inicio..]
-                    .chars()
-                    .take_while(|c| !c.is_whitespace())
-                    .collect();
-                if url.contains("trycloudflare.com") {
-                    let _ = tx.send(url);
-                    return;
-                }
-            }
+    let limite = Duration::from_secs(30);
+    let passo = Duration::from_millis(250);
+    let mut esperou = Duration::ZERO;
+    while esperou < limite {
+        if let Some(url) = url_no_log(&log_path) {
+            return Ok((url, filho));
         }
-    });
-
-    match rx.recv_timeout(Duration::from_secs(30)) {
-        Ok(url) => Ok((url, filho)),
-        Err(_) => {
-            let _ = filho.kill();
-            Err(
-                "cloudflared não devolveu um endereço em 30s: o túnel não subiu, e um link \
-                 inventado não abriria"
-                    .to_string(),
-            )
+        // Um túnel que já morreu não vai imprimir endereço nenhum.
+        if matches!(filho.try_wait(), Ok(Some(_))) {
+            return Err(format!(
+                "cloudflared saiu antes de dar um endereço; o log está em \
+                 {SHARE_REL}/cloudflared.log"
+            ));
         }
+        std::thread::sleep(passo);
+        esperou += passo;
     }
+    crate::proc::kill_tree(filho.id(), Duration::from_secs(3));
+    let _ = filho.kill();
+    Err(format!(
+        "cloudflared não devolveu um endereço em 30s: o túnel não subiu, e um link inventado \
+         não abriria. O log está em {SHARE_REL}/cloudflared.log"
+    ))
+}
+
+/// O primeiro endereço `*.trycloudflare.com` que aparecer no log.
+fn url_no_log(path: &Path) -> Option<String> {
+    let texto = fs::read_to_string(path).ok()?;
+    texto.lines().find_map(|linha| {
+        let inicio = linha.find("https://")?;
+        let url: String = linha[inicio..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != '|')
+            .collect();
+        url.contains("trycloudflare.com").then_some(url)
+    })
 }
 
 /// Fecha o compartilhamento: derruba o túnel e o proxy, nesta ordem.
+///
+/// ── DEFEITO MEDIDO COM UM GET DE FORA ─────────────────────────────────────
+/// A primeira versão fazia `child.kill()`. O nginx é master + workers: o master
+/// morria, os WORKERS continuavam segurando a porta, e a tela dizia "fechado"
+/// enquanto o endereço exposto na rede seguia respondendo 401/200. É a mesma
+/// falha que o preview do §4 já tinha pago com o `sh -c`, e é por isso que ela
+/// virou o módulo `proc`: parar tem de derrubar a ÁRVORE e só voltar quando ela
+/// morreu.
 pub fn stop(root: &Path) -> Result<ShareSnapshot, String> {
     let key = root.display().to_string();
     if let Ok(mut map) = registry().lock() {
         if let Some(mut runtime) = map.remove(&key) {
             if let Some(mut tunnel) = runtime.tunnel.take() {
+                crate::proc::kill_tree(tunnel.id(), Duration::from_secs(3));
                 let _ = tunnel.kill();
                 let _ = tunnel.wait();
             }
             if let Some(mut proxy) = runtime.proxy.take() {
+                crate::proc::kill_tree(proxy.id(), Duration::from_secs(3));
                 let _ = proxy.kill();
                 let _ = proxy.wait();
             }
