@@ -776,3 +776,13 @@ body.game .iws .strip .lvl-strip { display: inline; }
 /* O grafo ausente é dito, não escondido — e sem vermelho: não é falha do
    projeto, é uma capability que não está pronta. */
 .iws .chain-degraded { color: var(--faint); font-style: italic; }
+
+/* ============ COBERTURA DO HARNESS (§15) ============ */
+/* Colapsada por padrão porque é resposta a uma pergunta ("sobre o que?"), não
+   ruído permanente — mas o veredito ao lado já diz quantas ficaram de fora, para
+   ninguém precisar abrir isto para descobrir que existe algo de fora. */
+.iws .cap-cov { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.iws .cap-cov > summary {
+  cursor: pointer; font: 400 11px var(--mono); color: var(--faint); letter-spacing: .02em;
+}
+.iws .cap-cov > summary:hover { color: var(--mut); }

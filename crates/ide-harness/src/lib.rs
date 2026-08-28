@@ -30,8 +30,30 @@ pub enum Severity {
     Critical,
 }
 
+/// Uma dimensão que o harness ou verifica, ou declara que não verificou.
+///
+/// ── POR QUE ISTO EXISTE (o "Pronto" do §15) ───────────────────────────────
+/// O relatório contava passou/falhou/desconhecido/não-executado, e com os quatro
+/// determinísticos passando a tela dizia "tudo passou" — enquanto ambiguidade,
+/// risco e divergência nunca tinham sido avaliados. Um relatório que não diz o
+/// que ficou de fora deixa "sem falhas" parecer "está bom", que é a conflação
+/// que este harness existe para não fazer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverageRow {
+    /// Id estável, para a tela agrupar sem depender do texto.
+    pub id: String,
+    /// Como uma pessoa chama isso.
+    pub label: String,
+    /// Foi avaliado NESTA execução.
+    pub evaluated: bool,
+    /// O que foi olhado, ou o que faltou para olhar. Nunca vazio.
+    pub detail: String,
+}
+
 /// A single deterministic finding. Every field is required so a Layer-0 result
 /// can never be a bare boolean without evidence and remediation.
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Finding {
@@ -108,6 +130,83 @@ pub struct HarnessReport {
     pub failed: usize,
     pub unknown: usize,
     pub not_run: usize,
+    /// O que este relatório cobre, e o que ele NÃO cobre — ver `CoverageRow`.
+    ///
+    /// A camada 0 preenche as dimensões determinísticas; quem chama acrescenta as
+    /// que só ele pode avaliar (divergência, intenção) antes de mostrar.
+    #[serde(default)]
+    pub coverage: Vec<CoverageRow>,
+}
+
+/// A cobertura da camada 0, dita a partir do que ela realmente olhou.
+///
+/// Cada linha responde "isto foi avaliado?" com o motivo. Um comando declarado
+/// mas não executado não conta como avaliado — foi exatamente a confusão que
+/// `not_run` já evita nos findings, e aqui ela também não pode aparecer.
+fn layer0_coverage(inputs: &HarnessInputs) -> Vec<CoverageRow> {
+    let row = |id: &str, label: &str, evaluated: bool, detail: String| CoverageRow {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        evaluated,
+        detail,
+    };
+    let ferramenta = |nome: &str, outcome: Option<&ToolOutcome>| -> (bool, String) {
+        match outcome {
+            Some(_) => (
+                true,
+                format!("{nome} declarado foi executado nesta medição"),
+            ),
+            None => (
+                false,
+                format!(
+                    "{nome} não foi executado: declare o comando em .instrument/checks.json e \
+                     escolha medir rodando comandos"
+                ),
+            ),
+        }
+    };
+    let (build_ok, build_why) = ferramenta("build", inputs.build.as_ref());
+    let (test_ok, test_why) = ferramenta("testes", inputs.test.as_ref());
+    let (types_ok, types_why) = ferramenta("verificação de tipos", inputs.typecheck.as_ref());
+
+    vec![
+        row(
+            "git",
+            "Estado do Git",
+            inputs.git_porcelain.is_some(),
+            match inputs.git_porcelain.as_deref() {
+                Some(_) => "o status do repositório foi lido".to_owned(),
+                None => "não foi possível ler o status do Git deste projeto".to_owned(),
+            },
+        ),
+        row(
+            "secrets",
+            "Segredo em texto claro",
+            true,
+            format!(
+                "{} arquivo(s) de texto varrido(s) por formas conhecidas de segredo",
+                inputs.files.len()
+            ),
+        ),
+        row(
+            "deps",
+            "Lockfile de dependências",
+            true,
+            format!(
+                "{} manifesto(s) de dependência conferido(s)",
+                inputs.dependency_locks.len()
+            ),
+        ),
+        row(
+            "effects",
+            "Efeitos pendentes",
+            true,
+            "a fila de aprovação do broker foi consultada".to_owned(),
+        ),
+        row("build", "Build", build_ok, build_why),
+        row("test", "Testes", test_ok, test_why),
+        row("typecheck", "Verificação de tipos", types_ok, types_why),
+    ]
 }
 
 /// Runs every Layer-0 check over the observed inputs and deduplicates findings.
@@ -125,6 +224,7 @@ pub fn run_layer0(inputs: &HarnessInputs) -> HarnessReport {
         failed: 0,
         unknown: 0,
         not_run: 0,
+        coverage: layer0_coverage(inputs),
         findings: Vec::new(),
     };
     for finding in &findings {

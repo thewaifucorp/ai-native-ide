@@ -52,7 +52,9 @@ import {
     CMD_SESSION_SUBMIT
 } from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
-import { AdapterCard, DivergenceView, PreviewHealth } from 'engine-extension';
+import { AdapterCard, DivergenceView, PreviewHealth,
+    CoverageRow
+} from 'engine-extension';
 
 /** Word shown for each preview health. `stale` is a preview that WAS healthy and
  *  stopped answering — recoverable, and deliberately not the same word as broken. */
@@ -383,6 +385,42 @@ export class WorkWidget extends AbstractInstrumentWidget {
         );
     }
 
+    /**
+     * O que o harness olhou e o que ele NÃO olhou, dito por ele mesmo.
+     *
+     * O "Pronto" do §15 é este: um relatório que explica sua própria cobertura.
+     * As não avaliadas vêm primeiro, porque são a informação que faltava — quem
+     * lê "sem falhas" precisa saber sobre o que.
+     */
+    protected renderCoverage(coverage: CoverageRow[]): React.ReactNode {
+        if (coverage.length === 0) {
+            return null;
+        }
+        const naoAvaliadas = coverage.filter(row => !row.evaluated);
+        const avaliadas = coverage.filter(row => row.evaluated);
+        return (
+            <details className="cap-cov">
+                <summary>
+                    cobertura desta medição — {avaliadas.length} avaliada(s),{' '}
+                    {naoAvaliadas.length} não avaliada(s)
+                </summary>
+                {[...naoAvaliadas, ...avaliadas].map(row => (
+                    <div className="cap-receipt" key={row.id}>
+                        <span
+                            className={`cap-receipt-action ${
+                                row.evaluated ? 'check-passed' : 'check-not_run'
+                            }`}
+                        >
+                            {row.evaluated ? 'avaliado' : 'não avaliado'}
+                        </span>
+                        <span className="cap-receipt-detail">{row.label}</span>
+                        <small>{row.detail}</small>
+                    </div>
+                ))}
+            </details>
+        );
+    }
+
     protected renderUndeclaredCommands(nadaDeclarado: boolean): React.ReactNode {
         if (!nadaDeclarado) {
             return null;
@@ -483,14 +521,23 @@ export class WorkWidget extends AbstractInstrumentWidget {
         const { report } = run;
         // A run with no failures is NOT announced as approval while anything is
         // unknown or not run — that is exactly the conflation the engine avoids.
+        //
+        // §15 vai além: dimensão NÃO AVALIADA também não é aprovação. Com os
+        // quatro determinísticos passando, a tela dizia "tudo passou" enquanto
+        // risco e qualidade das decisões nunca tinham sido olhados. "Tudo" só
+        // pode ser dito quando não sobrou dimensão de fora.
+        const naoAvaliadas = (report.coverage ?? []).filter(row => !row.evaluated);
         const settled = report.unknown === 0 && report.notRun === 0;
-        const pill = report.failed > 0 ? 'unavailable' : settled ? 'ready' : 'not-installed';
+        const completo = settled && naoAvaliadas.length === 0;
+        const pill = report.failed > 0 ? 'unavailable' : completo ? 'ready' : 'not-installed';
         const verdict =
             report.failed > 0
                 ? `${report.failed} falhando`
-                : settled
+                : completo
                     ? 'tudo passou'
-                    : 'sem falhas, mas incompleto';
+                    : settled
+                        ? `sem falhas · ${naoAvaliadas.length} dimensão(ões) não avaliada(s)`
+                        : 'sem falhas, mas incompleto';
 
         return (
             <div className="cap-card">
@@ -504,6 +551,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                 </small>
                 {run.not_run_reason && <p className="cap-detail">{run.not_run_reason}</p>}
                 {this.renderUndeclaredCommands(run.declared.length === 0)}
+                {this.renderCoverage(report.coverage ?? [])}
                 <small className="cap-hint">
                     varredura leu {run.files_scanned} arquivo(s)
                     {run.files_skipped > 0 && ` · ${run.files_skipped} pulado(s) por tamanho ou leitura`}

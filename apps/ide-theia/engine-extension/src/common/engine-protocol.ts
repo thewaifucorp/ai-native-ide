@@ -501,6 +501,22 @@ export interface Finding {
     remediation?: string | null;
 }
 
+/**
+ * Uma dimensão que o harness ou avaliou, ou declara que não avaliou.
+ *
+ * Sem isto o relatório contava passou/falhou e a tela dizia "tudo passou" com
+ * ambiguidade, risco e divergência nunca olhados — "sem falhas" parecendo "está
+ * bom", que é a conflação que este harness existe para não fazer.
+ */
+export interface CoverageRow {
+    id: string;
+    label: string;
+    /** Avaliado NESTA execução. */
+    evaluated: boolean;
+    /** O que foi olhado, ou o que faltou para olhar. Nunca vazio. */
+    detail: string;
+}
+
 export interface HarnessReport {
     findings: Finding[];
     passed: number;
@@ -510,6 +526,8 @@ export interface HarnessReport {
      *  wrapper (`HarnessRun`) is snake_case — the two crates differ, and that
      *  seam is exactly where a silently-undefined field hides. */
     notRun: number;
+    /** O que este relatório cobre, e o que não cobre. */
+    coverage: CoverageRow[];
 }
 
 /** A command declared in `.instrument/checks.json`. */

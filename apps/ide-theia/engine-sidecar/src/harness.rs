@@ -400,8 +400,15 @@ pub fn run(root: &Path, pending_effects: usize, run_tools: bool) -> HarnessRun {
         typecheck: execute(declared.typecheck.as_ref()),
     };
 
+    let mut report = ide_harness::run_layer0(&inputs);
+    // §15 — a camada semântica que PODE ser avaliada sem inferência paga, e a
+    // declaração explícita das que não podem. Sem isto o relatório dizia "tudo
+    // passou" com ambiguidade, risco e divergência nunca olhados.
+    append_semantic_layer(root, &mut report);
+    recount(&mut report);
+
     HarnessRun {
-        report: ide_harness::run_layer0(&inputs),
+        report,
         declared: declared_entries,
         ran_tools: run_tools,
         not_run_reason,
@@ -410,9 +417,286 @@ pub fn run(root: &Path, pending_effects: usize, run_tools: bool) -> HarnessRun {
     }
 }
 
+/// Acrescenta ao relatório a camada 1 — semântica determinística — e diz o que
+/// dela ficou de fora.
+///
+/// Duas dimensões dão para avaliar aqui sem gastar inferência:
+///
+///   • **divergência** (§4): declarado × observado já está gravado, e uma
+///     divergência ABERTA é uma falha do projeto que o harness estava ignorando.
+///   • **ambiguidade e contradição na intenção** (§8): a intenção durável do
+///     projeto é texto declarado, e os avaliadores do `ide-semantic` rodam sobre
+///     ela sem chamar modelo nenhum.
+///
+/// **Risco** e **decisão** não são avaliados: precisam de julgamento que este
+/// harness não faz de graça, e prometer que foram olhados seria pior do que
+/// dizer que não foram.
+fn append_semantic_layer(root: &Path, report: &mut ide_harness::HarnessReport) {
+    use ide_harness::{CheckState, CoverageRow, Finding, Severity};
+
+    // ── divergência declarado × observado ─────────────────────────────────
+    let snapshot = crate::reconcile::scan(root);
+    let abertas: Vec<_> = snapshot
+        .divergences
+        .iter()
+        .filter(|view| view.reconciliation.is_none())
+        .collect();
+    let (state, summary, remediation) = if !abertas.is_empty() {
+        let quais = abertas
+            .iter()
+            .map(|view| view.divergence.subject.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            CheckState::Failed,
+            format!(
+                "{} divergência(s) aberta(s) entre declarado e observado: {quais}",
+                abertas.len()
+            ),
+            Some(
+                "Decida cada divergência em Declarado × observado: mudar a implementação, \
+                 aceitar o observado como intenção, ou registrar exceção escopada."
+                    .to_owned(),
+            ),
+        )
+    } else if snapshot.nothing_to_compare.is_some() {
+        (
+            CheckState::NotRun,
+            snapshot
+                .nothing_to_compare
+                .clone()
+                .unwrap_or_else(|| "nada a comparar".to_owned()),
+            Some(
+                "Declare a expectativa (url de saúde em .instrument/preview.json ou \
+                 .instrument/intents.json) e observe o preview para haver o que comparar."
+                    .to_owned(),
+            ),
+        )
+    } else {
+        (
+            CheckState::Passed,
+            "nenhuma divergência aberta entre o que foi declarado e o que foi observado".to_owned(),
+            None,
+        )
+    };
+    report.findings.push(Finding {
+        id: "layer1:divergence".to_owned(),
+        check_id: "divergence".to_owned(),
+        layer: 1,
+        title: "Divergência declarado × observado".to_owned(),
+        state,
+        severity: if state == CheckState::Failed {
+            Severity::High
+        } else {
+            Severity::Info
+        },
+        claim: "o que o projeto declara sobre si é o que foi observado dele".to_owned(),
+        evidence: summary,
+        remediation,
+    });
+
+    // ── ambiguidade e contradição na intenção durável ─────────────────────
+    let intent = crate::project::snapshot(root)
+        .ok()
+        .and_then(|project| project.project.map(|p| p.intent))
+        .filter(|intent| !intent.trim().is_empty());
+    let (intent_state, intent_evidence, intent_remediation) = match intent.as_deref() {
+        None => (
+            CheckState::NotRun,
+            "este projeto não tem intenção durável registrada — não há texto para avaliar"
+                .to_owned(),
+            Some(
+                "Registre título e intenção do projeto: é o que sobrevive sem transcript."
+                    .to_owned(),
+            ),
+        ),
+        Some(text) => match crate::intent::review_snapshot(root, text, None) {
+            Err(error) => (
+                CheckState::Unknown,
+                format!("a avaliação da intenção não pôde ser feita: {error}"),
+                Some(
+                    "Tente de novo; enquanto isso, isto NÃO conta como intenção aprovada."
+                        .to_owned(),
+                ),
+            ),
+            Ok(review) => {
+                let abertos = review
+                    .reviewed
+                    .iter()
+                    .filter(|finding| finding.decision.is_none())
+                    .count();
+                if abertos == 0 {
+                    (
+                        CheckState::Passed,
+                        format!(
+                            "{} avaliador(es) rodaram sobre a intenção e nada ficou sem decisão",
+                            review.report.evaluators_run.len()
+                        ),
+                        None,
+                    )
+                } else {
+                    (
+                        CheckState::Failed,
+                        format!(
+                            "{abertos} hipótese(s) sobre a intenção sem decisão — avaliadores: {}",
+                            review.report.evaluators_run.join(", ")
+                        ),
+                        Some(
+                            "Abra a intenção e decida cada hipótese: aceitar, recusar ou \
+                             reescrever o texto. Hipótese sem decisão não é aprovação."
+                                .to_owned(),
+                        ),
+                    )
+                }
+            }
+        },
+    };
+    report.findings.push(Finding {
+        id: "layer1:intent".to_owned(),
+        check_id: "intent-ambiguity".to_owned(),
+        layer: 1,
+        title: "Ambiguidade e contradição na intenção".to_owned(),
+        state: intent_state,
+        severity: if intent_state == CheckState::Failed {
+            Severity::Medium
+        } else {
+            Severity::Info
+        },
+        claim: "a intenção declarada do projeto não é ambígua nem se contradiz".to_owned(),
+        evidence: intent_evidence,
+        remediation: intent_remediation,
+    });
+
+    let row = |id: &str, label: &str, evaluated: bool, detail: &str| CoverageRow {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        evaluated,
+        detail: detail.to_owned(),
+    };
+    report.coverage.push(row(
+        "divergence",
+        "Divergência declarado × observado",
+        state != CheckState::NotRun,
+        match state {
+            CheckState::NotRun => "não havia o que comparar nesta execução",
+            _ => "as divergências gravadas deste projeto foram lidas",
+        },
+    ));
+    report.coverage.push(row(
+        "intent",
+        "Ambiguidade e contradição na intenção",
+        intent_state == CheckState::Passed || intent_state == CheckState::Failed,
+        match intent_state {
+            CheckState::NotRun => "sem intenção durável registrada, não há texto para avaliar",
+            CheckState::Unknown => "a avaliação falhou nesta execução",
+            _ => "os avaliadores determinísticos rodaram sobre a intenção declarada",
+        },
+    ));
+    report.coverage.push(row(
+        "risk",
+        "Risco",
+        false,
+        "não avaliado: exige julgamento que este harness não faz sem inferência paga",
+    ));
+    report.coverage.push(row(
+        "decisions",
+        "Qualidade das decisões",
+        false,
+        "não avaliado: exige julgamento que este harness não faz sem inferência paga",
+    ));
+}
+
+/// Recontagem depois de acrescentar findings fora da camada 0.
+fn recount(report: &mut ide_harness::HarnessReport) {
+    use ide_harness::CheckState;
+    report.passed = 0;
+    report.failed = 0;
+    report.unknown = 0;
+    report.not_run = 0;
+    for finding in &report.findings {
+        match finding.state {
+            CheckState::Passed => report.passed += 1,
+            CheckState::Failed => report.failed += 1,
+            CheckState::Unknown => report.unknown += 1,
+            CheckState::NotRun => report.not_run += 1,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §15 — o relatório tem de explicar a PRÓPRIA cobertura.
+    ///
+    /// Antes ele contava passou/falhou/desconhecido/não-executado, e com os
+    /// quatro determinísticos passando a tela dizia "tudo passou" — enquanto
+    /// risco, decisões, divergência e ambiguidade nunca tinham sido olhados.
+    /// "Sem falhas" parecendo "está bom" é a conflação que este harness existe
+    /// para não fazer.
+    #[test]
+    fn relatorio_declara_o_que_nao_verificou() {
+        let dir = project();
+
+        let run = run(dir.path(), 0, false);
+
+        let por_id = |id: &str| {
+            run.report
+                .coverage
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap_or_else(|| panic!("cobertura sem a dimensão {id}"))
+        };
+
+        // As dimensões que o §15 nomeia estão TODAS na cobertura, avaliadas ou não.
+        for id in [
+            "git",
+            "secrets",
+            "deps",
+            "effects",
+            "build",
+            "test",
+            "typecheck",
+            "divergence",
+            "intent",
+            "risk",
+            "decisions",
+        ] {
+            let row = por_id(id);
+            assert!(
+                !row.detail.trim().is_empty(),
+                "cobertura de {id} sem motivo dito — silêncio aqui é o defeito"
+            );
+        }
+
+        // Sem rodar comandos, ferramenta declarada não conta como avaliada.
+        assert!(!por_id("build").evaluated);
+        assert!(!por_id("test").evaluated);
+
+        // O que exige julgamento é dito como não avaliado, nunca omitido.
+        assert!(!por_id("risk").evaluated);
+        assert!(!por_id("decisions").evaluated);
+        assert!(
+            por_id("risk").detail.contains("inferência paga"),
+            "o motivo de não avaliar risco é dito, não escondido"
+        );
+
+        // E a camada semântica entrou no relatório como finding de verdade.
+        assert!(
+            run.report
+                .findings
+                .iter()
+                .any(|f| f.check_id == "divergence" && f.layer == 1),
+            "divergência declarado × observado é parte do harness, não um cartão à parte"
+        );
+        assert!(
+            run.report
+                .findings
+                .iter()
+                .any(|f| f.check_id == "intent-ambiguity" && f.layer == 1),
+            "ambiguidade da intenção é parte do harness"
+        );
+    }
 
     fn project() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
