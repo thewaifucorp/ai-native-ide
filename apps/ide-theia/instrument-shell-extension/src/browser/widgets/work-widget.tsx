@@ -315,6 +315,74 @@ export class WorkWidget extends AbstractInstrumentWidget {
      * Detectar não é ativar: o candidato é mostrado com a origem, e declarar é um
      * clique da pessoa. Sem análise ainda, o botão ANALISA — não adivinha.
      */
+    /**
+     * Sem preview declarado, o que o projeto diz de si — e o candidato detectado.
+     *
+     * Mesmo padrão dos checks, achado no mesmo projeto cru: o cartão dizia
+     * "nenhum preview declarado em `.instrument/preview.json`" e oferecia
+     * "Iniciar", que só podia falhar. A análise já tinha detectado o comando de
+     * start e a porta que o código escuta; era só não deixar a pessoa adivinhar.
+     */
+    protected renderPreviewCandidates(): React.ReactNode {
+        const analysis = this.store.analysis;
+        if (!analysis) {
+            return (
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={this.store.analysisBusy}
+                        title="Lê package.json e o código para descobrir como este projeto sobe"
+                        onClick={() => this.commands.executeCommand(CMD_MATERIALS_ANALYZE)}
+                    >
+                        {this.store.analysisBusy ? 'analisando…' : 'Procurar como o projeto sobe'}
+                    </button>
+                </div>
+            );
+        }
+        const candidatos = analysis.config.filter(
+            candidate => candidate.target.endsWith('preview.json') && !candidate.alreadyDeclared
+        );
+        if (candidatos.length === 0) {
+            return (
+                <small className="cap-hint">
+                    a análise não achou como este projeto sobe — declarar o comando e a url de
+                    saúde em <code>.instrument/preview.json</code> é o que permite subir e observar
+                </small>
+            );
+        }
+        return (
+            <>
+                {candidatos.map(candidate => (
+                    <div className="cap-receipt" key={candidate.id}>
+                        <span className="cap-receipt-action check-not_run">candidato</span>
+                        <span className="cap-receipt-detail">
+                            {candidate.label}: {JSON.stringify(candidate.proposed)}
+                        </span>
+                        {candidate.provenance.map((where, i) => (
+                            <small key={i}>
+                                {where.path}
+                                {where.line ? `:${where.line}` : ''} — “{where.excerpt}”
+                            </small>
+                        ))}
+                        {candidate.gap && <small className="cap-remediation">{candidate.gap}</small>}
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={this.store.analysisBusy}
+                                title={`escreve ${candidate.target}`}
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_ADOPT_CONFIG, candidate.id)
+                                }
+                            >
+                                Declarar preview
+                            </button>
+                        </div>
+                    </div>
+                ))}
+            </>
+        );
+    }
+
     protected renderUndeclaredCommands(nadaDeclarado: boolean): React.ReactNode {
         if (!nadaDeclarado) {
             return null;
@@ -681,6 +749,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     <span className={`cap-pill ${pill}`}>{verdict}</span>
                 </div>
                 {!declared && <p className="cap-detail">{snapshot.notDeclaredReason}</p>}
+                {!declared && this.renderPreviewCandidates()}
                 {declared && (
                     <small className="cap-hint">
                         declarado: `{declared.command}`

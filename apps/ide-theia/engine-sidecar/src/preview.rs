@@ -256,6 +256,39 @@ fn probe(url: &str) -> Probe {
 }
 
 /// Last `MAX_LOG_TAIL` characters of the preview log, on a char boundary.
+/// A linha do log que explica uma morte precoce, citada literalmente.
+///
+/// Prefere a primeira linha que se parece com um erro; sem nenhuma, usa a última
+/// linha não vazia. Nunca reescreve, nunca interpreta: cortar em 200 caracteres é
+/// o único tratamento, e o corte é marcado.
+fn decisive_log_line(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(LOG_REL)).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    const PISTAS: [&str; 8] = [
+        "Error",
+        "error:",
+        "Cannot find",
+        "not found",
+        "EADDRINUSE",
+        "Permission denied",
+        "command not found",
+        "Traceback",
+    ];
+    let escolhida = lines
+        .iter()
+        .find(|line| PISTAS.iter().any(|pista| line.contains(pista)))
+        .or_else(|| lines.last())?;
+    let mut cortada: String = escolhida.chars().take(200).collect();
+    if escolhida.chars().count() > 200 {
+        cortada.push('…');
+    }
+    Some(cortada)
+}
+
 fn log_tail(root: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(root.join(LOG_REL)).ok()?;
     let trimmed = raw.trim_end();
@@ -456,10 +489,23 @@ pub fn start(root: &Path) -> Result<PreviewSnapshot, String> {
             let code_shown = code
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "encerrado por sinal".to_string());
-            let detail = format!(
-                "`{}` terminou (código {code_shown}) antes de responder",
-                declaration.command
-            );
+            // A causa fica no log, e "código 1" não é causa.
+            //
+            // Achado subindo um projeto cru sem `node_modules`: a tela dizia
+            // "`npm run start` terminou (código 1) antes de responder" e o motivo
+            // real — `Cannot find module 'express'` — ficava atrás de um clique,
+            // dentro da saída crua. A linha decisiva vem verbatim na mensagem, e
+            // dita como o que é: uma linha do log, não um diagnóstico do IDE.
+            let detail = match decisive_log_line(root) {
+                Some(line) => format!(
+                    "`{}` terminou (código {code_shown}) antes de responder · log: {line}",
+                    declaration.command
+                ),
+                None => format!(
+                    "`{}` terminou (código {code_shown}) antes de responder",
+                    declaration.command
+                ),
+            };
             match code {
                 Some(0) => {
                     // A clean exit is not evidence of failure — the engine says
@@ -856,6 +902,33 @@ mod tests {
             "saída limpa não pode virar evidência de falha"
         );
         assert!(!snapshot.running);
+    }
+
+    /// "código 1" não é causa: a linha do log é.
+    ///
+    /// Achado num projeto cru sem `node_modules` — a tela dizia só o código de
+    /// saída e o `Cannot find module 'express'` ficava escondido na saída crua.
+    #[test]
+    fn morte_precoce_cita_a_linha_do_log_que_explica() {
+        let dir = project(Some(
+            r#"{"command":"echo \"Error: Cannot find module 'express'\" >&2 ; exit 1","url":"http://127.0.0.1:1/","readyTimeoutMs":500}"#,
+        ));
+
+        let snapshot = start(dir.path()).expect("start");
+
+        let detail = snapshot
+            .state
+            .as_ref()
+            .and_then(|state| state.detail.clone())
+            .unwrap_or_default();
+        assert!(
+            detail.contains("código 1"),
+            "o código de saída continua dito: {detail}"
+        );
+        assert!(
+            detail.contains("Cannot find module 'express'"),
+            "a causa tem de vir na mensagem, não só na saída crua: {detail}"
+        );
     }
 
     /// `stop` matava o `sh` e deixava vivo o processo que o `sh` criou — que é

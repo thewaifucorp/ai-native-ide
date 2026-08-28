@@ -944,6 +944,14 @@ export class InstrumentCapabilityContribution
      *
      * Ato explícito, um slug por vez: a análise nunca liga nada sozinha.
      */
+    /**
+     * Declarar comando muda o que o harness conhece — mas medir é ato explícito.
+     *
+     * Então aqui NÃO se roda check nenhum: só se relê a análise, para o candidato
+     * sair da lista de "ainda não conhecidos". Rodar comandos por conta própria
+     * depois de um clique em "Declarar" seria exatamente o automático que o §4
+     * proíbe.
+     */
     protected async adoptCommand(slug: string): Promise<void> {
         const root = this.root;
         if (!root) {
@@ -996,6 +1004,13 @@ export class InstrumentCapabilityContribution
             const adopted = after.config.find(c => c.id === id);
             if (adopted?.alreadyDeclared) {
                 this.messages.info(`Gravado em ${adopted.target}.`);
+            }
+            // Declarar mudou o que o painel afetado sabe. Sem isto o arquivo era
+            // escrito e a tela continuava dizendo "não declarado" — a pessoa
+            // declarava, nada mudava, e concluía que não funcionou. Ler estado
+            // NUNCA sobe processo (é o contrato do §4), então é seguro aqui.
+            if (adopted?.target.endsWith('preview.json')) {
+                await this.previewStatus();
             }
         } catch (err) {
             this.messages.error(`Configuração não adotada: ${this.msg(err)}`);
