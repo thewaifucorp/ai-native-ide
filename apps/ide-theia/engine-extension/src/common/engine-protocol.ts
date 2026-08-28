@@ -431,6 +431,31 @@ export interface EngineService {
     /** Cria a release no GitHub para uma tag já empurrada. Externo, exige `gh`. */
     releaseGithub(root: string, version: string, confirmed?: boolean): Promise<ReleaseAttempt>;
 
+    // ── §16 mostrar para alguém, e publicar num provider ──────────────────────
+
+    /** Estado do compartilhamento: nginx, cloudflared, preview e o que está aberto. */
+    shareSnapshot(root: string): Promise<ShareSnapshot>;
+    /**
+     * Abre o compartilhamento. `lan` alcança quem está na mesma rede; `tunnel`
+     * publica um endereço na internet apontando para esta máquina. Os dois pedem
+     * senha e têm prazo — `minutes` 0 usa o padrão.
+     */
+    shareStart(root: string, mode: 'lan' | 'tunnel', minutes?: number): Promise<ShareSnapshot>;
+    /** Fecha o compartilhamento: derruba túnel e proxy. */
+    shareStop(root: string): Promise<ShareSnapshot>;
+
+    /** Catálogo de providers, com CLI, passos e o que já existe no projeto. */
+    providersSnapshot(root: string): Promise<ProvidersSnapshot>;
+    /** Gera o arquivo de configuração do provider. Recusa sobrescrever. */
+    providersGenerate(root: string, provider: string, publish: string): Promise<GeneratedConfig>;
+    /** GET no endereço; 2xx liga o endereço à versão no registro. */
+    providersVerify(
+        root: string,
+        provider: string,
+        version: string,
+        url: string
+    ): Promise<VerifyResult>;
+
     /**
      * §14 — what the project's mode and permissions require for ONE effect.
      *
@@ -1316,6 +1341,82 @@ export interface ReleaseAttempt {
     explain: string;
     record?: PublishRecord;
     snapshot: ReleaseSnapshot;
+}
+
+// ── §16 compartilhar: rede local ou túnel ────────────────────────────────────
+
+/** Uma ferramenta externa, dita pelo que ela permite aqui. */
+export interface ShareToolState {
+    present: boolean;
+    detail: string;
+    remediation?: string;
+}
+
+/**
+ * O compartilhamento em curso.
+ *
+ * `warning` corresponde ao ALCANCE real do modo: rede local e túnel são coisas
+ * diferentes, e um aviso genérico faria a pessoa ler o da rede e achar que o
+ * túnel é igual. A senha aparece aqui porque só existe aqui — é gerada por
+ * compartilhamento e some quando ele fecha.
+ */
+export interface ActiveShare {
+    mode: 'lan' | 'tunnel';
+    url: string;
+    user: string;
+    password: string;
+    expiresAtEpochSecs: number;
+    warning: string;
+}
+
+export interface ShareSnapshot {
+    nginx: ShareToolState;
+    cloudflared: ShareToolState;
+    /** O que o preview do §4 serve agora, quando está de pé. */
+    previewUrl?: string;
+    blockedReason?: string;
+    active?: ActiveShare;
+    /** O endereço desta máquina na rede local. */
+    lanAddress?: string;
+}
+
+// ── §16 providers ────────────────────────────────────────────────────────────
+
+export interface ProviderCard {
+    id: string;
+    name: string;
+    configPath: string;
+    configExists: boolean;
+    cli: ShareToolState;
+    /** Os passos que a pessoa roda, na conta dela. */
+    steps: string[];
+}
+
+export interface ProvidersSnapshot {
+    providers: ProviderCard[];
+    buildCommand?: string;
+    /** Diretórios publicáveis que EXISTEM no projeto — nunca um palpite. */
+    publishCandidates: string[];
+    curl: ShareToolState;
+    versions: string[];
+    blockedReason?: string;
+}
+
+export interface GeneratedConfig {
+    provider: string;
+    path: string;
+    contents: string;
+    explain: string;
+    steps: string[];
+}
+
+export interface VerifyResult {
+    url: string;
+    status?: number;
+    live: boolean;
+    explain: string;
+    /** Só 2xx/3xx vira destino registrado na linha da versão. */
+    recorded: boolean;
 }
 
 /** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */

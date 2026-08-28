@@ -98,6 +98,12 @@ export const CMD_RELEASE_TAG = 'instrument.release.tag';
 export const CMD_RELEASE_DELETE_TAG = 'instrument.release.deleteTag';
 export const CMD_RELEASE_PUSH = 'instrument.release.push';
 export const CMD_RELEASE_GITHUB = 'instrument.release.github';
+export const CMD_SHARE_READ = 'instrument.share.read';
+export const CMD_SHARE_START = 'instrument.share.start';
+export const CMD_SHARE_STOP = 'instrument.share.stop';
+export const CMD_PROVIDERS_READ = 'instrument.providers.read';
+export const CMD_PROVIDERS_GENERATE = 'instrument.providers.generate';
+export const CMD_PROVIDERS_VERIFY = 'instrument.providers.verify';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
@@ -359,6 +365,41 @@ export class InstrumentCapabilityContribution
                 label: 'Instrument: ligar/desligar um recurso do problema observado'
             },
             { execute: (id?: string) => (id ? this.store.toggleLifecycleRelated(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_SHARE_READ, label: 'Instrument: ler o estado do compartilhamento' },
+            { execute: () => this.readShare() }
+        );
+        commands.registerCommand(
+            { id: CMD_SHARE_START, label: 'Instrument: compartilhar o preview (rede ou túnel)' },
+            {
+                execute: (mode?: 'lan' | 'tunnel') =>
+                    mode ? this.shareStart(mode) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_SHARE_STOP, label: 'Instrument: parar o compartilhamento' },
+            { execute: () => this.shareStop() }
+        );
+        commands.registerCommand(
+            { id: CMD_PROVIDERS_READ, label: 'Instrument: ler os providers de deploy' },
+            { execute: () => this.readProviders() }
+        );
+        commands.registerCommand(
+            { id: CMD_PROVIDERS_GENERATE, label: 'Instrument: gerar configuração do provider' },
+            {
+                execute: (provider?: string, publish?: string) =>
+                    provider ? this.providersGenerate(provider, publish ?? '') : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_PROVIDERS_VERIFY, label: 'Instrument: conferir se a versão está no ar' },
+            {
+                execute: (provider?: string, version?: string, url?: string) =>
+                    provider && version && url
+                        ? this.providersVerify(provider, version, url)
+                        : undefined
+            }
         );
         commands.registerCommand(
             { id: CMD_RELEASE_READ, label: 'Instrument: ler o caminho de publicação (Git)' },
@@ -2302,6 +2343,147 @@ export class InstrumentCapabilityContribution
             `${ligados ? `${ligados} recurso(s) ligado(s) ao problema · ` : ''}` +
             `estado medido: ${done.evaluation.summary}`
         );
+    }
+
+    // ── §16 mostrar para alguém ─────────────────────────────────────────────
+
+    protected async readShare(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setShareBusy(true);
+        try {
+            this.store.setShare(await this.engine.shareSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Compartilhamento não foi lido: ${this.msg(err)}`);
+            this.store.setShare(undefined);
+        } finally {
+            this.store.setShareBusy(false);
+        }
+    }
+
+    /**
+     * Abrir para alguém é efeito externo, e os dois modos NÃO são a mesma coisa:
+     * a rede local alcança quem está no mesmo wi-fi, o túnel é a internet
+     * inteira apontando para esta máquina. Por isso a confirmação mostra o aviso
+     * do MODO escolhido, vindo do motor, e não uma frase genérica.
+     */
+    protected async shareStart(mode: 'lan' | 'tunnel'): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        const confirmado = await new ConfirmDialog({
+            title: mode === 'lan' ? 'Abrir na rede local?' : 'Abrir um endereço público?',
+            msg: mode === 'lan'
+                ? 'Qualquer pessoa na mesma rede vai alcançar este endereço — não é só quem '
+                  + 'receber o link. A conexão é sem TLS: o que for digitado passa em texto '
+                  + 'claro na rede. Fecha sozinho em 30 min.'
+                : 'O endereço é público na internet e aponta para ESTA máquina. Quem tiver o '
+                  + 'link e a senha vê o que o app mostra e faz o que o app faz; enquanto '
+                  + 'estiver aberto, seu computador é o servidor. Fecha sozinho em 30 min.',
+            ok: mode === 'lan' ? 'Abrir na rede' : 'Abrir na internet',
+            cancel: 'Não abrir'
+        }).open();
+        if (!confirmado) {
+            this.messages.info('Nada foi exposto.');
+            return;
+        }
+        this.store.setShareBusy(true);
+        try {
+            const snapshot = await this.engine.shareStart(root, mode);
+            this.store.setShare(snapshot);
+            if (snapshot.active) {
+                this.messages.info(
+                    `${snapshot.active.url} · usuário ${snapshot.active.user} · senha `
+                    + `${snapshot.active.password} — ${snapshot.active.warning}`
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Não foi compartilhado: ${this.msg(err)}`);
+        } finally {
+            this.store.setShareBusy(false);
+        }
+    }
+
+    protected async shareStop(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setShareBusy(true);
+        try {
+            this.store.setShare(await this.engine.shareStop(root));
+            this.messages.info('Compartilhamento fechado: o endereço não responde mais.');
+        } catch (err) {
+            this.messages.error(`Não foi fechado: ${this.msg(err)}`);
+        } finally {
+            this.store.setShareBusy(false);
+        }
+    }
+
+    // ── §16 providers de deploy ─────────────────────────────────────────────
+
+    protected async readProviders(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setProvidersBusy(true);
+        try {
+            this.store.setProviders(await this.engine.providersSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Providers não foram lidos: ${this.msg(err)}`);
+            this.store.setProviders(undefined);
+        } finally {
+            this.store.setProvidersBusy(false);
+        }
+    }
+
+    /** Gerar configuração é escrita LOCAL num arquivo do projeto: apagar desfaz. */
+    protected async providersGenerate(provider: string, publish: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setProvidersBusy(true);
+        try {
+            const feito = await this.engine.providersGenerate(root, provider, publish);
+            this.messages.info(`${feito.explain} Passos: ${feito.steps.join(' → ')}`);
+            this.store.setProviders(await this.engine.providersSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Configuração não foi gerada: ${this.msg(err)}`);
+        } finally {
+            this.store.setProvidersBusy(false);
+        }
+    }
+
+    /** O GET que separa "publiquei" de "está no ar". */
+    protected async providersVerify(
+        provider: string,
+        version: string,
+        url: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setProvidersBusy(true);
+        try {
+            const resultado = await this.engine.providersVerify(root, provider, version, url);
+            this.store.setLastVerify(resultado);
+            this.messages.info(resultado.explain);
+            if (resultado.recorded) {
+                // O registro da versão ganhou o destino: reler, senão a seção
+                // Versões continuaria dizendo "em nenhum destino".
+                await this.readLifecycle();
+            }
+        } catch (err) {
+            this.messages.error(`Conferência não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setProvidersBusy(false);
+        }
     }
 
     // ── §16 publicar pelo adapter Git ───────────────────────────────────────

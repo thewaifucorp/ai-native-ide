@@ -33,6 +33,8 @@
 //!   - `work_*`       the §9 items and the status they DERIVE (never a written one)
 //!   - `lifecycle_*`  the §16 export / consolidate / reopen, with honest compensation
 //!   - `release_*`    the §16 Git adapter: tag (local), push and GitHub release
+//!   - `share_*`      the §16 sharing: LAN or tunnel, always behind a password
+//!   - `providers_*`  the §16 provider adapters: config, steps and a GET that checks
 //!   - `policy_decide` the §14 mode + permission policy for ONE effect
 //!   - `agent_adapters` the §10 adapters the engine knows, each with its coverage
 //!   - `agent_capture_state` / `agent_resume` / `agent_swap` the §10 session
@@ -54,10 +56,12 @@ mod packs;
 mod policy;
 mod preview;
 mod project;
+mod providers;
 mod reconcile;
 mod references;
 mod release;
 mod settings;
+mod share;
 mod work;
 
 use std::collections::HashMap;
@@ -834,6 +838,95 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
         // §16 — publicar por adapter Git. Três métodos porque são três atos com
         // classes de efeito diferentes: criar tag é local, empurrar e criar
         // release saem da máquina e por isso exigem `confirmed`.
+        // §16 — mostrar para alguém. Expõe o preview do §4 por proxy com senha;
+        // não serve a pasta do projeto e não sobe aplicação nenhuma.
+        // §16 — providers. A IDE gera configuração e confere o que está no ar;
+        // o deploy é da pessoa, na conta dela, sem token nosso no meio.
+        "providers_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || providers::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "providers_generate" => {
+            #[derive(Deserialize)]
+            struct GenerateParams {
+                root: String,
+                provider: String,
+                #[serde(default)]
+                publish: String,
+            }
+            let p: GenerateParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let feito = tokio::task::spawn_blocking(move || {
+                providers::generate(&root, &p.provider, &p.publish)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(feito).map_err(|e| e.to_string())
+        }
+        "providers_verify" => {
+            #[derive(Deserialize)]
+            struct VerifyParams {
+                root: String,
+                provider: String,
+                version: String,
+                url: String,
+            }
+            let p: VerifyParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let resultado = tokio::task::spawn_blocking(move || {
+                providers::verify(&root, &p.provider, &p.version, &p.url)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(resultado).map_err(|e| e.to_string())
+        }
+        "share_snapshot" | "share_stop" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            let snapshot = tokio::task::spawn_blocking(move || match method.as_str() {
+                "share_stop" => share::stop(&root),
+                _ => share::snapshot(&root),
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "share_start" => {
+            #[derive(Deserialize)]
+            struct ShareParams {
+                root: String,
+                /// `lan` | `tunnel`. Sem default: os dois têm alcances diferentes
+                /// e escolher por conta própria exporia o que ninguém pediu.
+                mode: String,
+                #[serde(default)]
+                minutes: u64,
+            }
+            let p: ShareParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let mode = match p.mode.as_str() {
+                "lan" => share::ShareMode::Lan,
+                "tunnel" => share::ShareMode::Tunnel,
+                other => return Err(format!("modo de compartilhamento desconhecido: {other}")),
+            };
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || share::start(&root, mode, p.minutes))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
         "release_snapshot" => {
             #[derive(Deserialize)]
             struct RootOnly {

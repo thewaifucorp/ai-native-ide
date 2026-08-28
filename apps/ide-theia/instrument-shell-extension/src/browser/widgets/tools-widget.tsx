@@ -40,6 +40,12 @@ import {
     CMD_RELEASE_PUSH,
     CMD_RELEASE_READ,
     CMD_RELEASE_TAG,
+    CMD_SHARE_READ,
+    CMD_SHARE_START,
+    CMD_SHARE_STOP,
+    CMD_PROVIDERS_READ,
+    CMD_PROVIDERS_GENERATE,
+    CMD_PROVIDERS_VERIFY,
     CMD_LIFECYCLE_READ,
     CMD_LIFECYCLE_RELATE,
     CMD_LIFECYCLE_REOPEN,
@@ -123,6 +129,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderWork()}
                 {this.renderLifecycle()}
                 {this.renderRelease()}
+                {this.renderShare()}
+                {this.renderDeployProviders()}
                 {this.renderPacks()}
                 {this.renderBrokerTrail()}
                 {this.renderHarness()}
@@ -1643,6 +1651,264 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     className="cap-btn"
                     disabled={busy}
                     onClick={() => this.commands.executeCommand(CMD_RELEASE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * MOSTRAR PARA ALGUÉM (§16).
+     *
+     * Duas coisas com alcances diferentes na mesma seção, e a diferença é a
+     * própria seção: a rede local alcança quem está no mesmo wi-fi — o café
+     * inteiro —, e o túnel é a internet apontando para esta máquina. O aviso
+     * mostrado é o do modo ATIVO, vindo do motor; um texto genérico faria a
+     * pessoa ler o da rede e achar que o túnel é igual.
+     *
+     * A senha aparece porque só existe aqui: é gerada por compartilhamento e
+     * some quando ele fecha. E o prazo é mostrado porque compartilhamento sem
+     * prazo é o que fica aberto depois que a demo acabou.
+     */
+    protected renderShare(): React.ReactNode {
+        const share = this.store.share;
+        const busy = this.store.shareBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !share
+                ? 'não lido'
+                : share.active
+                    ? share.active.mode === 'lan' ? 'aberto na rede' : 'aberto na internet'
+                    : share.blockedReason ? 'sem preview' : 'fechado';
+
+        return this.section(
+            'share',
+            'Mostrar para alguém',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!share && <small>não lido — clique em “ler” para ver o que dá para mostrar</small>}
+                    {share?.blockedReason && <p className="cap-detail">{share.blockedReason}</p>}
+                    {share && !share.blockedReason && !share.active && (
+                        <>
+                            <small className="cap-evidence">
+                                preview em {share.previewUrl}
+                                {share.lanAddress ? ` · esta máquina é ${share.lanAddress} na rede` : ''}
+                            </small>
+                            <small className="cap-hint">
+                                o que sai é o que o preview serve, por proxy com senha — nunca a
+                                pasta do projeto, onde moram .env e .git
+                            </small>
+                            <div className="cap-receipt">
+                                <span className="cap-receipt-action">nginx</span>
+                                <span className="cap-receipt-detail">{share.nginx.detail}</span>
+                            </div>
+                            {share.nginx.remediation && (
+                                <small className="cap-remediation">{share.nginx.remediation}</small>
+                            )}
+                            <div className="cap-receipt">
+                                <span className="cap-receipt-action">cloudflared</span>
+                                <span className="cap-receipt-detail">{share.cloudflared.detail}</span>
+                            </div>
+                            {share.cloudflared.remediation && (
+                                <small className="cap-remediation">
+                                    {share.cloudflared.remediation}
+                                </small>
+                            )}
+                            <div className="cap-actions">
+                                <button
+                                    className="cap-btn"
+                                    disabled={busy || !share.nginx.present}
+                                    title="Alcança quem está na mesma rede — o café inteiro, não só quem receber o link"
+                                    onClick={() =>
+                                        this.commands.executeCommand(CMD_SHARE_START, 'lan')
+                                    }
+                                >
+                                    Abrir na rede local
+                                </button>
+                                <button
+                                    className="cap-btn primary"
+                                    disabled={busy || !share.nginx.present || !share.cloudflared.present}
+                                    title="Endereço público na internet apontando para ESTA máquina"
+                                    onClick={() =>
+                                        this.commands.executeCommand(CMD_SHARE_START, 'tunnel')
+                                    }
+                                >
+                                    Mandar para alguém (túnel)
+                                </button>
+                            </div>
+                        </>
+                    )}
+                    {share?.active && (
+                        <>
+                            <div className="cap-head">
+                                <b>{share.active.url}</b>
+                                <span className="cap-pill ready">
+                                    {share.active.mode === 'lan' ? 'rede local' : 'internet'}
+                                </span>
+                            </div>
+                            <small className="cap-evidence">
+                                usuário {share.active.user} · senha {share.active.password}
+                            </small>
+                            <p className="cap-remediation">{share.active.warning}</p>
+                            <div className="cap-actions">
+                                <button
+                                    className="cap-btn"
+                                    disabled={busy}
+                                    onClick={() => this.commands.executeCommand(CMD_SHARE_STOP)}
+                                >
+                                    Parar de mostrar
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_SHARE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * PROVIDERS (§16) — a IDE gera configuração e CONFERE; o deploy é da pessoa.
+     *
+     * Sem token nosso não há lock-in e não há segredo nosso para vazar. O que
+     * fecha o ciclo é o GET: "publiquei" é o que a pessoa fez, "está no ar" é o
+     * que respondeu — e só o segundo vira destino registrado na versão.
+     *
+     * O diretório publicável é escolhido entre os que EXISTEM no projeto. Um
+     * palpite errado quebra o deploy longe daqui, e a mensagem que aparece é do
+     * provider, não nossa.
+     */
+    protected renderDeployProviders(): React.ReactNode {
+        const snapshot = this.store.providers;
+        const busy = this.store.providersBusy;
+        const verify = this.store.lastVerify;
+        const publish = this.draft('providers-publish')
+            || snapshot?.publishCandidates[0]
+            || '';
+        const version = this.draft('providers-version')
+            || snapshot?.versions[snapshot.versions.length - 1]
+            || '';
+        const summary = busy
+            ? 'lendo…'
+            : !snapshot
+                ? 'não lido'
+                : snapshot.blockedReason
+                    ? 'sem versão'
+                    : `${snapshot.providers.filter(p => p.configExists).length}/${snapshot.providers.length} configurados`;
+
+        return this.section(
+            'providers',
+            'Providers de deploy',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!snapshot && <small>não lido — clique em “ler” para ver o catálogo</small>}
+                    {snapshot?.blockedReason && (
+                        <p className="cap-detail">{snapshot.blockedReason}</p>
+                    )}
+                    {snapshot && (
+                        <>
+                            <small className="cap-evidence">
+                                build declarado: {snapshot.buildCommand ?? 'nenhum em .instrument/checks.json'}
+                                {snapshot.publishCandidates.length
+                                    ? ` · publicáveis que existem: ${snapshot.publishCandidates.join(', ')}`
+                                    : ' · nenhum diretório de build encontrado ainda'}
+                            </small>
+                            <small className="cap-hint">
+                                a IDE gera a configuração e confere o endereço · o deploy é seu, na
+                                sua conta: nenhum token nosso entra no caminho
+                            </small>
+                            <div className="cap-actions">
+                                {this.input('providers-publish', `diretório publicável (${publish || 'ex.: dist'})`)}
+                            </div>
+
+                            {snapshot.providers.map(provider => (
+                                <div className="cap-receipt" key={provider.id}>
+                                    <span className="cap-receipt-action">{provider.name}</span>
+                                    <span className="cap-receipt-detail">
+                                        {provider.configExists
+                                            ? `${provider.configPath} já existe`
+                                            : `gera ${provider.configPath}`}
+                                        {' · '}{provider.cli.detail}
+                                    </span>
+                                    <button
+                                        className="cap-btn"
+                                        disabled={busy || provider.configExists || !snapshot.buildCommand}
+                                        title={provider.configExists
+                                            ? 'Já existe: sobrescrever trocaria a configuração real por uma derivada daqui'
+                                            : provider.steps.join(' → ')}
+                                        onClick={() =>
+                                            this.commands.executeCommand(
+                                                CMD_PROVIDERS_GENERATE,
+                                                provider.id,
+                                                publish
+                                            )
+                                        }
+                                    >
+                                        Gerar config
+                                    </button>
+                                </div>
+                            ))}
+
+                            <small className="cap-hint">
+                                depois de subir pelo provider, cole o endereço e confira: só o que
+                                responde vira destino registrado na versão
+                            </small>
+                            <div className="cap-actions">
+                                {this.input('providers-version', `versão (${version || '0.0.1'})`)}
+                                {this.input('providers-url', 'endereço publicado (https://…)')}
+                            </div>
+                            <div className="cap-actions">
+                                {snapshot.providers.map(provider => (
+                                    <button
+                                        key={provider.id}
+                                        className="cap-btn"
+                                        disabled={busy
+                                            || !snapshot.curl.present
+                                            || this.draft('providers-url').trim().length === 0}
+                                        title={snapshot.curl.present
+                                            ? `Confere o endereço e liga à versão ${version}`
+                                            : snapshot.curl.remediation ?? 'curl ausente'}
+                                        onClick={() =>
+                                            this.commands.executeCommand(
+                                                CMD_PROVIDERS_VERIFY,
+                                                provider.id,
+                                                version,
+                                                this.draft('providers-url')
+                                            )
+                                        }
+                                    >
+                                        Conferir ({provider.name})
+                                    </button>
+                                ))}
+                            </div>
+                            {!snapshot.curl.present && (
+                                <small className="cap-remediation">{snapshot.curl.remediation}</small>
+                            )}
+                            {verify && (
+                                <small className={verify.live ? 'cap-evidence' : 'cap-remediation'}>
+                                    {verify.explain}
+                                </small>
+                            )}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_PROVIDERS_READ)}
                 >
                     {busy ? 'lendo…' : 'Ler'}
                 </button>

@@ -19,8 +19,11 @@ import {
     LibrarySnapshot,
     LifecycleSnapshot,
     AdapterCard,
+    ProvidersSnapshot,
     PublishAttempt,
     ReleaseSnapshot,
+    ShareSnapshot,
+    VerifyResult,
     ReopenedExport,
     ReferencesSnapshot,
     WorkSnapshot,
@@ -185,6 +188,17 @@ export class InstrumentStore {
     //    versão consolidada, onde ela chegou. `undefined` = nem lido.
     release: ReleaseSnapshot | undefined;
     releaseBusy = false;
+
+    // ── REAL compartilhamento (§16): o que está exposto, para quem, com que
+    //    senha e até quando. `undefined` = nem lido.
+    share: ShareSnapshot | undefined;
+    shareBusy = false;
+
+    // ── REAL providers (§16): catálogo, o que já existe no projeto e a última
+    //    conferência de endereço.
+    providers: ProvidersSnapshot | undefined;
+    providersBusy = false;
+    lastVerify: VerifyResult | undefined;
 
     /** O export reaberto (LIFE-03) e o que mudou desde ele; `undefined` = nenhum. */
     lifecycleReopened: ReopenedExport | undefined;
@@ -512,6 +526,31 @@ export class InstrumentStore {
         if (attempt) {
             this.lifecycle = attempt.snapshot;
         }
+        this.emit();
+    }
+
+    setShare(snapshot: ShareSnapshot | undefined): void {
+        this.share = snapshot;
+        this.emit();
+    }
+
+    setShareBusy(busy: boolean): void {
+        this.shareBusy = busy;
+        this.emit();
+    }
+
+    setProviders(snapshot: ProvidersSnapshot | undefined): void {
+        this.providers = snapshot;
+        this.emit();
+    }
+
+    setProvidersBusy(busy: boolean): void {
+        this.providersBusy = busy;
+        this.emit();
+    }
+
+    setLastVerify(result: VerifyResult | undefined): void {
+        this.lastVerify = result;
         this.emit();
     }
 

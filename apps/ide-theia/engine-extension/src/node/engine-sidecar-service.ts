@@ -16,8 +16,12 @@ import {
     PolicyDecision,
     ProjectSnapshot,
     PublishAttempt,
+    GeneratedConfig,
+    ProvidersSnapshot,
     ReleaseAttempt,
     ReleaseSnapshot,
+    ShareSnapshot,
+    VerifyResult,
     ReopenedExport,
     ReferencesSnapshot,
     WorkItem,
@@ -502,6 +506,39 @@ export class EngineSidecarService implements EngineService {
 
     releaseGithub(root: string, version: string, confirmed = false): Promise<ReleaseAttempt> {
         return this.call('release_github', { root, version, confirmed: confirmed === true });
+    }
+
+    shareSnapshot(root: string): Promise<ShareSnapshot> {
+        return this.call('share_snapshot', { root });
+    }
+
+    shareStart(root: string, mode: 'lan' | 'tunnel', minutes = 0): Promise<ShareSnapshot> {
+        return this.call('share_start', { root, mode, minutes });
+    }
+
+    shareStop(root: string): Promise<ShareSnapshot> {
+        return this.call('share_stop', { root });
+    }
+
+    providersSnapshot(root: string): Promise<ProvidersSnapshot> {
+        return this.call('providers_snapshot', { root });
+    }
+
+    providersGenerate(
+        root: string,
+        provider: string,
+        publish: string
+    ): Promise<GeneratedConfig> {
+        return this.call('providers_generate', { root, provider, publish });
+    }
+
+    providersVerify(
+        root: string,
+        provider: string,
+        version: string,
+        url: string
+    ): Promise<VerifyResult> {
+        return this.call('providers_verify', { root, provider, version, url });
     }
 
     policyDecide(
