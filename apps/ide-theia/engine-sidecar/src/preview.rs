@@ -49,9 +49,9 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -654,12 +654,48 @@ pub fn stop(root: &Path) -> Result<PreviewSnapshot, String> {
                 .and_then(|text| text.trim().parse::<i32>().ok())
                 .is_some_and(|pgid| pgid == pid);
             if leader {
-                let _ = Command::new("kill")
-                    .arg("-TERM")
-                    .arg(format!("-{pid}"))
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+                // `-<pid>` é "o grupo", e o `--` NÃO é enfeite: sem ele o
+                // /bin/kill lê `-2093347` como opção, não faz nada — e sai com
+                // código 0. Foi essa falha silenciosa que fez `stop` responder
+                // "parado" de consciência limpa enquanto o servidor seguia de pé
+                // segurando a porta. Medido: sem `--`, porta ocupada; com `--`,
+                // liberada.
+                let signal_group = |sig: &str| {
+                    let _ = Command::new("kill")
+                        .args(["-s", sig, "--", &format!("-{pid}")])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                };
+                let group_alive = || {
+                    Command::new("kill")
+                        .args(["-s", "0", "--", &format!("-{pid}")])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .map(|status| status.success())
+                        .unwrap_or(false)
+                };
+
+                signal_group("TERM");
+                // Esperar a ÁRVORE morrer, não só o `sh`.
+                //
+                // A jornada do §12 pegou isto no CI: `stop` fazia `child.wait()`,
+                // que espera o SHELL. O servidor que o shell criou ainda estava
+                // liberando a porta quando `stop` já tinha respondido "parado" —
+                // e o start seguinte então sondava o processo velho e o via
+                // saudável. Um `stop` só pode voltar quando parou de verdade.
+                let mut waited = Duration::ZERO;
+                let step = Duration::from_millis(50);
+                while group_alive() && waited < Duration::from_secs(3) {
+                    std::thread::sleep(step);
+                    waited += step;
+                }
+                // Quem ignora SIGTERM não decide continuar de pé: a pessoa mandou
+                // parar.
+                if group_alive() {
+                    signal_group("KILL");
+                }
             }
         }
         let _ = child.kill();
@@ -822,6 +858,46 @@ mod tests {
         assert!(!snapshot.running);
     }
 
+    /// `stop` matava o `sh` e deixava vivo o processo que o `sh` criou — que é
+    /// quem segura a porta. Pior: o `kill` de grupo sem `--` sai com código 0
+    /// sem fazer nada, então `stop` respondia "parado" e o servidor seguia no ar;
+    /// o start seguinte então sondava o processo velho e o via saudável.
+    #[test]
+    fn stop_derruba_o_neto_que_segura_a_porta_nao_so_o_shell() {
+        let dir = project(None);
+        std::fs::create_dir_all(dir.path().join(".instrument")).expect("dir");
+        let pidfile = dir.path().join("neto.pid");
+        // O comando declarado roda sob `sh`; este `sh` interno grava o pid do
+        // NETO e dorme. É esse pid que precisa estar morto no fim.
+        std::fs::write(
+            dir.path().join(".instrument/preview.json"),
+            format!(
+                r#"{{"command":"sh -c 'echo $$ > {} ; sleep 30'","url":"http://127.0.0.1:1/","readyTimeoutMs":300}}"#,
+                pidfile.display()
+            ),
+        )
+        .expect("declaração");
+
+        start(dir.path()).expect("start");
+        let neto: i32 = std::fs::read_to_string(&pidfile)
+            .expect("o neto tem de ter subido")
+            .trim()
+            .parse()
+            .expect("pid");
+
+        stop(dir.path()).expect("stop");
+
+        let vivo = std::process::Command::new("kill")
+            .args(["-s", "0", "--", &neto.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(
+            !vivo,
+            "parar o preview tem de derrubar o processo que segura a porta (pid {neto}), não só o shell"
+        );
+    }
+
     /// O botão "Reiniciar" da UI chamava `start`, e `start` num preview vivo
     /// devolve o que JÁ está rodando. O clique não trocava processo nenhum, e o
     /// painel seguia mostrando a saúde do processo antigo — quem tinha acabado
@@ -830,6 +906,9 @@ mod tests {
     #[test]
     fn restart_troca_o_processo_em_vez_de_devolver_o_que_ja_rodava() {
         let dir = project(None);
+        // `project(None)` não declara preview e não cria `.instrument/`: a
+        // declaração abaixo é escrita à mão, então o diretório é por conta dela.
+        std::fs::create_dir_all(dir.path().join(".instrument")).expect("dir");
         let marca = dir.path().join("subiu.txt");
         // Cada processo que sobe acrescenta uma linha: contar linhas conta
         // quantas vezes um processo NOVO realmente rodou.
@@ -844,7 +923,11 @@ mod tests {
 
         start(dir.path()).expect("start");
         let depois_do_start = std::fs::read_to_string(&marca).unwrap_or_default();
-        assert_eq!(depois_do_start.lines().count(), 1, "o primeiro start sobe um");
+        assert_eq!(
+            depois_do_start.lines().count(),
+            1,
+            "o primeiro start sobe um"
+        );
 
         restart(dir.path()).expect("restart");
         let depois_do_restart = std::fs::read_to_string(&marca).unwrap_or_default();
