@@ -66,6 +66,7 @@
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {
+    "ms-pyright.pyright": "https://open-vsx.org/api/ms-pyright/pyright/1.1.402/file/ms-pyright.pyright-1.1.402.vsix",
     "ms-vscode.js-debug": "https://open-vsx.org/api/ms-vscode/js-debug/1.117.0/file/ms-vscode.js-debug-1.117.0.vsix",
     "mtxr.sqltools": "https://open-vsx.org/api/mtxr/sqltools/0.28.6/file/mtxr.sqltools-0.28.6.vsix",
     "vscode.css": "https://open-vsx.org/api/vscode/css/1.95.3/file/vscode.css-1.95.3.vsix",
@@ -79,6 +80,8 @@
     "vscode.markdown": "https://open-vsx.org/api/vscode/markdown/1.95.3/file/vscode.markdown-1.95.3.vsix",
     "vscode.markdown-language-features": "https://open-vsx.org/api/vscode/markdown-language-features/1.95.3/file/vscode.markdown-language-features-1.95.3.vsix",
     "vscode.npm": "https://open-vsx.org/api/vscode/npm/1.95.3/file/vscode.npm-1.95.3.vsix",
+    "vscode.python": "https://open-vsx.org/api/vscode/python/1.95.3/file/vscode.python-1.95.3.vsix",
+    "vscode.rust": "https://open-vsx.org/api/vscode/rust/1.95.3/file/vscode.rust-1.95.3.vsix",
     "vscode.shellscript": "https://open-vsx.org/api/vscode/shellscript/1.95.3/file/vscode.shellscript-1.95.3.vsix",
     "vscode.typescript-language-features": "https://open-vsx.org/api/vscode/typescript-language-features/1.95.3/file/vscode.typescript-language-features-1.95.3.vsix",
     "vscode.yaml": "https://open-vsx.org/api/vscode/yaml/1.95.3/file/vscode.yaml-1.95.3.vsix"
