@@ -242,7 +242,15 @@ fn upsert_intent(
 
 /// Builds the store from disk plus the live preview ledger, and detects every
 /// literal disagreement. Reads only; nothing here writes or resolves.
-fn build(root: &Path, observations: Vec<ObservedBehavior>) -> (ReconciliationStore, Vec<Divergence>, Vec<IntentSpecRecord>, Option<String>) {
+fn build(
+    root: &Path,
+    observations: Vec<ObservedBehavior>,
+) -> (
+    ReconciliationStore,
+    Vec<Divergence>,
+    Vec<IntentSpecRecord>,
+    Option<String>,
+) {
     let (intents, problem) = read_intents(root);
     let mut store = ReconciliationStore::default();
     for intent in &intents {
@@ -402,15 +410,17 @@ mod tests {
     #[test]
     fn an_explicit_intent_overrides_the_implicit_one() {
         let dir = project(
-            Some(
-                r#"{"intents":[{"id":"meu","subject":"preview:health","expected":"stale"}]}"#,
-            ),
+            Some(r#"{"intents":[{"id":"meu","subject":"preview:health","expected":"stale"}]}"#),
             Some(r#"{"command":"x","url":"http://127.0.0.1:1/"}"#),
         );
 
         let (intents, _) = read_intents(dir.path());
 
-        assert_eq!(intents.len(), 1, "não pode haver duas expectativas do mesmo assunto");
+        assert_eq!(
+            intents.len(),
+            1,
+            "não pode haver duas expectativas do mesmo assunto"
+        );
         assert_eq!(intents[0].id, "meu");
         assert_eq!(intents[0].source_path, INTENTS_REL);
     }
@@ -467,8 +477,7 @@ mod tests {
     #[test]
     fn changing_the_implementation_stays_pending_and_needs_an_effect() {
         let dir = project(None, Some(r#"{"command":"x","url":"http://127.0.0.1:1/"}"#));
-        let (mut store, divergences, _, _) =
-            build(dir.path(), vec![observation("o1", "broken")]);
+        let (mut store, divergences, _, _) = build(dir.path(), vec![observation("o1", "broken")]);
         let id = divergences[0].id.clone();
 
         let refused = store.reconcile(
@@ -495,8 +504,7 @@ mod tests {
     #[test]
     fn an_exception_requires_a_justification_and_a_scope() {
         let dir = project(None, Some(r#"{"command":"x","url":"http://127.0.0.1:1/"}"#));
-        let (mut store, divergences, _, _) =
-            build(dir.path(), vec![observation("o1", "broken")]);
+        let (mut store, divergences, _, _) = build(dir.path(), vec![observation("o1", "broken")]);
         let id = divergences[0].id.clone();
 
         let refused = store.reconcile(
@@ -584,7 +592,10 @@ mod tests {
     /// picture down with it.
     #[test]
     fn a_malformed_intents_file_is_reported() {
-        let dir = project(Some("{ isto não é json"), Some(r#"{"command":"x","url":"http://127.0.0.1:1/"}"#));
+        let dir = project(
+            Some("{ isto não é json"),
+            Some(r#"{"command":"x","url":"http://127.0.0.1:1/"}"#),
+        );
 
         let snapshot = scan(dir.path());
 

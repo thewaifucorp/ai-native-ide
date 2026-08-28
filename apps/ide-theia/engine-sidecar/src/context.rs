@@ -502,7 +502,10 @@ mod tests {
             "biblioteca, autoridade, intenção, evidência: {:?}",
             package.unknown
         );
-        assert!(package.policy.iter().any(|p| p.contains("retrieval governado")));
+        assert!(package
+            .policy
+            .iter()
+            .any(|p| p.contains("retrieval governado")));
     }
 
     /// Active guidance from the library reaches the package, and its provenance
@@ -605,8 +608,8 @@ mod tests {
         let package = package(dir.path(), Some(0));
         assert_eq!(package.compiled.dropped_for_budget.len(), 1);
 
-        let library = GuidanceRegistry::open(crate::library::library_root(dir.path()))
-            .expect("library");
+        let library =
+            GuidanceRegistry::open(crate::library::library_root(dir.path())).expect("library");
         let stamped: Vec<(String, u64)> = library
             .list()
             .into_iter()
@@ -665,7 +668,10 @@ mod tests {
 
         let package = package(dir.path(), None);
 
-        assert_eq!(package.project_files_not_included, 2, "node_modules não conta");
+        assert_eq!(
+            package.project_files_not_included, 2,
+            "node_modules não conta"
+        );
         assert!(package
             .excluded
             .iter()

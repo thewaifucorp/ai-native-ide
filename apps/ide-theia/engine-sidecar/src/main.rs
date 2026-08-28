@@ -45,11 +45,11 @@ mod lifecycle;
 mod notes;
 mod packs;
 mod policy;
+mod preview;
 mod project;
+mod reconcile;
 mod references;
 mod settings;
-mod preview;
-mod reconcile;
 mod work;
 
 use std::collections::HashMap;
@@ -58,7 +58,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use ide_agent::{
-    AgentFacade, AgentAvailability, AgentExpectation, AgentSandbox, AgentSessionId, AgentTask,
+    AgentAvailability, AgentExpectation, AgentFacade, AgentSandbox, AgentSessionId, AgentTask,
     StartAgentSession,
 };
 use ide_diff::{diff, merge_selected, Hunk};
@@ -296,10 +296,14 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 relative_path: PathBuf::from(p.relative_path),
                 content: p.content,
             };
-            broker.propose_write(&write).await.map_err(|e| e.to_string())
+            broker
+                .propose_write(&write)
+                .await
+                .map_err(|e| e.to_string())
         }
         "broker_approve" => {
-            let p: BrokerApproveParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let p: BrokerApproveParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
             let broker = broker_for(&p.root, &p.owner).await?;
             let approved_id = broker
                 .approve_effect(&p.effect_id)
@@ -334,9 +338,10 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let root = PathBuf::from(&p.root);
             // Walking the tree and running builds is blocking work; keep it off
             // the async worker so the sidecar stays responsive.
-            let run = tokio::task::spawn_blocking(move || harness::run(&root, pending, p.run_tools))
-                .await
-                .map_err(|e| e.to_string())?;
+            let run =
+                tokio::task::spawn_blocking(move || harness::run(&root, pending, p.run_tools))
+                    .await
+                    .map_err(|e| e.to_string())?;
             serde_json::to_value(run).map_err(|e| e.to_string())
         }
         // §4 — preview. Spawning a process, sleeping between probes and opening
@@ -553,10 +558,9 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             }
             let p: LibraryParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let root = PathBuf::from(&p.root);
-            let snapshot =
-                tokio::task::spawn_blocking(move || library::snapshot(&root, p.context))
-                    .await
-                    .map_err(|e| e.to_string())??;
+            let snapshot = tokio::task::spawn_blocking(move || library::snapshot(&root, p.context))
+                .await
+                .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         "library_capture" => {
@@ -568,10 +572,9 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             }
             let p: CaptureParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let root = PathBuf::from(&p.root);
-            let snapshot =
-                tokio::task::spawn_blocking(move || library::capture(&root, p.request))
-                    .await
-                    .map_err(|e| e.to_string())??;
+            let snapshot = tokio::task::spawn_blocking(move || library::capture(&root, p.request))
+                .await
+                .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         "library_import" => {
@@ -750,10 +753,9 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             }
             let p: UnlinkParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let root = PathBuf::from(&p.root);
-            let snapshot =
-                tokio::task::spawn_blocking(move || references::unlink(&root, &p.id))
-                    .await
-                    .map_err(|e| e.to_string())??;
+            let snapshot = tokio::task::spawn_blocking(move || references::unlink(&root, &p.id))
+                .await
+                .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         // §9 — trabalho e status. Ler calcula; gravar grava FATO (critério,
@@ -795,9 +797,8 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let root = PathBuf::from(&p.root);
             let method = method.to_string();
             let value = tokio::task::spawn_blocking(move || match method.as_str() {
-                "lifecycle_export" => {
-                    lifecycle::export(&root).and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string()))
-                }
+                "lifecycle_export" => lifecycle::export(&root)
+                    .and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string())),
                 _ => lifecycle::snapshot(&root)
                     .and_then(|s| serde_json::to_value(s).map_err(|e| e.to_string())),
             })
@@ -1126,7 +1127,8 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             Ok(json!({ "task_id": task_id }))
         }
         "agent_next_event" => {
-            let p: AgentSessionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let p: AgentSessionParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
             let facade = facade_for(&p.agent).await?;
             let event = facade
                 .next_event(&AgentSessionId(p.session_id))
@@ -1159,7 +1161,8 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             Ok(json!({ "answered": true }))
         }
         "agent_session_status" => {
-            let p: AgentSessionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let p: AgentSessionParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
             let facade = facade_for(&p.agent).await?;
             let status = facade
                 .session_status(&AgentSessionId(p.session_id))
@@ -1302,7 +1305,10 @@ mod tests {
         let v = handle("agent_probe", json!({ "agent": "codex" }))
             .await
             .expect("probe ok");
-        assert!(v["availability"].is_string(), "availability must be a string");
+        assert!(
+            v["availability"].is_string(),
+            "availability must be a string"
+        );
         assert!(v["available"].is_boolean(), "available must be a boolean");
         assert_eq!(v["agent"], json!("codex"));
     }
@@ -1311,11 +1317,12 @@ mod tests {
     /// not invent a session. Runs in CI without any agent binary present.
     #[tokio::test]
     async fn session_calls_reject_unknown_sessions() {
-        for method in [
-            "agent_next_event",
-            "agent_session_status",
-        ] {
-            let out = handle(method, json!({ "agent": "codex", "session_id": "nao-existe" })).await;
+        for method in ["agent_next_event", "agent_session_status"] {
+            let out = handle(
+                method,
+                json!({ "agent": "codex", "session_id": "nao-existe" }),
+            )
+            .await;
             assert!(out.is_err(), "{method} must not invent a session");
         }
         // Same rule for the permission answer, which carries extra fields: an
@@ -1334,8 +1341,7 @@ mod tests {
             out.is_err(),
             "agent_respond_permission must not invent a session"
         );
-        {
-        }
+        {}
     }
 
     /// Opening a session defaults to READ-ONLY: the caller has to opt in to writes.
@@ -1353,7 +1359,10 @@ mod tests {
         // `read_only` is absent on purpose: the default must be the safe one.
         let parsed: AgentStartParams =
             serde_json::from_value(params.clone()).expect("params parse");
-        assert!(parsed.read_only, "sessão sem read_only explícito tem de ser somente leitura");
+        assert!(
+            parsed.read_only,
+            "sessão sem read_only explícito tem de ser somente leitura"
+        );
 
         match handle("agent_start_session", params).await {
             Ok(v) => assert!(

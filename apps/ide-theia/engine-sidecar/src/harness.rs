@@ -259,7 +259,10 @@ fn scan_files(root: &Path) -> (Vec<(String, String)>, usize) {
                 skipped += 1;
                 continue;
             }
-            let too_big = entry.metadata().map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true);
+            let too_big = entry
+                .metadata()
+                .map(|m| m.len() > MAX_FILE_BYTES)
+                .unwrap_or(true);
             if too_big {
                 skipped += 1;
                 continue;
@@ -364,8 +367,16 @@ pub fn run(root: &Path, pending_effects: usize, run_tools: bool) -> HarnessRun {
         Some(format!(
             "sem comando declarado para {} em .instrument/checks.json — {} não {} executado{}",
             undeclared.join(", "),
-            if undeclared.len() == 1 { "esse check" } else { "esses checks" },
-            if undeclared.len() == 1 { "foi" } else { "foram" },
+            if undeclared.len() == 1 {
+                "esse check"
+            } else {
+                "esses checks"
+            },
+            if undeclared.len() == 1 {
+                "foi"
+            } else {
+                "foram"
+            },
             if undeclared.len() == 1 { "" } else { "s" }
         ))
     } else {
@@ -416,7 +427,11 @@ mod tests {
         let dir = project();
         let run = run(dir.path(), 0, true);
 
-        assert!(run.not_run_reason.as_deref().unwrap().contains("checks.json"));
+        assert!(run
+            .not_run_reason
+            .as_deref()
+            .unwrap()
+            .contains("checks.json"));
         assert!(run.declared.is_empty());
         let tool_states: Vec<_> = run
             .report
@@ -459,7 +474,11 @@ mod tests {
         assert_eq!(finding.state, ide_harness::CheckState::Passed);
         // The promise §4 makes: a green check shows what produced it.
         assert!(finding.evidence.contains("`true`"), "{}", finding.evidence);
-        assert!(finding.evidence.contains("código 0"), "{}", finding.evidence);
+        assert!(
+            finding.evidence.contains("código 0"),
+            "{}",
+            finding.evidence
+        );
     }
 
     #[test]
@@ -474,7 +493,11 @@ mod tests {
 
         let finding = tool_finding(&run, "build");
         assert_eq!(finding.state, ide_harness::CheckState::Failed);
-        assert!(finding.evidence.contains("código 3"), "{}", finding.evidence);
+        assert!(
+            finding.evidence.contains("código 3"),
+            "{}",
+            finding.evidence
+        );
         assert!(
             finding.evidence.contains("estourou aqui"),
             "{}",
@@ -515,9 +538,12 @@ mod tests {
             .unwrap()
             .contains("não pôde ser lido"));
         assert!(
-            run.report.findings.iter().any(|f| f.check_id == "secret-scan"
-                || f.check_id == "git-clean"
-                || f.check_id == "pending-effects"),
+            run.report
+                .findings
+                .iter()
+                .any(|f| f.check_id == "secret-scan"
+                    || f.check_id == "git-clean"
+                    || f.check_id == "pending-effects"),
             "os checks determinísticos continuam rodando"
         );
     }
@@ -535,7 +561,9 @@ mod tests {
             tool_finding(&run, "test").state,
             ide_harness::CheckState::Passed
         );
-        let reason = run.not_run_reason.expect("build e typecheck não têm comando");
+        let reason = run
+            .not_run_reason
+            .expect("build e typecheck não têm comando");
         assert!(reason.contains("build"), "{reason}");
         assert!(reason.contains("typecheck"), "{reason}");
         assert!(!reason.contains("test,"), "{reason}");

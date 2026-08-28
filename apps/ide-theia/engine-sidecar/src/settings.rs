@@ -39,7 +39,11 @@ const FIELDS: [(&str, ConfigField, &str); 8] = [
     ("mode", ConfigField::Mode, "Modo de construção"),
     ("depth", ConfigField::Depth, "Profundidade da informação"),
     ("layout", ConfigField::Layout, "Layout dos painéis"),
-    ("permissions", ConfigField::Permissions, "Permissões de efeito"),
+    (
+        "permissions",
+        ConfigField::Permissions,
+        "Permissões de efeito",
+    ),
     (
         "harnessLayers",
         ConfigField::HarnessLayers,
@@ -181,10 +185,7 @@ fn rows(config: &IdeConfig) -> Vec<SettingRow> {
         .iter()
         .map(|(id, field, label)| {
             let (value, source) = match field {
-                ConfigField::Mode => (
-                    format!("{:?}", config.mode.value),
-                    config.mode.source,
-                ),
+                ConfigField::Mode => (format!("{:?}", config.mode.value), config.mode.source),
                 ConfigField::Depth => (format!("{:?}", config.depth.value), config.depth.source),
                 ConfigField::Layout => (format!("{:?}", config.layout.value), config.layout.source),
                 ConfigField::Permissions => (
@@ -203,10 +204,9 @@ fn rows(config: &IdeConfig) -> Vec<SettingRow> {
                     config.idle_paid_inference.value.to_string(),
                     config.idle_paid_inference.source,
                 ),
-                ConfigField::LocalAag => (
-                    config.local_aag.value.to_string(),
-                    config.local_aag.source,
-                ),
+                ConfigField::LocalAag => {
+                    (config.local_aag.value.to_string(), config.local_aag.source)
+                }
             };
             SettingRow {
                 field: (*id).to_string(),

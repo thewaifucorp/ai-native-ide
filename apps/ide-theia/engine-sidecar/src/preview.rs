@@ -465,8 +465,9 @@ pub fn start(root: &Path) -> Result<PreviewSnapshot, String> {
                     );
                 }
                 other => {
-                    ledger_refusal =
-                        runtime.record_exit(other.unwrap_or(-1), &detail).or(ledger_refusal);
+                    ledger_refusal = runtime
+                        .record_exit(other.unwrap_or(-1), &detail)
+                        .or(ledger_refusal);
                     runtime.move_to(PreviewHealth::Broken, Some(detail));
                 }
             }
@@ -753,7 +754,9 @@ mod tests {
     /// record one — but it is also not a preview that is up.
     #[test]
     fn a_clean_exit_is_not_recorded_as_a_failure() {
-        let dir = project(Some(r#"{"command":"true","url":"http://127.0.0.1:1/","readyTimeoutMs":400}"#));
+        let dir = project(Some(
+            r#"{"command":"true","url":"http://127.0.0.1:1/","readyTimeoutMs":400}"#,
+        ));
 
         let snapshot = start(dir.path()).expect("start");
 
@@ -777,7 +780,10 @@ mod tests {
         let id_first = first.failures[0].id.clone();
         // A restart resets the per-session counter; the id must still differ.
         stop(dir.path()).expect("stop");
-        registry().lock().unwrap().remove(&dir.path().to_string_lossy().into_owned());
+        registry()
+            .lock()
+            .unwrap()
+            .remove(&dir.path().to_string_lossy().into_owned());
         let second = start(dir.path()).expect("restart");
         let id_second = second.failures[0].id.clone();
 
@@ -819,7 +825,11 @@ mod tests {
 
         assert_eq!(snapshot.state.unwrap().health, PreviewHealth::Starting);
         assert!(snapshot.running);
-        assert!(snapshot.last_probe.as_deref().unwrap().contains("não declara url"));
+        assert!(snapshot
+            .last_probe
+            .as_deref()
+            .unwrap()
+            .contains("não declara url"));
 
         let stopped = stop(dir.path()).expect("stop");
         assert!(stopped.stopped);

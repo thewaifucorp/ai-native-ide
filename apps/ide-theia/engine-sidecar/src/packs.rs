@@ -147,7 +147,11 @@ fn available(root: &Path, installed: &[Pack]) -> Vec<AvailablePack> {
 /// `passed` / `failed` are the check ids the caller actually observed. Passing an
 /// empty pair is what happens today (§4 is Layer 0, packs are Layer 1+), and it
 /// deliberately produces a BLOCKED verdict rather than an empty one.
-pub fn snapshot(root: &Path, passed: &[String], failed: &[String]) -> Result<PacksSnapshot, String> {
+pub fn snapshot(
+    root: &Path,
+    passed: &[String],
+    failed: &[String],
+) -> Result<PacksSnapshot, String> {
     let registry = registry(root)?;
     let installed = registry.list();
     let applied = registry.applied();
@@ -254,7 +258,10 @@ mod tests {
         let dir = project(Some(&pack_json("leilao-local")));
 
         let after_install = install(dir.path(), "packs/local.pack.json").expect("install");
-        assert!(after_install.installed.iter().any(|p| p.id == "leilao-local"));
+        assert!(after_install
+            .installed
+            .iter()
+            .any(|p| p.id == "leilao-local"));
         assert!(
             !after_install.applied.contains(&"leilao-local".to_string()),
             "instalar não pode aplicar"
@@ -283,7 +290,9 @@ mod tests {
             .find(|v| v.pack_id == "leilao-local")
             .expect("veredito do pack aplicado");
         assert!(!verdict.ready, "sem resultado observado não há readiness");
-        assert!(verdict.missing_checks.contains(&"lance-estrito".to_string()));
+        assert!(verdict
+            .missing_checks
+            .contains(&"lance-estrito".to_string()));
         assert!(snapshot.no_observed_results.is_some());
     }
 

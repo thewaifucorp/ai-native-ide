@@ -369,8 +369,8 @@ mod tests {
     fn nothing_found_says_the_evaluators_ran() {
         let dir = project();
 
-        let snapshot =
-            review_snapshot(dir.path(), "Um formulário de contato simples", None).expect("snapshot");
+        let snapshot = review_snapshot(dir.path(), "Um formulário de contato simples", None)
+            .expect("snapshot");
 
         let message = snapshot.nothing_found.expect("motivo");
         assert!(message.contains("avaliador(es) rodaram"), "{message}");
@@ -428,9 +428,16 @@ mod tests {
             .iter()
             .find(|entry| entry.finding.evaluator == "declared-contradiction")
             .expect("contradição");
-        assert!(contradiction.finding.claim.contains("docs/product-intent.md"));
+        assert!(contradiction
+            .finding
+            .claim
+            .contains("docs/product-intent.md"));
         assert!(contradiction.finding.evidence.contains("ordem de criação"));
-        assert_eq!(snapshot.declared.len(), 1, "a declaração usada fica listada");
+        assert_eq!(
+            snapshot.declared.len(),
+            1,
+            "a declaração usada fica listada"
+        );
         // It leads: a contradiction quotes both sides, a keyword rule guesses.
         assert_eq!(
             snapshot.reviewed[0].finding.evaluator, "declared-contradiction",
@@ -469,8 +476,8 @@ mod tests {
         let snapshot = review_snapshot(dir.path(), AUCTION_INTENT, None).expect("snapshot");
         let id = snapshot.reviewed[0].finding.id.clone();
 
-        let error = review(dir.path(), AUCTION_INTENT, &id, "dismissed", "  ", None)
-            .expect_err("recusa");
+        let error =
+            review(dir.path(), AUCTION_INTENT, &id, "dismissed", "  ", None).expect_err("recusa");
 
         assert!(error.contains("por quê"), "{error}");
         assert!(read_reviews(dir.path()).is_empty(), "nada foi gravado");
@@ -587,8 +594,7 @@ mod tests {
         // The intent hash is unchanged, which is the mechanical way of saying the
         // text was not rewritten.
         assert_eq!(
-            after.report.content_hash,
-            snapshot.report.content_hash,
+            after.report.content_hash, snapshot.report.content_hash,
             "aceitar não pode reescrever a intenção"
         );
     }

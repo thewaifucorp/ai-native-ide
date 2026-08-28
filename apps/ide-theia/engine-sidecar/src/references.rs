@@ -112,8 +112,8 @@ pub fn link(
 /// Desliga a referência DESTE projeto. Ela continua existindo para os outros
 /// projetos que a ligam — desligar não é apagar de todo mundo.
 pub fn unlink(root: &Path, id: &str) -> Result<ReferencesSnapshot, String> {
-    let project = project_id(root)?
-        .ok_or_else(|| "esta pasta ainda não é um projeto durável".to_string())?;
+    let project =
+        project_id(root)?.ok_or_else(|| "esta pasta ainda não é um projeto durável".to_string())?;
     let mut registry = registry(root)?;
     registry
         .unlink(id, &project)
@@ -147,8 +147,14 @@ mod tests {
     fn a_service_is_linked_with_an_endpoint_and_no_path() {
         let dir = registered();
 
-        let snapshot = link(dir.path(), "svc:api", "service", "API", "https://api.exemplo")
-            .expect("ligar");
+        let snapshot = link(
+            dir.path(),
+            "svc:api",
+            "service",
+            "API",
+            "https://api.exemplo",
+        )
+        .expect("ligar");
 
         assert_eq!(snapshot.references.len(), 1);
         assert_eq!(snapshot.references[0].endpoint, "https://api.exemplo");
@@ -168,10 +174,23 @@ mod tests {
     #[test]
     fn linking_twice_reuses_the_same_reference_instead_of_duplicating() {
         let dir = registered();
-        link(dir.path(), "svc:api", "service", "API", "https://api.exemplo").expect("1");
+        link(
+            dir.path(),
+            "svc:api",
+            "service",
+            "API",
+            "https://api.exemplo",
+        )
+        .expect("1");
 
-        let snapshot =
-            link(dir.path(), "svc:api", "service", "API", "https://api.exemplo").expect("2");
+        let snapshot = link(
+            dir.path(),
+            "svc:api",
+            "service",
+            "API",
+            "https://api.exemplo",
+        )
+        .expect("2");
 
         assert_eq!(snapshot.references.len(), 1);
     }
@@ -179,7 +198,14 @@ mod tests {
     #[test]
     fn unlinking_removes_it_from_this_project() {
         let dir = registered();
-        link(dir.path(), "env:staging", "environment", "Staging", "staging").expect("ligar");
+        link(
+            dir.path(),
+            "env:staging",
+            "environment",
+            "Staging",
+            "staging",
+        )
+        .expect("ligar");
 
         let snapshot = unlink(dir.path(), "env:staging").expect("desligar");
 

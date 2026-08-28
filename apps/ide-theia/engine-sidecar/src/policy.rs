@@ -202,7 +202,8 @@ mod tests {
     fn a_fresh_project_requires_approval_for_a_durable_effect() {
         let dir = project_dir();
 
-        let decision = decide(dir.path(), "durable", None, Some("README.md"), None).expect("decide");
+        let decision =
+            decide(dir.path(), "durable", None, Some("README.md"), None).expect("decide");
 
         assert_eq!(decision.effect, "require_approval");
         assert_eq!(decision.permissions, "balanced");
@@ -215,7 +216,8 @@ mod tests {
         let dir = project_dir();
         set_permissions(dir.path(), Permissions::Yolo);
 
-        let decision = decide(dir.path(), "durable", None, Some("README.md"), None).expect("decide");
+        let decision =
+            decide(dir.path(), "durable", None, Some("README.md"), None).expect("decide");
 
         assert_eq!(decision.effect, "auto_approve_recorded");
         assert!(decision.explain.contains("snapshot"));

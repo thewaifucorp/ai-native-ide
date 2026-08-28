@@ -319,11 +319,7 @@ pub fn add_consumer(root: &Path, id: &str, consumer: &str) -> Result<LibrarySnap
 ///
 /// Describes the work and performs none of it — the crate is explicit that
 /// nothing downstream is changed by asking.
-pub fn propose_sync(
-    root: &Path,
-    id: &str,
-    up_to_date: &[String],
-) -> Result<SyncProposal, String> {
+pub fn propose_sync(root: &Path, id: &str, up_to_date: &[String]) -> Result<SyncProposal, String> {
     let truth = truth(root)?;
     truth
         .propose_sync(id, up_to_date)
@@ -414,7 +410,10 @@ mod tests {
         .expect("import");
 
         assert_eq!(imported.state, GuidanceState::Candidate);
-        assert_eq!(imported.provenance, "AGENTS.md:6", "a procedência do §5 vale mais");
+        assert_eq!(
+            imported.provenance, "AGENTS.md:6",
+            "a procedência do §5 vale mais"
+        );
         let before = snapshot_of(dir.path());
         assert!(
             before.applied_now.is_empty(),
@@ -445,7 +444,8 @@ mod tests {
     fn a_point_rule_is_not_filed_as_permanent() {
         let dir = project();
 
-        let snapshot = capture(dir.path(), capture_request("Só agora", "use_now")).expect("capture");
+        let snapshot =
+            capture(dir.path(), capture_request("Só agora", "use_now")).expect("capture");
 
         let entry = &snapshot.guidance[0];
         assert_eq!(entry.set, "temporary");
@@ -494,6 +494,10 @@ mod tests {
         // Proposing a sync describes the work and performs none of it.
         let proposal = propose_sync(dir.path(), &id, &[]).expect("proposal");
         assert_eq!(proposal.consumers_to_update, vec!["src/auction.ts"]);
-        assert!(proposal.reason.contains("out of sync"), "{}", proposal.reason);
+        assert!(
+            proposal.reason.contains("out of sync"),
+            "{}",
+            proposal.reason
+        );
     }
 }

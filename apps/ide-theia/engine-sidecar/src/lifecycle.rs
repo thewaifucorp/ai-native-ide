@@ -299,7 +299,10 @@ pub fn publish(
             "Publicar {} é efeito externo: não tem rollback. O que existe é compensação — {}",
             snapshot.next_version, plan.note
         ),
-        (_, None) => format!("Publicar {} não tem compensação conhecida.", snapshot.next_version),
+        (_, None) => format!(
+            "Publicar {} não tem compensação conhecida.",
+            snapshot.next_version
+        ),
     };
 
     // O motor decide se pergunta. `Reversible` seria o único caso que dispensa,
@@ -503,7 +506,11 @@ mod tests {
         let record = done.record.expect("registro");
         assert_eq!(record.version, "0.0.2");
         assert_eq!(record.problem.as_deref(), Some("leaderboard vazava id"));
-        assert_eq!(done.snapshot.history.len(), 2, "a versão anterior continua lá");
+        assert_eq!(
+            done.snapshot.history.len(),
+            2,
+            "a versão anterior continua lá"
+        );
     }
 
     #[test]

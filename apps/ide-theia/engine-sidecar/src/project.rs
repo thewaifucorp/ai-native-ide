@@ -93,7 +93,9 @@ pub fn snapshot(root: &Path) -> Result<ProjectSnapshot, String> {
             .map_err(|error| format!("{error:#}"))?,
         None => Vec::new(),
     };
-    let all_projects = store.list_projects().map_err(|error| format!("{error:#}"))?;
+    let all_projects = store
+        .list_projects()
+        .map_err(|error| format!("{error:#}"))?;
     let not_registered_reason = if project.is_none() {
         Some(
             "esta pasta ainda não é um projeto durável — registrar pede um título e uma \
@@ -181,7 +183,9 @@ pub fn attach(root: &Path, path: &str, kind: &str) -> Result<ProjectSnapshot, St
 /// by the store rather than derived from chat.
 pub fn set_intent(root: &Path, intent: &str) -> Result<ProjectSnapshot, String> {
     if intent.trim().is_empty() {
-        return Err("intenção vazia apagaria a única coisa que sobrevive sem transcript".to_string());
+        return Err(
+            "intenção vazia apagaria a única coisa que sobrevive sem transcript".to_string(),
+        );
     }
     let store = store(root)?;
     store
@@ -269,15 +273,18 @@ mod tests {
         let other = project();
         register(dir.path(), "Leilão", "intenção").expect("register");
 
-        let after = attach(dir.path(), other.path().to_str().unwrap(), "repository")
-            .expect("attach");
+        let after =
+            attach(dir.path(), other.path().to_str().unwrap(), "repository").expect("attach");
         assert_eq!(after.resources.len(), 2);
 
         assert!(
             attach(dir.path(), "/nao/existe/em/lugar/nenhum", "directory").is_err(),
             "recurso que não existe não pode ser prometido no registro"
         );
-        assert!(attach(dir.path(), ".", "servico").is_err(), "tipo desconhecido");
+        assert!(
+            attach(dir.path(), ".", "servico").is_err(),
+            "tipo desconhecido"
+        );
     }
 
     /// The intent is editable, and clearing it is refused: it is the one field

@@ -202,9 +202,7 @@ fn known_world(root: &Path) -> KnownWorld {
     }
 
     // Guidance: known vs ACTIVE, from §13's library.
-    if let Ok(registry) =
-        ide_guidance::GuidanceRegistry::open(crate::library::library_root(root))
-    {
+    if let Ok(registry) = ide_guidance::GuidanceRegistry::open(crate::library::library_root(root)) {
         for entry in registry.list() {
             known.known_guidance.push(entry.id.clone());
             if entry.state == ide_guidance::GuidanceState::Active {
@@ -379,8 +377,8 @@ mod tests {
     fn an_unknown_kind_is_refused() {
         let dir = project();
 
-        let error = create(dir.path(), request("bilhete", "desempate", "algo"))
-            .expect_err("recusa");
+        let error =
+            create(dir.path(), request("bilhete", "desempate", "algo")).expect_err("recusa");
 
         assert!(error.contains("tipo de nota desconhecido"), "{error}");
     }
@@ -390,9 +388,12 @@ mod tests {
     #[test]
     fn merging_two_disagreeing_decisions_supersedes_both() {
         let dir = project();
-        let first = create(dir.path(), request("decision", "desempate", "vence o maior valor"))
-            .expect("nota")
-            .notes[0]
+        let first = create(
+            dir.path(),
+            request("decision", "desempate", "vence o maior valor"),
+        )
+        .expect("nota")
+        .notes[0]
             .id
             .clone();
         let snapshot = create(
@@ -443,9 +444,33 @@ mod tests {
         let snapshot = create(dir.path(), request("decision", "desempate", "algo")).expect("nota");
         let id = snapshot.notes[0].id.clone();
 
-        assert!(merge(dir.path(), std::slice::from_ref(&id), "t", "s", "x", "motivo").is_err());
-        assert!(merge(dir.path(), &[id.clone(), "note-999".to_string()], "t", "s", "x", "m").is_err());
-        assert!(merge(dir.path(), &[id, "note-999".to_string()], "t", "s", "x", "  ").is_err());
+        assert!(merge(
+            dir.path(),
+            std::slice::from_ref(&id),
+            "t",
+            "s",
+            "x",
+            "motivo"
+        )
+        .is_err());
+        assert!(merge(
+            dir.path(),
+            &[id.clone(), "note-999".to_string()],
+            "t",
+            "s",
+            "x",
+            "m"
+        )
+        .is_err());
+        assert!(merge(
+            dir.path(),
+            &[id, "note-999".to_string()],
+            "t",
+            "s",
+            "x",
+            "  "
+        )
+        .is_err());
     }
 
     /// A note that says what a SoT forbids collides with it, with both sides
@@ -476,7 +501,11 @@ mod tests {
             NoteConflict::ContradictsDeclaration { source, .. }
                 if source == "docs/product-intent.md"
         )));
-        assert_eq!(snapshot.known.forbidden.len(), 1, "a declaração usada fica visível");
+        assert_eq!(
+            snapshot.known.forbidden.len(),
+            1,
+            "a declaração usada fica visível"
+        );
     }
 
     /// A link to a file that exists is fine; one that does not is dangling. And a
@@ -485,13 +514,24 @@ mod tests {
     #[test]
     fn links_are_checked_against_the_observed_project() {
         let dir = project();
-        write(dir.path(), "src/auction.ts", "export const rank = () => [];");
-        let snapshot = create(dir.path(), request("proposal", "ranking", "mudar o ranking"))
-            .expect("nota");
+        write(
+            dir.path(),
+            "src/auction.ts",
+            "export const rank = () => [];",
+        );
+        let snapshot = create(
+            dir.path(),
+            request("proposal", "ranking", "mudar o ranking"),
+        )
+        .expect("nota");
         let id = snapshot.notes[0].id.clone();
 
-        let with_good = link(dir.path(), &id, NoteLink::File("src/auction.ts".to_string()))
-            .expect("link");
+        let with_good = link(
+            dir.path(),
+            &id,
+            NoteLink::File("src/auction.ts".to_string()),
+        )
+        .expect("link");
         assert!(
             !with_good
                 .conflicts
@@ -500,8 +540,8 @@ mod tests {
             "arquivo que existe não é ligação quebrada"
         );
 
-        let with_feature = link(dir.path(), &id, NoteLink::Feature("F-1".to_string()))
-            .expect("link");
+        let with_feature =
+            link(dir.path(), &id, NoteLink::Feature("F-1".to_string())).expect("link");
         assert!(with_feature.conflicts.iter().any(|conflict| matches!(
             conflict,
             NoteConflict::DanglingLink { link, .. } if link == "feature:F-1"
@@ -525,7 +565,11 @@ mod tests {
     #[test]
     fn resolving_needs_a_reason_and_closes_the_comparison() {
         let dir = project();
-        create(dir.path(), request("decision", "desempate", "vence o maior valor")).expect("nota");
+        create(
+            dir.path(),
+            request("decision", "desempate", "vence o maior valor"),
+        )
+        .expect("nota");
         let snapshot = create(
             dir.path(),
             request("decision", "desempate", "vence o mais antigo"),
@@ -534,10 +578,17 @@ mod tests {
         let id = snapshot.notes[1].id.clone();
         assert!(!snapshot.conflicts.is_empty());
 
-        assert!(resolve(dir.path(), &id, "  ").is_err(), "sem motivo, não fecha");
+        assert!(
+            resolve(dir.path(), &id, "  ").is_err(),
+            "sem motivo, não fecha"
+        );
 
-        let after = resolve(dir.path(), &id, "descartada: contraria a intenção declarada")
-            .expect("resolve");
+        let after = resolve(
+            dir.path(),
+            &id,
+            "descartada: contraria a intenção declarada",
+        )
+        .expect("resolve");
         assert!(after.conflicts.is_empty());
     }
 }
