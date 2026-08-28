@@ -2185,10 +2185,16 @@ export class InstrumentCapabilityContribution
                 this.messages.info(asked.explain);
                 return;
             }
+            // §15 — o que o harness sabia entra NO diálogo, antes do clique.
+            //
+            // Publicar não consultava o harness: saía com check vermelho e com
+            // dimensões nunca avaliadas exatamente como sairia de um projeto
+            // medido. Falha conhecida pode ser uma escolha; não pode ser um
+            // acidente, e a escolha precisa da informação na mesma tela.
             const confirmed = await new ConfirmDialog({
                 title: `Publicar ${asked.snapshot.nextVersion}?`,
-                msg: asked.explain,
-                ok: 'Publicar',
+                msg: `${asked.explain}\n\nEstado medido: ${asked.evaluation.summary}`,
+                ok: asked.evaluation.failed > 0 ? 'Publicar mesmo assim' : 'Publicar',
                 cancel: 'Não publicar'
             }).open();
             if (!confirmed) {
@@ -2202,7 +2208,9 @@ export class InstrumentCapabilityContribution
             });
             this.store.setLifecycleAttempt(done);
             this.messages.info(
-                `Publicado ${done.record?.version ?? ''} · ${done.compensation?.note ?? 'sem compensação possível'}`
+                `Publicado ${done.record?.version ?? ''} · ` +
+                `${done.compensation?.note ?? 'sem compensação possível'} · ` +
+                `estado medido: ${done.evaluation.summary}`
             );
         } catch (err) {
             this.messages.error(`Publicação não aconteceu: ${this.msg(err)}`);

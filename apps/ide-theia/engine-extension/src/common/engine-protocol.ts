@@ -1158,6 +1158,26 @@ export interface PublishAttempt {
     explain: string;
     record?: PublishRecord;
     snapshot: LifecycleSnapshot;
+    /** §15 — o que o harness sabia no instante de publicar. */
+    evaluation: PublishEvaluation;
+}
+
+/**
+ * O veredito do harness no momento da publicação.
+ *
+ * Publicar não consultava o harness: saía com check vermelho e com dimensões
+ * nunca avaliadas com a mesma cara de uma publicação sobre projeto medido. O
+ * harness roda aqui SEM executar comandos — publicar não dispara build nem teste
+ * por conta própria — então build e testes aparecem como não avaliados, que é a
+ * verdade.
+ */
+export interface PublishEvaluation {
+    /** Checks falhando agora. */
+    failed: number;
+    /** Dimensões que a medição não avaliou, por nome. */
+    unevaluated: string[];
+    /** Frase para a tela e para o recibo. Nunca vazia. */
+    summary: string;
 }
 
 /** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */

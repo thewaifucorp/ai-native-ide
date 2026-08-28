@@ -85,6 +85,60 @@ pub struct PublishAttempt {
     /// The record, present only when the publication actually happened.
     pub record: Option<PublishRecord>,
     pub snapshot: LifecycleSnapshot,
+    /// O que se sabia do projeto no momento da publicação — ver `PublishEvaluation`.
+    pub evaluation: PublishEvaluation,
+}
+
+/// O veredito do harness no instante de publicar.
+///
+/// ── POR QUE ISTO EXISTE (§15) ─────────────────────────────────────────────
+/// Publicar não consultava o harness. Dava para publicar com check vermelho e
+/// com dimensões nunca avaliadas, e nada dizia — a publicação saía com a mesma
+/// cara de uma publicação sobre um projeto medido. "Deep evaluation em
+/// publicação" é isto: o que se sabia, e o que não se sabia, dito ANTES de
+/// confirmar, e carregado junto do que aconteceu.
+///
+/// O harness roda aqui SEM executar comandos declarados: publicar não pode
+/// disparar build ou teste por conta própria, que é o automático que o §4 proíbe.
+/// Então build e testes aparecem como não avaliados, o que é a verdade.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishEvaluation {
+    /// Checks falhando agora.
+    pub failed: usize,
+    /// Dimensões que esta medição não avaliou, por nome.
+    pub unevaluated: Vec<String>,
+    /// Uma frase para a tela e para o recibo. Nunca vazia.
+    pub summary: String,
+}
+
+/// Roda o harness, sem executar comandos, e resume o que ele soube.
+fn evaluate_before_publishing(root: &Path) -> PublishEvaluation {
+    let run = crate::harness::run(root, 0, false);
+    let unevaluated: Vec<String> = run
+        .report
+        .coverage
+        .iter()
+        .filter(|row| !row.evaluated)
+        .map(|row| row.label.clone())
+        .collect();
+    let summary = match (run.report.failed, unevaluated.len()) {
+        (0, 0) => "o harness não achou falha e avaliou todas as dimensões".to_string(),
+        (0, n) => format!(
+            "o harness não achou falha, e {n} dimensão(ões) não foram avaliadas: {}",
+            unevaluated.join(", ")
+        ),
+        (f, 0) => format!("{f} check(s) falhando agora"),
+        (f, n) => format!(
+            "{f} check(s) falhando agora, e {n} dimensão(ões) não avaliadas: {}",
+            unevaluated.join(", ")
+        ),
+    };
+    PublishEvaluation {
+        failed: run.report.failed,
+        unevaluated,
+        summary,
+    }
 }
 
 fn target_of(value: &str) -> Result<PublishTarget, String> {
@@ -212,6 +266,9 @@ pub fn export(root: &Path) -> Result<PublishAttempt, String> {
     let rel = format!("{EXPORTS_REL}/export-{}.json", manifest.version);
     let effect = LifecycleEffect::LocalExport { path: rel.clone() };
     Ok(PublishAttempt {
+        // O export local também carrega o que se sabia: reabrir um export e
+        // descobrir depois que ele saiu com check vermelho é a mesma surpresa.
+        evaluation: evaluate_before_publishing(root),
         needs_confirmation: false,
         reversibility: effect.reversibility(),
         compensation: compensation_for(&effect),
@@ -262,6 +319,7 @@ pub fn publish(
 ) -> Result<PublishAttempt, String> {
     let target = target_of(target)?;
     let snapshot = snapshot_of(root)?;
+    let evaluation = evaluate_before_publishing(root);
     let project_id = snapshot
         .project_id
         .clone()
@@ -309,7 +367,12 @@ pub fn publish(
     // O motor decide se pergunta. `Reversible` seria o único caso que dispensa,
     // e publicação externa nunca é reversível.
     let irreversible = !matches!(reversibility, Reversibility::Reversible);
-    if confirmation_for(irreversible, confirmed) == ConfirmationDecision::ConfirmFirst {
+    // Check vermelho também pede confirmação, mesmo em alvo reversível: publicar
+    // sobre falha conhecida pode ser uma escolha, mas não pode ser um acidente.
+    let precisa_por_evidencia = evaluation.failed > 0;
+    if confirmation_for(irreversible || precisa_por_evidencia, confirmed)
+        == ConfirmationDecision::ConfirmFirst
+    {
         return Ok(PublishAttempt {
             needs_confirmation: true,
             reversibility,
@@ -317,6 +380,7 @@ pub fn publish(
             explain,
             record: None,
             snapshot,
+            evaluation,
         });
     }
 
@@ -340,6 +404,7 @@ pub fn publish(
         explain,
         record: Some(record),
         snapshot: snapshot_of(root)?,
+        evaluation,
     })
 }
 
@@ -408,6 +473,38 @@ fn relative_label(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §15 — publicar carrega o que se sabia, e falha conhecida pede decisão.
+    ///
+    /// Publicar não consultava o harness: dava para publicar com check vermelho e
+    /// com dimensões nunca avaliadas, e a publicação saía com a mesma cara de uma
+    /// publicação sobre projeto medido.
+    #[test]
+    fn publicar_carrega_o_veredito_do_harness() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".instrument")).expect("instrument");
+        // Projeto registrado é pré-requisito de publicar; sem isso o teste
+        // mediria a recusa, não a avaliação.
+        crate::project::register(root, "Lista", "Anotar itens e ver de dois telefones")
+            .expect("registro");
+
+        let tentativa = publish(root, "compensable", false, None, Vec::new()).expect("attempt");
+
+        assert!(
+            !tentativa.evaluation.summary.trim().is_empty(),
+            "o veredito nunca vem vazio"
+        );
+        assert!(
+            !tentativa.evaluation.unevaluated.is_empty(),
+            "num projeto sem comandos declarados, há dimensões não avaliadas — e publicar tem \
+             de dizer QUAIS"
+        );
+        assert!(
+            tentativa.needs_confirmation,
+            "publicação externa compensável pede confirmação antes de sair"
+        );
+    }
 
     fn registered_project() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
