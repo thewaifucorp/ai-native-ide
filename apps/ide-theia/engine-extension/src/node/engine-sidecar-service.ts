@@ -314,6 +314,10 @@ export class EngineSidecarService implements EngineService {
         return this.call('preview_stop', { root });
     }
 
+    previewRestart(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_restart', { root });
+    }
+
     // ── §4 reconciliation ─────────────────────────────────────────────────────
 
     reconcileScan(root: string): Promise<ReconciliationSnapshot> {

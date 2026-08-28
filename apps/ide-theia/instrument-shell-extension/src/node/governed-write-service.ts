@@ -397,7 +397,18 @@ export class GovernedWriteServiceImpl implements GovernedWriteService {
                 // this project); keeping it is not a scope leak.
                 return true;
             }
-            const resolved = path.resolve(entry.path);
+            // ── DEFEITO QUE A JORNADA DO §12 ACHOU ──────────────────────────
+            // O broker emite `proposed` com o caminho RELATIVO que recebeu
+            // (`a.md`) e `snapshot_created`/`executed` com o absoluto. Este
+            // filtro resolvia os dois contra o cwd do BACKEND, então todo evento
+            // relativo caía fora da raiz e era descartado como "de outro
+            // projeto" — a trilha mostrava a execução e escondia a proposta que
+            // a originou, silenciosamente, num contador de console.
+            //
+            // Um caminho relativo é, por construção, relativo à raiz do efeito.
+            const resolved = path.isAbsolute(entry.path)
+                ? path.resolve(entry.path)
+                : path.resolve(root, entry.path);
             return resolved === root || resolved.startsWith(`${root}${path.sep}`);
         });
         const foreign = result.activity.length - local.length;

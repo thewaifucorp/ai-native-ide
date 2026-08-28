@@ -50,6 +50,8 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -415,13 +417,20 @@ pub fn start(root: &Path) -> Result<PreviewSnapshot, String> {
     let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
-    let child = Command::new("sh")
+    let mut command = Command::new("sh");
+    command
         .arg("-c")
         .arg(&declaration.command)
         .current_dir(&cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
+        .stderr(Stdio::from(log_err));
+    // O comando declarado roda sob um `sh`, então o processo do servidor é NETO
+    // deste sidecar. Num grupo próprio, `stop` consegue derrubar a árvore
+    // inteira; sem isso, matar o `sh` deixa o servidor vivo (ver `stop`).
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command
         .spawn()
         .map_err(|error| format!("`{}` não pôde ser iniciado: {error}", declaration.command))?;
 
@@ -600,6 +609,20 @@ pub fn status(root: &Path) -> Result<PreviewSnapshot, String> {
 ///
 /// The state is kept (with `stopped: true`) instead of erased, so the failures
 /// recorded while it ran stay inspectable and "broken" is not misread as a crash.
+/// Para o preview e sobe de novo, na mesma chamada.
+///
+/// Existe porque o botão da UI dizia "Reiniciar" e chamava `start`, e `start`,
+/// vendo o filho vivo, devolve o runtime existente. O clique não fazia nada: o
+/// processo velho seguia de pé e o painel mostrava a saúde DELE. Quem tinha
+/// acabado de mudar o código lia "SAUDÁVEL" do código antigo — o preview
+/// respondendo por um processo que não é o que a pessoa pensa que é.
+pub fn restart(root: &Path) -> Result<PreviewSnapshot, String> {
+    // `stop` espera o filho ser recolhido antes de voltar, então a porta já
+    // está livre aqui: o `start` seguinte sobe processo novo, não reaproveita.
+    let _ = stop(root)?;
+    start(root)
+}
+
 pub fn stop(root: &Path) -> Result<PreviewSnapshot, String> {
     let (declared, _) = read_declaration(root);
     let key = root.to_string_lossy().into_owned();
@@ -608,6 +631,37 @@ pub fn stop(root: &Path) -> Result<PreviewSnapshot, String> {
         return status_unstarted(root, declared);
     };
     if let Some(child) = runtime.child.as_mut() {
+        // ── DEFEITO QUE A JORNADA DO §12 ACHOU ──────────────────────────────
+        // `child` é o `sh -c`; quem escuta a porta é o processo que ELE criou.
+        // Matar só o `sh` deixava o servidor vivo — e a consequência não era
+        // "sobrou processo": a próxima execução do preview sondava o ZUMBI e o
+        // via saudável. Um preview que reporta a saúde de outro processo é pior
+        // do que um preview quebrado.
+        //
+        // Com o grupo próprio criado no `start`, o sinal vai para a árvore toda.
+        #[cfg(unix)]
+        {
+            // O sinal só pode ir para o grupo se o filho for LÍDER do próprio
+            // grupo. Sem esta checagem, um filho que herdou o grupo do pai faz
+            // `kill -- -pid` acertar o grupo de quem iniciou o sidecar — ou
+            // seja, derruba o terminal e o backend do IDE junto. Aconteceu.
+            let pid = child.id() as i32;
+            let leader = Command::new("ps")
+                .args(["-o", "pgid=", "-p", &pid.to_string()])
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok())
+                .and_then(|text| text.trim().parse::<i32>().ok())
+                .is_some_and(|pgid| pgid == pid);
+            if leader {
+                let _ = Command::new("kill")
+                    .arg("-TERM")
+                    .arg(format!("-{pid}"))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -766,6 +820,41 @@ mod tests {
             "saída limpa não pode virar evidência de falha"
         );
         assert!(!snapshot.running);
+    }
+
+    /// O botão "Reiniciar" da UI chamava `start`, e `start` num preview vivo
+    /// devolve o que JÁ está rodando. O clique não trocava processo nenhum, e o
+    /// painel seguia mostrando a saúde do processo antigo — quem tinha acabado
+    /// de mudar o código lia a saúde do código velho. `restart` tem de derrubar
+    /// e subir outro.
+    #[test]
+    fn restart_troca_o_processo_em_vez_de_devolver_o_que_ja_rodava() {
+        let dir = project(None);
+        let marca = dir.path().join("subiu.txt");
+        // Cada processo que sobe acrescenta uma linha: contar linhas conta
+        // quantas vezes um processo NOVO realmente rodou.
+        std::fs::write(
+            dir.path().join(".instrument/preview.json"),
+            format!(
+                r#"{{"command":"echo subiu >> {} && sleep 30","url":"http://127.0.0.1:1/","readyTimeoutMs":300}}"#,
+                marca.display()
+            ),
+        )
+        .expect("declaração");
+
+        start(dir.path()).expect("start");
+        let depois_do_start = std::fs::read_to_string(&marca).unwrap_or_default();
+        assert_eq!(depois_do_start.lines().count(), 1, "o primeiro start sobe um");
+
+        restart(dir.path()).expect("restart");
+        let depois_do_restart = std::fs::read_to_string(&marca).unwrap_or_default();
+        assert_eq!(
+            depois_do_restart.lines().count(),
+            2,
+            "reiniciar tem de subir processo NOVO, não devolver o que já rodava"
+        );
+
+        stop(dir.path()).expect("stop");
     }
 
     /// Two failures recorded in different sessions must not share an id: a

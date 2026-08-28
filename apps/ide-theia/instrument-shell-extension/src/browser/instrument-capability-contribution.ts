@@ -96,6 +96,7 @@ export const CMD_CHECKS_RUN = 'instrument.checks.run';
 export const CMD_PREVIEW_START = 'instrument.preview.start';
 export const CMD_PREVIEW_STATUS = 'instrument.preview.status';
 export const CMD_PREVIEW_STOP = 'instrument.preview.stop';
+export const CMD_PREVIEW_RESTART = 'instrument.preview.restart';
 export const CMD_RECONCILE_SCAN = 'instrument.reconcile.scan';
 export const CMD_RECONCILE_DECIDE = 'instrument.reconcile.decide';
 export const CMD_CONTEXT_COMPILE = 'instrument.context.compile';
@@ -383,6 +384,10 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_PREVIEW_STOP, label: 'Instrument: parar preview (§4)' },
             { execute: () => this.previewStop() }
+        );
+        commands.registerCommand(
+            { id: CMD_PREVIEW_RESTART, label: 'Instrument: reiniciar preview (§4)' },
+            { execute: () => this.previewStart(true) }
         );
         commands.registerCommand(
             { id: CMD_RECONCILE_SCAN, label: 'Instrument: comparar declarado com observado (§4)' },
@@ -1041,14 +1046,23 @@ export class InstrumentCapabilityContribution
         return root ? FileUri.fsPath(new URI(root)) : undefined;
     }
 
-    protected async previewStart(): Promise<void> {
+    /**
+     * `restart: true` derruba o processo antes de subir outro.
+     *
+     * Sem isso, o botão rotulado "Reiniciar" chamava este mesmo caminho, e o
+     * motor devolvia o preview que já estava rodando: o clique não fazia nada
+     * e o painel seguia mostrando a saúde do processo ANTIGO.
+     */
+    protected async previewStart(restart = false): Promise<void> {
         const root = this.rootPath;
         if (!root) {
             return;
         }
         this.store.setPreviewBusy(true);
         try {
-            const snapshot = await this.engine.previewStart(root);
+            const snapshot = restart
+                ? await this.engine.previewRestart(root)
+                : await this.engine.previewStart(root);
             this.store.setPreview(snapshot);
             const health = snapshot.state?.health;
             if (health === 'healthy') {

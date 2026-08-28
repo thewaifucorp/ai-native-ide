@@ -273,6 +273,16 @@ export interface EngineService {
     /** Stops it, keeping the recorded failures inspectable. */
     previewStop(root: string): Promise<PreviewSnapshot>;
 
+    /**
+     * Stops and starts again, as one call.
+     *
+     * `previewStart` on a live preview returns the RUNNING one — it never
+     * replaces the process. So a restart built as "call start again" is a
+     * no-op, and the panel keeps reporting the health of the old process:
+     * someone who just changed the code reads the old code's health.
+     */
+    previewRestart(root: string): Promise<PreviewSnapshot>;
+
     // ── §4 reconciliation: declared behavior vs observed behavior ─────────────
     // Not §3's axis. §3 reconciles intent against implementation through
     // `.product/` claims; this reconciles a declaration against what was

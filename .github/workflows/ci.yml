@@ -98,6 +98,17 @@ jobs:
         run: yarn --cwd apps/ide-theia build:ext
       - name: Extension tests
         run: yarn --cwd apps/ide-theia test:ext
+      # §12: a jornada ponta a ponta roda no artefato THEIA (a antiga provava a
+      # rota do Tauri, que é justamente o que o §12 exclui). Ela fala com o
+      # sidecar de verdade, então o binário precisa existir antes — por isso o
+      # build de debug aqui, e não em `foundation`, que não tem as deps de node.
+      - name: Build engine sidecar (para a jornada)
+        run: cargo build --manifest-path apps/ide-theia/engine-sidecar/Cargo.toml
+      - name: Jornada ponta a ponta (§12)
+        run: yarn --cwd apps/ide-theia test:journey
+        env:
+          ENGINE_SIDECAR_BIN: >-
+            ${{ github.workspace }}/apps/ide-theia/engine-sidecar/target/debug/engine-sidecar
 
   windows-installer:
     name: Windows installer

@@ -35,6 +35,7 @@ import {
     CMD_NOTES_PROMOTE,
     CMD_NOTES_READ,
     CMD_NOTES_RESOLVE,
+    CMD_PREVIEW_RESTART,
     CMD_PREVIEW_START,
     CMD_PREVIEW_STATUS,
     CMD_PREVIEW_STOP,
@@ -610,7 +611,11 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     <button
                         className="cap-btn primary"
                         disabled={busy || !declared}
-                        onClick={() => this.commands.executeCommand(CMD_PREVIEW_START)}
+                        onClick={() =>
+                            this.commands.executeCommand(
+                                snapshot.running ? CMD_PREVIEW_RESTART : CMD_PREVIEW_START
+                            )
+                        }
                     >
                         {snapshot.running ? 'Reiniciar' : 'Iniciar'}
                     </button>

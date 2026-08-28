@@ -289,6 +289,26 @@ describe('GovernedWriteServiceImpl — propose never leaves a write applied', ()
         );
     });
 
+    /// O broker emite `proposed` com caminho RELATIVO e `executed` com absoluto.
+    /// Resolver o relativo contra o cwd do backend descartava toda proposta da
+    /// trilha — a execução aparecia e a proposta que a originou, não.
+    it('evento com caminho relativo é do projeto, não de outro lugar', async () => {
+        const { service, engine, root, rootUri } = fixture();
+        engine.activityRows = [
+            { kind: 'proposed', effect_id: 'e1', path: 'alvo.md' },
+            { kind: 'executed', effect_id: 'e1', path: path.join(root, 'alvo.md') },
+            { kind: 'executed', effect_id: 'e2', path: '/outro/projeto/alvo.md' }
+        ];
+
+        const trail = await service.activity(rootUri);
+
+        assert.deepStrictEqual(
+            trail.map(t => `${t.kind}:${t.effect_id}`),
+            ['proposed:e1', 'executed:e1'],
+            'a proposta relativa fica; a execução de outro projeto sai'
+        );
+    });
+
     it('recusa alvo que existe e não é arquivo', async () => {
         const { service, root, rootUri } = fixture();
         fs.mkdirSync(path.join(root, 'uma-pasta'));

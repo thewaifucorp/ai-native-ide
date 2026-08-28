@@ -42,13 +42,14 @@
     "build": "yarn build:ext && theia build --mode development",
     "download:plugins": "theia download:plugins",
     "start": "VSX_REGISTRY_URL=https://open-vsx.org theia start ./workspace --plugins=local-dir:plugins --hostname 0.0.0.0 --port 3010",
-    "test:ext": "tsc -p instrument-shell-extension && mocha \"instrument-shell-extension/lib/node/*.spec.js\""
+    "test:ext": "tsc -p instrument-shell-extension && mocha \"instrument-shell-extension/lib/node/*.spec.js\"",
+    "test:journey": "tsc -p instrument-shell-extension && mocha --exit --timeout 120000 \"instrument-shell-extension/lib/node/*.e2e.js\""
   },
   "theia": {
     "target": "browser",
     "frontend": {
       "config": {
-        "applicationName": "Instrument · IDE (001 spike)",
+        "applicationName": "Instrument \u00b7 IDE (001 spike)",
         "defaultTheme": "instrument-dark",
         "preferences": {
           "files.enableTrash": false,

@@ -353,7 +353,7 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
         // §4 — preview. Spawning a process, sleeping between probes and opening
         // sockets is blocking work; it runs off the async worker like the checks.
         // `preview_status` never starts anything: not started is its own state.
-        "preview_start" | "preview_status" | "preview_stop" => {
+        "preview_start" | "preview_status" | "preview_stop" | "preview_restart" => {
             #[derive(Deserialize)]
             struct RootParams {
                 root: String,
@@ -364,6 +364,7 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let snapshot = tokio::task::spawn_blocking(move || match method.as_str() {
                 "preview_start" => preview::start(&root),
                 "preview_stop" => preview::stop(&root),
+                "preview_restart" => preview::restart(&root),
                 _ => preview::status(&root),
             })
             .await
