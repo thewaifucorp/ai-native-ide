@@ -269,6 +269,65 @@ fn probe(url: &str) -> Probe {
 }
 
 /// Last `MAX_LOG_TAIL` characters of the preview log, on a char boundary.
+/// Onde as falhas observadas ficam depois que o processo que as produziu morreu.
+const OBSERVED_REL: &str = ".instrument/observed.jsonl";
+
+/// Quantas observações o arquivo guarda antes de descartar as mais antigas.
+const OBSERVED_CAP: usize = 1000;
+
+/// Acrescenta uma falha observada ao histórico do projeto.
+///
+/// ── POR QUE ISTO EXISTE ───────────────────────────────────────────────────
+/// As observações vinham só do runtime em memória. Então observar uma falha,
+/// reiniciar o preview para tentar consertar, e voltar para reconciliar deixava
+/// "0 comportamento observado" — a evidência sumia junto com o processo, e a
+/// decisão que tinha sido tomada citava um id que já não existia. Evidência tem
+/// de sobreviver ao processo que a produziu, senão a reconciliação do §4 só vale
+/// dentro de uma execução.
+///
+/// Falha ao gravar NÃO derruba o preview: perder o histórico é ruim, deixar de
+/// subir o projeto por causa do histórico é pior. O erro volta como recusa do
+/// ledger, que é onde as recusas já aparecem.
+fn append_observed(root: &Path, failure: &PreviewFailure) -> Option<String> {
+    let file = root.join(OBSERVED_REL);
+    if let Some(parent) = file.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return Some(error.to_string());
+        }
+    }
+    let line = match serde_json::to_string(failure) {
+        Ok(line) => line,
+        Err(error) => return Some(error.to_string()),
+    };
+    let mut linhas: Vec<String> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    linhas.push(line);
+    // Corta as mais antigas. O corte é registrado no próprio arquivo pela
+    // ausência: quem lê recebe `descartadas` contado na leitura, e a tela diz.
+    let descartadas = linhas.len().saturating_sub(OBSERVED_CAP);
+    if descartadas > 0 {
+        linhas.drain(0..descartadas);
+    }
+    match std::fs::write(&file, format!("{}\n", linhas.join("\n"))) {
+        Ok(()) => None,
+        Err(error) => Some(error.to_string()),
+    }
+}
+
+/// As falhas que este projeto já observou, incluindo execuções anteriores.
+fn observed_history(root: &Path) -> Vec<PreviewFailure> {
+    std::fs::read_to_string(root.join(OBSERVED_REL))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<PreviewFailure>(line).ok())
+        .collect()
+}
+
 /// A linha do log que explica uma morte precoce, citada literalmente.
 ///
 /// Prefere a primeira linha que se parece com um erro; sem nenhuma, usa a última
@@ -350,7 +409,7 @@ impl PreviewRuntime {
 
     /// Records a non-zero exit. A clean exit is refused by the engine, and that
     /// refusal is reported rather than worked around.
-    fn record_exit(&mut self, exit_code: i32, detail: &str) -> Option<String> {
+    fn record_exit(&mut self, root: &Path, exit_code: i32, detail: &str) -> Option<String> {
         let (id, evidence_id) = self.next_id("exit");
         let exit = PreviewProcessExit {
             id: id.clone(),
@@ -364,14 +423,18 @@ impl PreviewRuntime {
         };
         match self.ledger.record_nonzero_process_exit(exit) {
             Ok(_) => {
-                self.failure_ids.push(id);
-                None
+                self.failure_ids.push(id.clone());
+                // A evidência tem de sobreviver ao processo: ver `append_observed`.
+                self.ledger
+                    .failure(&id)
+                    .cloned()
+                    .and_then(|failure| append_observed(root, &failure))
             }
             Err(error) => Some(error.to_string()),
         }
     }
 
-    fn record_health_failure(&mut self, url: &str, detail: &str) -> Option<String> {
+    fn record_health_failure(&mut self, root: &Path, url: &str, detail: &str) -> Option<String> {
         let (id, evidence_id) = self.next_id("health");
         let check = PreviewHealthCheck {
             id: id.clone(),
@@ -386,8 +449,11 @@ impl PreviewRuntime {
         };
         match self.ledger.record_failed_health_check(check) {
             Ok(_) => {
-                self.failure_ids.push(id);
-                None
+                self.failure_ids.push(id.clone());
+                self.ledger
+                    .failure(&id)
+                    .cloned()
+                    .and_then(|failure| append_observed(root, &failure))
             }
             Err(error) => Some(error.to_string()),
         }
@@ -534,7 +600,7 @@ pub fn start(root: &Path) -> Result<PreviewSnapshot, String> {
                 }
                 other => {
                     ledger_refusal = runtime
-                        .record_exit(other.unwrap_or(-1), &detail)
+                        .record_exit(root, other.unwrap_or(-1), &detail)
                         .or(ledger_refusal);
                     runtime.move_to(PreviewHealth::Broken, Some(detail));
                 }
@@ -568,7 +634,7 @@ pub fn start(root: &Path) -> Result<PreviewSnapshot, String> {
                     runtime.last_probe = Some(detail.clone());
                     if now_ms() >= deadline {
                         ledger_refusal = runtime
-                            .record_health_failure(url, &detail)
+                            .record_health_failure(root, url, &detail)
                             .or(ledger_refusal);
                         runtime.move_to(
                             PreviewHealth::Broken,
@@ -625,7 +691,7 @@ pub fn status(root: &Path) -> Result<PreviewSnapshot, String> {
                 .unwrap_or_else(|| "encerrado por sinal".to_string());
             let detail = format!("o processo do preview terminou (código {code_shown})");
             if code != Some(0) {
-                refusal = runtime.record_exit(code.unwrap_or(-1), &detail);
+                refusal = runtime.record_exit(root, code.unwrap_or(-1), &detail);
             }
             // The last probe now describes a process that no longer exists. Left
             // unlabelled next to a broken state it reads as a contradiction —
@@ -654,7 +720,7 @@ pub fn status(root: &Path) -> Result<PreviewSnapshot, String> {
                     } else {
                         PreviewHealth::Broken
                     };
-                    refusal = runtime.record_health_failure(url, &detail);
+                    refusal = runtime.record_health_failure(root, url, &detail);
                     runtime.move_to(next, Some(detail));
                 }
             }
@@ -840,13 +906,33 @@ fn snapshot_from(
 pub fn observations(root: &Path) -> Vec<ide_reconciliation::ObservedBehavior> {
     let key = root.to_string_lossy().into_owned();
     let Ok(mut map) = registry().lock() else {
-        return Vec::new();
+        return observed_history(root)
+            .iter()
+            .map(|failure| {
+                failure.as_observation(
+                    format!("observed:{}", failure.id),
+                    crate::reconcile::PREVIEW_SUBJECT,
+                    serde_json::json!("broken"),
+                )
+            })
+            .collect();
     };
-    let Some(runtime) = map.get_mut(&key) else {
-        return Vec::new();
-    };
-    runtime
-        .failures()
+    let vivas = map
+        .get_mut(&key)
+        .map(|runtime| runtime.failures())
+        .unwrap_or_default();
+    drop(map);
+    // Histórico primeiro, execução atual depois: a evidência de uma execução
+    // anterior continua valendo, e é justamente ela que a pessoa reinicia o
+    // preview para tentar consertar. Deduplicado por id, para a mesma falha não
+    // inflar a reconciliação.
+    let mut falhas = observed_history(root);
+    for falha in vivas {
+        if !falhas.iter().any(|existente| existente.id == falha.id) {
+            falhas.push(falha);
+        }
+    }
+    falhas
         .iter()
         .map(|failure| {
             failure.as_observation(
@@ -915,6 +1001,44 @@ mod tests {
             "saída limpa não pode virar evidência de falha"
         );
         assert!(!snapshot.running);
+    }
+
+    /// A evidência sobrevive ao processo que a produziu, e ao reinício.
+    ///
+    /// Achado num projeto cru: observei a falha, reiniciei o preview para tentar
+    /// consertar, e a reconciliação passou a dizer "0 comportamento observado" —
+    /// a evidência morria com o runtime, e a decisão já tomada citava um id que
+    /// não existia mais.
+    #[test]
+    fn observacao_sobrevive_ao_reinicio_do_preview() {
+        let dir = project(Some(
+            r#"{"command":"exit 7","url":"http://127.0.0.1:1/","readyTimeoutMs":300}"#,
+        ));
+
+        start(dir.path()).expect("start");
+        let primeira = observations(dir.path());
+        assert_eq!(
+            primeira.len(),
+            1,
+            "a falha observada entra na reconciliação"
+        );
+
+        // Reinício: runtime novo, memória zerada.
+        restart(dir.path()).expect("restart");
+        registry()
+            .lock()
+            .unwrap()
+            .remove(&dir.path().to_string_lossy().into_owned());
+
+        let depois = observations(dir.path());
+        assert!(
+            depois.len() >= 1,
+            "o que foi observado continua observado depois do reinício"
+        );
+        assert!(
+            depois.iter().any(|o| o.id == primeira[0].id),
+            "e é a MESMA observação, com o id que a decisão citou"
+        );
     }
 
     /// 404 na url de saúde não é saúde.
