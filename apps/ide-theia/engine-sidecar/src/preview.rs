@@ -1032,7 +1032,7 @@ mod tests {
 
         let depois = observations(dir.path());
         assert!(
-            depois.len() >= 1,
+            !depois.is_empty(),
             "o que foi observado continua observado depois do reinício"
         );
         assert!(
