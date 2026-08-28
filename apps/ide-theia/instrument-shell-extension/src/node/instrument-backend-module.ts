@@ -32,6 +32,8 @@ import { AGENT_SESSION_SERVICE_PATH, AgentSessionService } from '../common/agent
 import { AgentSessionServiceImpl } from './agent-session-service';
 import { PRODUCT_SERVICE_PATH, ProductService } from '../common/product-protocol';
 import { ProductServiceImpl } from './product-service';
+import { RUST_LSP_SERVICE_PATH, RustLspService } from '../common/rust-lsp-protocol';
+import { RustLspServiceImpl } from './rust-lsp-service';
 import { McpContribution } from './mcp-contribution';
 
 export default new ContainerModule(bind => {
@@ -63,6 +65,11 @@ export default new ContainerModule(bind => {
     bind(ProductServiceImpl).toSelf().inSingletonScope();
     bind(ProductService).toService(ProductServiceImpl);
 
+    // Inteligência de Rust: cliente LSP nosso, porque a extensão do VS Code não
+    // ativa neste host de plugins (medido — ver o protocolo).
+    bind(RustLspServiceImpl).toSelf().inSingletonScope();
+    bind(RustLspService).toService(RustLspServiceImpl);
+
     // Same-origin, per-project, allow-listed serving of capability artifacts
     // (today: `<root>/.aag/graph.html` for the Grafo capability).
     bind(CapabilitySiteContribution).toSelf().inSingletonScope();
@@ -72,6 +79,15 @@ export default new ContainerModule(bind => {
     // external agent gets the IDE's guarantees instead of writing behind them.
     bind(McpContribution).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(McpContribution);
+
+    bind(ConnectionHandler)
+        .toDynamicValue(
+            ctx =>
+                new RpcConnectionHandler<object>(RUST_LSP_SERVICE_PATH, () =>
+                    ctx.container.get<RustLspService>(RustLspService)
+                )
+        )
+        .inSingletonScope();
 
     bind(ConnectionHandler)
         .toDynamicValue(

@@ -20,6 +20,8 @@ import { InstrumentShellContribution } from './instrument-shell-contribution';
 import { InstrumentApplicationShell } from './instrument-application-shell';
 import { InstrumentDataContribution } from './instrument-data-contribution';
 import { GOVERNED_SERVICE_PATH, GovernedWriteService } from '../common/governed-protocol';
+import { RUST_LSP_SERVICE_PATH, RustLspService } from '../common/rust-lsp-protocol';
+import { RustLspContribution } from './rust-lsp-contribution';
 import { RailWidget } from './widgets/rail-widget';
 import { WorkWidget } from './widgets/work-widget';
 import { DockWidget } from './widgets/dock-widget';
@@ -112,6 +114,18 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
             return provider.createProxy<GovernedWriteService>(GOVERNED_SERVICE_PATH);
         })
         .inSingletonScope();
+    // Rust no editor: proxy para o cliente LSP do backend, mais a contribuição
+    // que registra marcadores, hover, definição e completar no Monaco. O
+    // servidor só sobe quando a pessoa abre um arquivo Rust.
+    bind(RustLspService)
+        .toDynamicValue(ctx => {
+            const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+            return provider.createProxy<RustLspService>(RUST_LSP_SERVICE_PATH);
+        })
+        .inSingletonScope();
+    bind(RustLspContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(RustLspContribution);
+
     bind(InstrumentDataContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(InstrumentDataContribution);
     bind(CommandContribution).toService(InstrumentDataContribution);

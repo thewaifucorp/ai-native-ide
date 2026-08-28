@@ -8,6 +8,7 @@
 
 import { spawn } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { EngineService } from 'engine-extension';
 import { CapabilityProvider, CapabilityState, CapabilityStatus } from '../common/capability-protocol';
@@ -305,7 +306,147 @@ const GOVERNANCA: CapabilityDefinition = {
 };
 
 /** Everything the registry hosts. Order is the display order. */
-export const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [GRAFO, AGENTES, GOVERNANCA];
+
+/**
+ * §1 — inteligência de Rust como CAPABILITY, não como suposição.
+ *
+ * A extensão `rust-lang.rust-analyzer` foi tentada e medida: o vsix do open-vsx
+ * não traz o binário do servidor e a ativação falha neste host de plugins mesmo
+ * com o binário no lugar. Então quem fala LSP é o nosso cliente
+ * (`rust-lsp-service.ts`), e o que esta capability responde é a pergunta que
+ * sobra: **este ambiente tem o servidor?**
+ *
+ * A busca é portátil de propósito — PATH, `rustup which`, `CARGO_HOME/bin`, com
+ * o nome `.exe` no Windows. Nenhum caminho de máquina específica aparece: o que
+ * existe aqui é a convenção de cada sistema, e o estado é dito com a origem
+ * ("via rustup", "via PATH") para que duas máquinas diferentes produzam uma
+ * diferença explicável em vez de mistério.
+ */
+const RUST_LSP: CapabilityDefinition = {
+    id: 'rust-lsp',
+    label: 'Rust (rust-analyzer)',
+    summary:
+        'Erro de compilação na linha, tipo no hover, ir para a definição e completar em '
+        + 'arquivos Rust deste projeto.',
+    installLabel: 'Instalar via rustup',
+    providers: [
+        {
+            id: 'rust-analyzer-local',
+            label: 'rust-analyzer local',
+            kind: 'local',
+            detail:
+                'Servidor de linguagem executado na máquina, falado por um cliente LSP do '
+                + 'próprio IDE (a extensão do VS Code não ativa neste host).'
+        }
+    ],
+    async detect(ctx): Promise<DetectedCapability> {
+        const servidor = await findRustAnalyzer(ctx.rootFsPath);
+        if (!servidor.path) {
+            const rustup = await run('rustup', ['--version'], ctx.rootFsPath, 15_000);
+            const temRustup = rustup.code === 0;
+            return {
+                status: 'tool-missing',
+                detail: servidor.shim
+                    ? `Existe um atalho em ${servidor.shim}, mas ele não é um servidor: chamá-lo `
+                      + 'não devolve versão. É o shim do rustup sem o componente instalado'
+                      + (temRustup ? ' — instalar resolve.' : ', e não há rustup para instalar.')
+                    : temRustup
+                    ? 'O `rust-analyzer` não está instalado. O rustup deste ambiente pode '
+                      + 'instalá-lo como componente.'
+                    : 'O `rust-analyzer` não está instalado e não há `rustup` para instalá-lo. '
+                      + 'Instale o rustup (https://rustup.rs) ou ponha o binário no PATH.',
+                installable: temRustup,
+                providerAvailability: {
+                    'rust-analyzer-local': {
+                        available: false,
+                        detail: 'binário `rust-analyzer` não encontrado no PATH, no rustup nem em CARGO_HOME/bin'
+                    }
+                }
+            };
+        }
+        const temCargo = fs.existsSync(path.join(ctx.rootFsPath, 'Cargo.toml'));
+        return {
+            status: 'ready',
+            detail:
+                `${servidor.version ?? 'rust-analyzer'} — encontrado via ${servidor.source} `
+                + `(${servidor.path}). `
+                + (temCargo
+                    ? 'Este projeto tem Cargo.toml, então a análise cobre o workspace.'
+                    : 'Este projeto NÃO tem Cargo.toml na raiz: o servidor sobe, mas analisa '
+                      + 'apenas arquivos soltos.'),
+            detectedVersion: servidor.version,
+            installable: false,
+            // O campo existente para "isto NÃO é coberto": a ausência é dita, não
+            // insinuada como pronta.
+            degradations: [
+                'renomear, ações de código e formatação não estão ligados nesta versão'
+            ],
+            providerAvailability: {
+                'rust-analyzer-local': { available: true, active: true }
+            }
+        };
+    },
+    async install(ctx): Promise<void> {
+        const result = await run(
+            'rustup',
+            ['component', 'add', 'rust-analyzer'],
+            ctx.rootFsPath,
+            300_000
+        );
+        if (result.code !== 0) {
+            throw new Error(
+                '`rustup component add rust-analyzer` falhou: '
+                + (firstLine(result.stderr) || firstLine(result.stdout) || 'sem saída')
+            );
+        }
+    }
+};
+
+/** Busca portátil do servidor — a mesma ordem que o cliente LSP usa. */
+async function findRustAnalyzer(
+    cwd: string
+): Promise<{ path?: string; version?: string; source: string; shim?: string }> {
+    const nome = process.platform === 'win32' ? 'rust-analyzer.exe' : 'rust-analyzer';
+    const candidatos: [string, string | undefined][] = [];
+
+    for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+        if (dir) {
+            candidatos.push(['PATH', path.join(dir, nome)]);
+        }
+    }
+    const viaRustup = await run('rustup', ['which', 'rust-analyzer'], cwd, 20_000);
+    if (viaRustup.code === 0) {
+        candidatos.push(['rustup', firstLine(viaRustup.stdout)]);
+    }
+    const cargoHome = process.env.CARGO_HOME ?? path.join(os.homedir(), '.cargo');
+    candidatos.push(['CARGO_HOME/bin', path.join(cargoHome, 'bin', nome)]);
+
+    // Existir não basta: o shim do rustup existe sem o componente e responde
+    // `error: Unknown binary 'rust-analyzer'` com código 0. Só conta quem se
+    // apresenta pelo nome — ver a nota longa em `rust-lsp-service.ts`.
+    let shimQuebrado: string | undefined;
+    for (const [source, candidato] of candidatos) {
+        if (!candidato || !fs.existsSync(candidato)) {
+            continue;
+        }
+        const versao = await run(candidato, ['--version'], cwd, 20_000);
+        const primeira = firstLine(versao.stdout);
+        if (primeira && /^rust-analyzer\b/i.test(primeira)) {
+            return { path: candidato, version: primeira, source };
+        }
+        shimQuebrado = candidato;
+    }
+    return shimQuebrado
+        ? { source: 'shim sem componente', shim: shimQuebrado }
+        : { source: 'não encontrado' };
+}
+
+export const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
+    GRAFO,
+    AGENTES,
+    GOVERNANCA,
+    RUST_LSP
+];
 
 /** Merge a definition + its detection into the wire-level state. */
 export function composeState(
