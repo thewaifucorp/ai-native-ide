@@ -93,7 +93,12 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand({ id: CMD_OPEN_RESOURCE, label: 'Instrument: abrir recurso' }, {
-            execute: (uri?: string) => (uri ? this.open(new URI(uri)) : undefined)
+            // A linha é opcional e vem 1-based, como a pessoa lê no painel.
+            // Abrir o arquivo e deixar a pessoa procurar a linha que o painel
+            // acabou de dizer é perder o elo: quem foi levado da afirmação até a
+            // implementação tem de cair EM CIMA dela.
+            execute: (uri?: string, line?: number) =>
+                uri ? this.open(new URI(uri), line) : undefined
         });
         commands.registerCommand({ id: CMD_GOVERNED_PROPOSE, label: 'Instrument: propor mudança (governed)' }, {
             execute: () => this.propose()
@@ -128,9 +133,15 @@ export class InstrumentDataContribution implements FrontendApplicationContributi
         this.store.setWorkspace(name, rootUri.toString(), entries);
     }
 
-    protected async open(uri: URI): Promise<void> {
+    protected async open(uri: URI, line?: number): Promise<void> {
         try {
-            await open(this.openers, uri);
+            // `selection` é entendida pelos openers de editor; para um opener que
+            // não seja editor ela é ignorada, e abrir sem seleção continua certo.
+            const options =
+                typeof line === 'number' && line > 0
+                    ? { selection: { start: { line: line - 1, character: 0 } } }
+                    : undefined;
+            await open(this.openers, uri, options);
         } catch (err) {
             this.messages.error(`Não foi possível abrir ${uri.path.base}: ${this.msg(err)}`);
         }

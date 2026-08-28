@@ -22,6 +22,7 @@ import {
     CMD_PRODUCT_REFRESH,
     CMD_PRODUCT_RESOLVE
 } from '../instrument-capability-contribution';
+import { CMD_SHOW_SURFACE } from '../instrument-shell-contribution';
 import { ClaimResult, ProductModel } from '../../common/product-protocol';
 
 /** Pill class por status — só `ok` recebe a cor saudável. */
@@ -138,13 +139,8 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
                         ? ` · afeta ${claim.affectedResources.join(', ')}`
                         : ''}
                 </small>
+                {this.renderChain(claim)}
                 <div className="cap-actions">
-                    <button
-                        className="cap-btn"
-                        onClick={() => this.openPath(claim.path)}
-                    >
-                        Abrir arquivo
-                    </button>
                     {claim.status === 'divergent' && (
                         <>
                             <button
@@ -170,6 +166,81 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
                         </>
                     )}
                 </div>
+            </div>
+        );
+    }
+
+    /**
+     * §14 — a cadeia navegável: assunto → fonte da verdade → implementação →
+     * evidência.
+     *
+     * Os quatro elos já existiam como TEXTO no cartão, e só o terceiro abria. A
+     * fonte ficava como um id (`fonte: leaderboard-intent`) que a pessoa tinha de
+     * ir procurar; e a implementação abria o arquivo sem levar à linha que o
+     * próprio painel acabou de citar. Um elo que não navega não é um elo.
+     *
+     * O grafo entra como ENRIQUECIMENTO, nunca como requisito: quando o aag não
+     * está pronto, a cadeia continua inteira e o cartão diz o estado e o motivo
+     * que a detecção deu, em vez de oferecer um botão que não faz nada.
+     */
+    protected renderChain(claim: ClaimResult): React.ReactNode {
+        const model = this.store.product;
+        const sot = model?.sots.find(source => source.id === claim.sotId);
+        // `grafo` é a CAPABILITY; `aag-local` é o provider dela. Procurar pelo id
+        // do provider aqui devolvia undefined sempre, e a cadeia dizia "grafo não
+        // detectado" mesmo com o grafo pronto — degradação falsa é tão ruim como
+        // esconder a degradação.
+        const graph = this.store.capabilities.find(capability => capability.id === 'grafo');
+        const graphReady = graph?.status === 'ready';
+
+        return (
+            <div className="chain">
+                <span className="chain-step">assunto</span>
+                <span className="chain-arrow">›</span>
+                {sot ? (
+                    <button
+                        className="chain-link"
+                        title={`abre ${sot.path} — a fonte que afirma isto`}
+                        onClick={() => this.openPath(sot.path)}
+                    >
+                        {sot.label || sot.id}
+                    </button>
+                ) : (
+                    <span className="chain-step" title={`o SoT ${claim.sotId} não está no modelo lido`}>
+                        {claim.sotId} (fonte não lida)
+                    </span>
+                )}
+                <span className="chain-arrow">›</span>
+                <button
+                    className="chain-link"
+                    title={
+                        claim.line
+                            ? `abre ${claim.path} na linha ${claim.line}`
+                            : `abre ${claim.path}`
+                    }
+                    onClick={() => this.openPath(claim.path, claim.line)}
+                >
+                    {claim.path}
+                    {claim.line ? `:${claim.line}` : ''}
+                </button>
+                <span className="chain-arrow">›</span>
+                <span className="chain-step" title={claim.evidence}>
+                    evidência
+                </span>
+                {graphReady ? (
+                    <button
+                        className="chain-link"
+                        title="abre o grafo local (aag) — quem mais toca neste código"
+                        onClick={() => this.commands.executeCommand(CMD_SHOW_SURFACE, 'grafo')}
+                    >
+                        ver no grafo
+                    </button>
+                ) : (
+                    <span className="chain-degraded">
+                        grafo {graph?.status ?? 'não detectado'}
+                        {graph?.detail ? ` — ${graph.detail}` : ''} · a cadeia acima não depende dele
+                    </span>
+                )}
             </div>
         );
     }
@@ -264,11 +335,11 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
     }
 
     /** Abre um caminho relativo do projeto no editor real. */
-    protected openPath(relPath: string): void {
+    protected openPath(relPath: string, line?: number): void {
         const root = this.store.workspaceRootUri;
         if (!root) {
             return;
         }
-        this.commands.executeCommand(CMD_OPEN_RESOURCE, `${root}/${relPath}`);
+        this.commands.executeCommand(CMD_OPEN_RESOURCE, `${root}/${relPath}`, line);
     }
 }

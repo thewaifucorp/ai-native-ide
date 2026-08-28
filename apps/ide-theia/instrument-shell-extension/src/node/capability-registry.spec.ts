@@ -29,6 +29,27 @@ function registry(definitions: CapabilityDefinition[]): CapabilityRegistryServic
     return service;
 }
 
+describe('CAPABILITY_DEFINITIONS — ids que a UI procura', () => {
+
+    /// §14 — a cadeia do Produto oferece "ver no grafo" procurando a capability
+    /// por id. Eu procurei por `aag-local`, que é o id do PROVIDER, e o find
+    /// devolvia undefined sempre: a cadeia dizia "grafo não detectado" com o
+    /// grafo pronto. Degradação falsa é tão ruim como esconder a degradação, e um
+    /// id errado não quebra compilação — então quebra aqui.
+    it('grafo é o id da capability, e aag-local o do provider dentro dela', () => {
+        const grafo = CAPABILITY_DEFINITIONS.find(definition => definition.id === 'grafo');
+        assert.ok(grafo, 'a UI procura a capability do grafo pelo id `grafo`');
+        assert.ok(
+            grafo!.providers.some(provider => provider.id === 'aag-local'),
+            '`aag-local` é provider desta capability, nunca o id dela'
+        );
+        assert.ok(
+            !CAPABILITY_DEFINITIONS.some(definition => definition.id === 'aag-local'),
+            'se um dia `aag-local` virar capability, a busca da cadeia precisa ser revista'
+        );
+    });
+});
+
 describe('CapabilityRegistryService — honesty rules', () => {
 
     it('reports `unknown` (never ready) when a detector throws', async () => {

@@ -758,3 +758,21 @@ body.game .iws .strip .lvl-strip { display: inline; }
     color: var(--text);
     resize: vertical;
 }
+
+/* ============ CADEIA (§14) ============ */
+/* assunto › fonte › implementação › evidência. Quebra em várias linhas em
+   painel estreito em vez de estourar a coluna: a cadeia é para ser LIDA. */
+.iws .chain {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px;
+  margin: 8px 0 4px; font: 400 11px var(--mono); color: var(--faint);
+}
+.iws .chain-step { color: var(--mut); }
+.iws .chain-arrow { color: var(--line-2); }
+.iws .chain-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--text); border-bottom: 1px solid var(--line-2);
+}
+.iws .chain-link:hover { color: var(--step); border-bottom-color: var(--step); }
+/* O grafo ausente é dito, não escondido — e sem vermelho: não é falha do
+   projeto, é uma capability que não está pronta. */
+.iws .chain-degraded { color: var(--faint); font-style: italic; }
