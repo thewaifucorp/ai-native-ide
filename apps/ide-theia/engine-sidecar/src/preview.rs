@@ -174,6 +174,7 @@ fn read_declaration(root: &Path) -> (Option<DeclaredPreview>, Option<String>) {
 }
 
 /// Outcome of one raw HTTP probe.
+#[derive(Debug)]
 enum Probe {
     /// The endpoint answered with a status the prober accepts.
     Healthy(String),
@@ -247,9 +248,21 @@ fn probe(url: &str) -> Probe {
         .nth(1)
         .and_then(|c| c.parse::<u16>().ok());
     match code {
-        // 5xx is the server saying it is broken. Anything else that parsed is an
-        // answer, which is what "responding" means for a preview.
+        // ── RESPONDER NÃO É ESTAR SAUDÁVEL ──────────────────────────────────
+        // Antes, qualquer status que não fosse 5xx contava como saudável, "porque
+        // o servidor respondeu". Achado num projeto cru: a url de saúde declarada
+        // era `/`, o app só serve `/itens`, e o painel mostrava
+        // "SAUDÁVEL · HTTP/1.1 404 Not Found" — uma contradição na mesma linha, e
+        // exatamente o tipo de saúde inventada que o §4 existe para não fazer.
+        //
+        // 2xx e 3xx são a url declarada funcionando. 4xx é o servidor dizendo que
+        // ela NÃO existe — o processo está de pé, e é isso que a mensagem diz, sem
+        // chamar de saúde.
         Some(code) if code >= 500 => Probe::Failed(format!("{url}: {status_line}")),
+        Some(code) if code >= 400 => Probe::Failed(format!(
+            "{url}: {status_line} — o processo respondeu, mas a url declarada como saúde não \
+             existe nele; corrija a url em {DECLARATION_REL} ou a rota no projeto"
+        )),
         Some(_) => Probe::Healthy(format!("{url}: {status_line}")),
         None => Probe::Failed(format!("{url}: resposta sem linha de status")),
     }
@@ -902,6 +915,38 @@ mod tests {
             "saída limpa não pode virar evidência de falha"
         );
         assert!(!snapshot.running);
+    }
+
+    /// 404 na url de saúde não é saúde.
+    ///
+    /// Achado num projeto cru: a url declarada era `/`, o app servia só `/itens`,
+    /// e o painel dizia "SAUDÁVEL · HTTP/1.1 404 Not Found" — contradição na
+    /// mesma linha. O processo estar de pé é um fato; a url declarada responder é
+    /// outro, e é esse que a palavra "saudável" promete.
+    #[test]
+    fn quatrocentos_e_quatro_na_url_de_saude_nao_conta_como_saude() {
+        let porta = 21_000 + (std::process::id() % 900) as u16;
+        let escuta = std::net::TcpListener::bind(("127.0.0.1", porta)).expect("bind");
+        // Servidor mínimo que responde 404 uma vez: é o que o projeto cru fazia.
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = escuta.accept() {
+                use std::io::Write;
+                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
+            }
+        });
+
+        let resultado = probe(&format!("http://127.0.0.1:{porta}/"));
+
+        match resultado {
+            Probe::Failed(detail) => {
+                assert!(detail.contains("404"), "o status vem literal: {detail}");
+                assert!(
+                    detail.contains("não existe nele"),
+                    "e a mensagem diz o que fazer, sem chamar de saúde: {detail}"
+                );
+            }
+            outro => panic!("404 na url de saúde não pode virar saúde: {outro:?}"),
+        }
     }
 
     /// "código 1" não é causa: a linha do log é.
