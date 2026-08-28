@@ -20,6 +20,7 @@ import {
     LifecycleSnapshot,
     AdapterCard,
     PublishAttempt,
+    ReopenedExport,
     ReferencesSnapshot,
     WorkSnapshot,
     NotesSnapshot,
@@ -179,6 +180,10 @@ export class InstrumentStore {
     lifecycle: LifecycleSnapshot | undefined;
     lifecycleBusy = false;
     lifecycleAttempt: PublishAttempt | undefined;
+    /** O export reaberto (LIFE-03) e o que mudou desde ele; `undefined` = nenhum. */
+    lifecycleReopened: ReopenedExport | undefined;
+    /** Recursos que a pessoa ligou ao problema observado, por id portátil. */
+    lifecycleRelated: string[] = [];
 
     // ── REAL pacote de contexto do agente (§6): o que o agente receberia, o
     //    que ficou de fora com o motivo, e o que ninguém consegue responder a
@@ -501,6 +506,25 @@ export class InstrumentStore {
         if (attempt) {
             this.lifecycle = attempt.snapshot;
         }
+        this.emit();
+    }
+
+    /** O export reaberto. Trocar de export limpa os recursos ligados: eles são
+     *  ids DAQUELE manifesto, e carregá-los para outro ligaria o problema a
+     *  recursos que a pessoa não viu. */
+    setLifecycleReopened(reopened: ReopenedExport | undefined): void {
+        if (reopened?.path !== this.lifecycleReopened?.path) {
+            this.lifecycleRelated = [];
+        }
+        this.lifecycleReopened = reopened;
+        this.emit();
+    }
+
+    /** Liga ou desliga um recurso do problema observado. */
+    toggleLifecycleRelated(id: string): void {
+        this.lifecycleRelated = this.lifecycleRelated.includes(id)
+            ? this.lifecycleRelated.filter(other => other !== id)
+            : [...this.lifecycleRelated, id];
         this.emit();
     }
 

@@ -813,6 +813,21 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .map_err(|e| e.to_string())??;
             Ok(value)
         }
+        // Reabrir o publicado (LIFE-03): leitura pura do manifesto contra o
+        // projeto de hoje. Nada é executado, nada é escrito.
+        "lifecycle_reopen" => {
+            #[derive(Deserialize)]
+            struct ReopenParams {
+                root: String,
+                path: String,
+            }
+            let p: ReopenParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let reopened = tokio::task::spawn_blocking(move || lifecycle::reopen(&root, &p.path))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(reopened).map_err(|e| e.to_string())
+        }
         "lifecycle_delete_export" => {
             #[derive(Deserialize)]
             struct DeleteParams {

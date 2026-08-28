@@ -392,6 +392,11 @@ export interface EngineService {
     /** Performs the compensation for a local export: deletes the file. */
     lifecycleDeleteExport(root: string, path: string): Promise<LifecycleSnapshot>;
     /**
+     * Reopens an exported manifest and says what changed since it (LIFE-03).
+     * Pure reading: nothing is executed and nothing is written.
+     */
+    lifecycleReopen(root: string, path: string): Promise<ReopenedExport>;
+    /**
      * Publishes (or republishes) the next version.
      *
      * `confirmed` is the person's explicit act; without it an external effect
@@ -1177,6 +1182,51 @@ export interface PublishEvaluation {
     /** Dimensões que a medição não avaliou, por nome. */
     unevaluated: string[];
     /** Frase para a tela e para o recibo. Nunca vazia. */
+    summary: string;
+}
+
+/** Um recurso como o export o descreveu, dito contra o projeto de hoje. */
+export interface ReopenedResource {
+    /** O id portátil, o mesmo que o manifesto carrega. */
+    id: string;
+    kind: string;
+    label: string;
+    /** Se o recurso ainda existe no projeto como ele está agora. */
+    stillPresent: boolean;
+}
+
+/**
+ * O produto publicado, reaberto (LIFE-03).
+ *
+ * Quem reabre está atrás de um problema observado DEPOIS de publicar, então o
+ * que serve é a DIFERENÇA — o recurso que sumiu, o que apareceu, a intenção
+ * reescrita, a guidance que entrou. Devolver o manifesto de volta não ajudaria
+ * ninguém a decidir o que corrigir, e ligar o problema ao projeto viraria
+ * adivinhação.
+ */
+export interface ReopenedExport {
+    path: string;
+    version: string;
+    title: string;
+    intent: string;
+    portabilityNote: string;
+    resources: ReopenedResource[];
+    /** Rótulos que existem no projeto agora e não estavam no export. */
+    appeared: string[];
+    /** Título de hoje, quando ele mudou desde o export. */
+    titleNow?: string;
+    /** Intenção de hoje, quando ela mudou desde o export. */
+    intentNow?: string;
+    guidanceAdded: string[];
+    guidanceRemoved: string[];
+    packsAdded: string[];
+    packsRemoved: string[];
+    /**
+     * A publicação registrada com esta mesma versão, quando existe. Um export sem
+     * publicação correspondente é um ensaio local, não um produto no ar.
+     */
+    published?: PublishRecord;
+    /** Frase para a tela. Nunca vazia. */
     summary: string;
 }
 

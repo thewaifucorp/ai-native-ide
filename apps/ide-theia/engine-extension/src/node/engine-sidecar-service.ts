@@ -16,6 +16,7 @@ import {
     PolicyDecision,
     ProjectSnapshot,
     PublishAttempt,
+    ReopenedExport,
     ReferencesSnapshot,
     WorkItem,
     WorkSnapshot,
@@ -457,6 +458,10 @@ export class EngineSidecarService implements EngineService {
 
     lifecycleDeleteExport(root: string, path: string): Promise<LifecycleSnapshot> {
         return this.call('lifecycle_delete_export', { root, path });
+    }
+
+    lifecycleReopen(root: string, path: string): Promise<ReopenedExport> {
+        return this.call('lifecycle_reopen', { root, path });
     }
 
     lifecyclePublish(

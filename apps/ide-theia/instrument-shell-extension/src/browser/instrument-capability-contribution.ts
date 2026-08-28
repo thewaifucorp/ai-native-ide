@@ -89,6 +89,8 @@ export const CMD_WORK_PROVIDER = 'instrument.work.useDefaultProvider';
 export const CMD_LIFECYCLE_READ = 'instrument.lifecycle.read';
 export const CMD_LIFECYCLE_EXPORT = 'instrument.lifecycle.export';
 export const CMD_LIFECYCLE_DELETE_EXPORT = 'instrument.lifecycle.deleteExport';
+export const CMD_LIFECYCLE_REOPEN = 'instrument.lifecycle.reopen';
+export const CMD_LIFECYCLE_RELATE = 'instrument.lifecycle.relate';
 export const CMD_LIFECYCLE_PUBLISH = 'instrument.lifecycle.publish';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
@@ -340,6 +342,17 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_LIFECYCLE_DELETE_EXPORT, label: 'Instrument: apagar um export (compensação)' },
             { execute: (relPath?: string) => (relPath ? this.lifecycleDeleteExport(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_LIFECYCLE_REOPEN, label: 'Instrument: reabrir um export publicado (LIFE-03)' },
+            { execute: (relPath?: string) => (relPath ? this.lifecycleReopen(relPath) : undefined) }
+        );
+        commands.registerCommand(
+            {
+                id: CMD_LIFECYCLE_RELATE,
+                label: 'Instrument: ligar/desligar um recurso do problema observado'
+            },
+            { execute: (id?: string) => (id ? this.store.toggleLifecycleRelated(id) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_LIFECYCLE_PUBLISH, label: 'Instrument: publicar versão (efeito externo)' },
@@ -2152,9 +2165,39 @@ export class InstrumentCapabilityContribution
         this.store.setLifecycleBusy(true);
         try {
             this.store.setLifecycle(await this.engine.lifecycleDeleteExport(root, relPath));
+            if (this.store.lifecycleReopened?.path === relPath) {
+                // O painel do reaberto descreveria um arquivo que não existe mais.
+                this.store.setLifecycleReopened(undefined);
+            }
             this.messages.info(`${relPath} apagado — o export foi desfeito por completo.`);
         } catch (err) {
             this.messages.error(`Export não foi apagado: ${this.msg(err)}`);
+        } finally {
+            this.store.setLifecycleBusy(false);
+        }
+    }
+
+    /**
+     * Reabrir o publicado (LIFE-03).
+     *
+     * O ciclo só fecha quando um problema visto DEPOIS de publicar volta para o
+     * projeto: reabrir traz o que aquela versão dizia e o que mudou desde ela, e
+     * é dali que saem os recursos que a republicação vai ligar ao problema.
+     * Leitura pura — reabrir não escreve nada e não publica nada.
+     */
+    protected async lifecycleReopen(relPath: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setLifecycleBusy(true);
+        try {
+            const reopened = await this.engine.lifecycleReopen(root, relPath);
+            this.store.setLifecycleReopened(reopened);
+            this.messages.info(reopened.summary);
+        } catch (err) {
+            this.messages.error(`Export não reabriu: ${this.msg(err)}`);
+            this.store.setLifecycleReopened(undefined);
         } finally {
             this.store.setLifecycleBusy(false);
         }
@@ -2178,8 +2221,15 @@ export class InstrumentCapabilityContribution
             return;
         }
         this.store.setLifecycleBusy(true);
+        // Os recursos que a pessoa marcou no export reaberto: é o que liga a
+        // correção ao projeto, em vez de deixar o problema como texto solto.
+        const relatedResources = [...this.store.lifecycleRelated];
         try {
-            const asked = await this.engine.lifecyclePublish(root, { target, problem });
+            const asked = await this.engine.lifecyclePublish(root, {
+                target,
+                problem,
+                relatedResources
+            });
             this.store.setLifecycleAttempt(asked);
             if (!asked.needsConfirmation) {
                 this.messages.info(asked.explain);
@@ -2204,12 +2254,20 @@ export class InstrumentCapabilityContribution
             const done = await this.engine.lifecyclePublish(root, {
                 target,
                 problem,
+                relatedResources,
                 confirmed: true
             });
             this.store.setLifecycleAttempt(done);
+            // A versão nova é outra história: manter o export anterior aberto com
+            // os recursos marcados faria a próxima republicação herdar o vínculo
+            // de um problema já corrigido.
+            this.store.setLifecycleReopened(undefined);
             this.messages.info(
                 `Publicado ${done.record?.version ?? ''} · ` +
                 `${done.compensation?.note ?? 'sem compensação possível'} · ` +
+                `${done.record?.relatedResources.length
+                    ? `${done.record.relatedResources.length} recurso(s) ligado(s) ao problema · `
+                    : ''}` +
                 `estado medido: ${done.evaluation.summary}`
             );
         } catch (err) {

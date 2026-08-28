@@ -281,15 +281,20 @@ pub fn export(root: &Path) -> Result<PublishAttempt, String> {
     })
 }
 
-/// The compensation for a local export, performed: delete the exported file.
-pub fn delete_export(root: &Path, relative: &str) -> Result<LifecycleSnapshot, String> {
+/// Resolves a path given by the screen into a real file inside `.instrument/exports`.
+///
+/// Both callers — apagar e reabrir — recebem um caminho vindo de fora, e os dois
+/// precisam da mesma recusa: prefixo declarado, caminho canonizado e contido no
+/// diretório de exports. Sem a canonização, `.instrument/exports/../../algo`
+/// passaria pelo teste de prefixo.
+fn resolve_export(root: &Path, relative: &str) -> Result<std::path::PathBuf, String> {
     if !relative.starts_with(EXPORTS_REL) {
         return Err(format!(
-            "só um arquivo de {EXPORTS_REL} pode ser apagado por aqui: {relative}"
+            "só um arquivo de {EXPORTS_REL} pode ser aberto ou apagado por aqui: {relative}"
         ));
     }
-    let candidate = root.join(relative);
-    let canonical = candidate
+    let canonical = root
+        .join(relative)
         .canonicalize()
         .map_err(|error| format!("{relative}: {error}"))?;
     let exports_root = root
@@ -299,8 +304,205 @@ pub fn delete_export(root: &Path, relative: &str) -> Result<LifecycleSnapshot, S
     if !canonical.starts_with(&exports_root) {
         return Err(format!("{relative} sai de {EXPORTS_REL}"));
     }
+    Ok(canonical)
+}
+
+/// The compensation for a local export, performed: delete the exported file.
+pub fn delete_export(root: &Path, relative: &str) -> Result<LifecycleSnapshot, String> {
+    let canonical = resolve_export(root, relative)?;
     fs::remove_file(&canonical).map_err(|error| format!("apagar {relative}: {error}"))?;
     snapshot_of(root)
+}
+
+/// Um recurso como o export o descreveu, dito contra o projeto de hoje.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReopenedResource {
+    /// O id portátil, o mesmo que o manifesto carrega.
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    /// Se este recurso ainda existe no projeto como ele está agora.
+    pub still_present: bool,
+}
+
+/// O produto publicado, reaberto: o que o export dizia, e o que mudou desde então.
+///
+/// ── POR QUE ISTO EXISTE (LIFE-03) ─────────────────────────────────────────
+/// Reabrir só para ver de novo o que foi exportado não serve para nada: quem
+/// reabre está atrás de um problema observado DEPOIS de publicar. O que a pessoa
+/// precisa é da diferença — o recurso que sumiu, o que apareceu, a intenção que
+/// foi reescrita, a guidance que entrou. Sem isso, ligar o problema ao projeto
+/// vira adivinhação, e a republicação sai com um texto solto em vez de um
+/// vínculo.
+///
+/// Nada aqui executa comando nem fala com serviço: é leitura do manifesto contra
+/// o estado local.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReopenedExport {
+    /// O arquivo reaberto, relativo à raiz.
+    pub path: String,
+    pub version: String,
+    pub title: String,
+    pub intent: String,
+    pub portability_note: String,
+    pub resources: Vec<ReopenedResource>,
+    /// Rótulos que existem no projeto agora e não estavam no export.
+    pub appeared: Vec<String>,
+    /// Título de hoje, quando ele mudou desde o export.
+    pub title_now: Option<String>,
+    /// Intenção de hoje, quando ela mudou desde o export.
+    pub intent_now: Option<String>,
+    /// Guidance/packs que entraram ou saíram desde o export.
+    pub guidance_added: Vec<String>,
+    pub guidance_removed: Vec<String>,
+    pub packs_added: Vec<String>,
+    pub packs_removed: Vec<String>,
+    /// A publicação registrada com esta mesma versão, quando ela existe. Um
+    /// export sem publicação correspondente é um ensaio, não um produto no ar,
+    /// e a tela não pode tratar os dois igual.
+    pub published: Option<PublishRecord>,
+    /// Uma frase para a tela e para o recibo. Nunca vazia.
+    pub summary: String,
+}
+
+/// Reabre um export e o compara com o projeto de agora.
+pub fn reopen(root: &Path, relative: &str) -> Result<ReopenedExport, String> {
+    let canonical = resolve_export(root, relative)?;
+    let raw = fs::read(&canonical).map_err(|error| format!("ler {relative}: {error}"))?;
+    let manifest: ExportManifest = serde_json::from_slice(&raw)
+        .map_err(|error| format!("{relative} não é um manifesto de export legível: {error}"))?;
+
+    let project = project::snapshot(root)?;
+    // O manifesto guarda ids PORTÁTEIS; os do projeto são locais. Comparar os dois
+    // sem passar pelo mesmo `portable_id` diria que todo recurso sumiu.
+    let now: Vec<(String, String)> = project
+        .resources
+        .iter()
+        .map(|resource| {
+            (
+                portable_id(&resource.id.0),
+                relative_label(root, &resource.canonical_path),
+            )
+        })
+        .collect();
+
+    let resources: Vec<ReopenedResource> = manifest
+        .resources
+        .iter()
+        .map(|resource| ReopenedResource {
+            still_present: now.iter().any(|(id, _)| id == &resource.id),
+            id: resource.id.clone(),
+            kind: resource.kind.clone(),
+            label: resource.label.clone(),
+        })
+        .collect();
+    let missing = resources.iter().filter(|r| !r.still_present).count();
+
+    let mut appeared: Vec<String> = now
+        .iter()
+        .filter(|(id, _)| !manifest.resources.iter().any(|r| &r.id == id))
+        .map(|(_, label)| label.clone())
+        .collect();
+    appeared.sort();
+
+    let record = project.project.as_ref();
+    let title_now = record
+        .map(|p| p.title.clone())
+        .filter(|title| title != &manifest.title);
+    let intent_now = record
+        .map(|p| p.intent.clone())
+        .filter(|intent| intent != &manifest.intent);
+
+    let guidance_now = active_guidance(root);
+    let packs_now = applied_packs(root);
+    let guidance_added = missing_from(&guidance_now, &manifest.applied_guidance);
+    let guidance_removed = missing_from(&manifest.applied_guidance, &guidance_now);
+    let packs_added = missing_from(&packs_now, &manifest.applied_packs);
+    let packs_removed = missing_from(&manifest.applied_packs, &packs_now);
+
+    let published = log(root)?
+        .history(&manifest.project_id)
+        .into_iter()
+        .find(|entry| entry.version == manifest.version)
+        .or_else(|| {
+            // O log guarda o id LOCAL do projeto; o manifesto, o portátil. Reabrir
+            // um export feito nesta mesma máquina tem de encontrar a publicação,
+            // então a busca também tenta pelo id de hoje.
+            record.and_then(|p| {
+                log(root)
+                    .ok()?
+                    .history(&p.id.0)
+                    .into_iter()
+                    .find(|entry| entry.version == manifest.version)
+            })
+        });
+
+    let mut mudancas: Vec<String> = Vec::new();
+    if missing > 0 {
+        mudancas.push(format!("{missing} recurso(s) do export não existe(m) mais"));
+    }
+    if !appeared.is_empty() {
+        mudancas.push(format!("{} recurso(s) novo(s)", appeared.len()));
+    }
+    if title_now.is_some() {
+        mudancas.push("o título mudou".to_string());
+    }
+    if intent_now.is_some() {
+        mudancas.push("a intenção mudou".to_string());
+    }
+    let steering =
+        guidance_added.len() + guidance_removed.len() + packs_added.len() + packs_removed.len();
+    if steering > 0 {
+        mudancas.push(format!("{steering} mudança(s) de guidance/packs"));
+    }
+    let estado = match &published {
+        Some(entry) => format!("publicado como {}", entry.version),
+        None => "nunca publicado — este export é um ensaio local".to_string(),
+    };
+    let summary = if mudancas.is_empty() {
+        format!(
+            "{} {} · {estado} · o projeto está como este export o descreve",
+            manifest.title, manifest.version
+        )
+    } else {
+        format!(
+            "{} {} · {estado} · desde o export: {}",
+            manifest.title,
+            manifest.version,
+            mudancas.join(", ")
+        )
+    };
+
+    Ok(ReopenedExport {
+        path: relative.to_string(),
+        version: manifest.version,
+        title: manifest.title,
+        intent: manifest.intent,
+        portability_note: manifest.portability_note,
+        resources,
+        appeared,
+        title_now,
+        intent_now,
+        guidance_added,
+        guidance_removed,
+        packs_added,
+        packs_removed,
+        published,
+        summary,
+    })
+}
+
+/// O que está em `left` e não está em `right`.
+fn missing_from(left: &[String], right: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = left
+        .iter()
+        .filter(|item| !right.contains(item))
+        .cloned()
+        .collect();
+    out.sort();
+    out
 }
 
 /// Publishes (or republishes) the next version.
@@ -649,6 +851,94 @@ mod tests {
             2,
             "a versão anterior continua lá"
         );
+    }
+
+    /// LIFE-03 — reabrir serve para achar o problema, e achar o problema é ver a
+    /// DIFERENÇA. Um reabrir que só devolvesse o manifesto de volta não ajudaria
+    /// ninguém a decidir o que corrigir.
+    #[test]
+    fn reabrir_um_export_mostra_o_que_mudou_desde_ele() {
+        let dir = registered_project();
+        let root = dir.path();
+        let alvo = export(root)
+            .expect("export")
+            .compensation
+            .expect("plano")
+            .target;
+
+        // O projeto segue vivo depois de exportado: a intenção é reescrita.
+        project::set_intent(root, "construir um leilão local com lance mínimo")
+            .expect("nova intenção");
+
+        let reaberto = reopen(root, &alvo).expect("reabrir");
+
+        assert_eq!(reaberto.version, "0.0.1");
+        assert_eq!(reaberto.title, "Leilão");
+        assert_eq!(
+            reaberto.intent_now.as_deref(),
+            Some("construir um leilão local com lance mínimo"),
+            "a intenção de hoje é o que liga o problema observado ao projeto"
+        );
+        assert!(
+            reaberto.published.is_none(),
+            "exportar não publica; dizer o contrário inventaria um produto no ar"
+        );
+        assert!(reaberto.summary.contains("a intenção mudou"));
+        assert!(reaberto.summary.contains("nunca publicado"));
+    }
+
+    /// Reaberto DEPOIS de publicado, o mesmo caminho tem de encontrar a
+    /// publicação — senão a tela trata um produto no ar como ensaio local.
+    #[test]
+    fn reabrir_encontra_a_publicacao_da_mesma_versao() {
+        let dir = registered_project();
+        let root = dir.path();
+        let alvo = export(root)
+            .expect("export")
+            .compensation
+            .expect("plano")
+            .target;
+        publish(root, "compensable", true, None, vec![]).expect("publish");
+
+        let reaberto = reopen(root, &alvo).expect("reabrir");
+
+        let publicado = reaberto.published.expect("a versão 0.0.1 foi publicada");
+        assert_eq!(publicado.version, "0.0.1");
+        assert!(reaberto.summary.contains("publicado como 0.0.1"));
+    }
+
+    /// A mesma recusa do apagar vale para o reabrir: caminho de fora não entra.
+    #[test]
+    fn reabrir_fora_do_diretorio_de_exports_e_recusado() {
+        let dir = registered_project();
+        fs::write(dir.path().join("alvo.json"), "{}").unwrap();
+
+        let error = reopen(dir.path(), "alvo.json").expect_err("deve recusar");
+
+        assert!(error.contains(EXPORTS_REL));
+    }
+
+    /// Republicar carrega os recursos afetados: é o que transforma "corrige X" em
+    /// um vínculo com o projeto, em vez de um texto solto no log.
+    #[test]
+    fn republicar_guarda_os_recursos_ligados_ao_problema() {
+        let dir = registered_project();
+        publish(dir.path(), "compensable", true, None, vec![]).expect("publish");
+
+        let done = publish(
+            dir.path(),
+            "compensable",
+            true,
+            Some("lance mínimo não era respeitado"),
+            vec!["resource:abc".to_string(), "resource:def".to_string()],
+        )
+        .expect("republish");
+
+        let record = done.record.expect("registro");
+        assert_eq!(record.related_resources.len(), 2);
+        assert!(record
+            .related_resources
+            .contains(&"resource:abc".to_string()));
     }
 
     #[test]

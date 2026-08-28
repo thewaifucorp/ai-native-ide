@@ -36,6 +36,8 @@ import {
     CMD_LIFECYCLE_EXPORT,
     CMD_LIFECYCLE_PUBLISH,
     CMD_LIFECYCLE_READ,
+    CMD_LIFECYCLE_RELATE,
+    CMD_LIFECYCLE_REOPEN,
     CMD_REFS_LINK,
     CMD_REFS_READ,
     CMD_REFS_UNLINK,
@@ -67,6 +69,7 @@ import {
     CMD_HARNESS_SEED,
     CMD_HARNESS_SUSPEND
 } from '../instrument-capability-contribution';
+import { ReopenedExport } from 'engine-extension';
 import {
     CMD_EXTERNAL_SURFACE,
     CMD_SHOW_SURFACE,
@@ -1401,10 +1404,96 @@ export class ToolsWidget extends AbstractInstrumentWidget {
      * tela mostra a classe que o motor calculou; ela não inventa um rollback nem
      * esconde a falta de um.
      */
+    /**
+     * O EXPORT REABERTO (LIFE-03).
+     *
+     * O ciclo só fecha quando um problema visto depois de publicar volta para o
+     * projeto. Reabrir mostra o que aquela versão dizia e o que mudou desde ela;
+     * marcar um recurso é o que LIGA o problema observado ao projeto — sem isso a
+     * republicação sai com um texto solto no log e ninguém consegue, depois,
+     * responder "o que essa correção tocou".
+     *
+     * Um recurso que sumiu do projeto continua marcável de propósito: ele pode
+     * ser exatamente a causa do problema.
+     */
+    protected renderReopened(reopened: ReopenedExport, busy: boolean): React.ReactNode {
+        const related = this.store.lifecycleRelated;
+        const steering = [
+            ...reopened.guidanceAdded.map(id => `+guidance ${id}`),
+            ...reopened.guidanceRemoved.map(id => `−guidance ${id}`),
+            ...reopened.packsAdded.map(id => `+pack ${id}`),
+            ...reopened.packsRemoved.map(id => `−pack ${id}`)
+        ];
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>reaberto: {reopened.title} {reopened.version}</b>
+                    <span className={reopened.published ? 'cap-pill ready' : 'cap-pill'}>
+                        {reopened.published ? 'publicado' : 'ensaio local'}
+                    </span>
+                </div>
+                <small className="cap-evidence">{reopened.summary}</small>
+                <small className="cap-evidence">{reopened.path} · {reopened.portabilityNote}</small>
+
+                <p className="cap-detail">intenção no export: {reopened.intent}</p>
+                {reopened.intentNow && (
+                    <p className="cap-remediation">intenção hoje: {reopened.intentNow}</p>
+                )}
+                {reopened.titleNow && (
+                    <p className="cap-remediation">título hoje: {reopened.titleNow}</p>
+                )}
+
+                <small className="cap-hint">
+                    marque os recursos que o problema observado atinge · é o vínculo que a
+                    republicação grava, e o que responde depois “o que essa correção tocou”
+                </small>
+                {reopened.resources.length === 0 && (
+                    <small className="cap-evidence">o export não listou recurso nenhum</small>
+                )}
+                {reopened.resources.map(resource => (
+                    <div className="cap-receipt" key={resource.id}>
+                        <span className="cap-receipt-action">
+                            <input
+                                type="checkbox"
+                                checked={related.includes(resource.id)}
+                                disabled={busy}
+                                onChange={() =>
+                                    this.commands.executeCommand(CMD_LIFECYCLE_RELATE, resource.id)
+                                }
+                            />
+                        </span>
+                        <span className="cap-receipt-detail">
+                            {resource.label} · {resource.kind}
+                        </span>
+                        <small>
+                            {resource.stillPresent ? 'ainda no projeto' : 'sumiu do projeto'}
+                        </small>
+                    </div>
+                ))}
+                {reopened.appeared.length > 0 && (
+                    <small className="cap-evidence">
+                        depois deste export apareceram: {reopened.appeared.join(', ')}
+                    </small>
+                )}
+                {steering.length > 0 && (
+                    <small className="cap-evidence">
+                        guidance/packs desde o export: {steering.join(' · ')}
+                    </small>
+                )}
+                {related.length > 0 && (
+                    <small className="cap-hint">
+                        {related.length} recurso(s) serão gravados na próxima republicação
+                    </small>
+                )}
+            </div>
+        );
+    }
+
     protected renderLifecycle(): React.ReactNode {
         const cycle = this.store.lifecycle;
         const busy = this.store.lifecycleBusy;
         const attempt = this.store.lifecycleAttempt;
+        const reopened = this.store.lifecycleReopened;
         const summary = busy
             ? 'lendo…'
             : !cycle
@@ -1475,6 +1564,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 </small>
                             )}
 
+                            {reopened && this.renderReopened(reopened, busy)}
+
                             {cycle.exports.map(file => (
                                 <div className="cap-receipt" key={file.path}>
                                     <span className="cap-receipt-action">export</span>
@@ -1482,6 +1573,19 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                         {file.path} · {file.version ?? 'versão ilegível'} ·{' '}
                                         {Math.max(1, Math.round(file.bytes / 1024))} KiB
                                     </span>
+                                    <button
+                                        className="cap-btn"
+                                        disabled={busy}
+                                        title="Reabrir esta versão e ver o que mudou desde ela"
+                                        onClick={() =>
+                                            this.commands.executeCommand(
+                                                CMD_LIFECYCLE_REOPEN,
+                                                file.path
+                                            )
+                                        }
+                                    >
+                                        Reabrir
+                                    </button>
                                     <button
                                         className="cap-btn"
                                         disabled={busy}
@@ -1503,6 +1607,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     <span className="cap-receipt-action">v{record.version}</span>
                                     <span className="cap-receipt-detail">
                                         {record.problem ? `corrige: ${record.problem}` : record.note}
+                                        {record.relatedResources.length > 0 &&
+                                            ` · ligado a ${record.relatedResources.length} recurso(s)`}
                                     </span>
                                     <small>
                                         {record.reversibility === 'irreversible'
