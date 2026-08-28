@@ -22,6 +22,7 @@ import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
     CMD_BROKER_TRAIL,
     CMD_ADOPT_COMMAND,
+    CMD_MATERIALS_ANALYZE,
     CMD_ADOPT_CONFIG,
     CMD_PROPOSE_GUIDANCE,
     CMD_REGISTER_REFERENCE,
@@ -29,7 +30,6 @@ import {
     CMD_CONTEXT_COMPILE,
     CMD_INTENT_DECIDE,
     CMD_INTENT_REVIEW,
-    CMD_MATERIALS_ANALYZE,
     CMD_NOTES_CREATE,
     CMD_NOTES_MERGE,
     CMD_NOTES_PROMOTE,
@@ -302,6 +302,80 @@ export class WorkWidget extends AbstractInstrumentWidget {
      *  • a result always shows the observed fact that produced it — for a tool
      *    check that is the raw command and its exit status.
      */
+    /**
+     * O que o projeto JÁ declara sobre si, ligado ao lugar onde a falta aparece.
+     *
+     * Achado num projeto cru: ele tinha `npm test` e `npm start` no
+     * `package.json`, e o cartão dizia "nenhum comando declarado em
+     * `.instrument/checks.json`" e parava ali. Build, testes e tipos ficavam NÃO
+     * EXECUTADO. A detecção existia — em "Materiais do projeto" — mas a pessoa
+     * tinha de saber que existia, e ir procurar. Distância entre o problema e o
+     * conserto é o que separa produto de demonstração.
+     *
+     * Detectar não é ativar: o candidato é mostrado com a origem, e declarar é um
+     * clique da pessoa. Sem análise ainda, o botão ANALISA — não adivinha.
+     */
+    protected renderUndeclaredCommands(nadaDeclarado: boolean): React.ReactNode {
+        if (!nadaDeclarado) {
+            return null;
+        }
+        const analysis = this.store.analysis;
+        if (!analysis) {
+            return (
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn"
+                        disabled={this.store.analysisBusy}
+                        title="Lê package.json, Makefile e afins para descobrir os comandos deste projeto"
+                        onClick={() => this.commands.executeCommand(CMD_MATERIALS_ANALYZE)}
+                    >
+                        {this.store.analysisBusy ? 'analisando…' : 'Procurar comandos do projeto'}
+                    </button>
+                </div>
+            );
+        }
+        const candidatos = analysis.commands.filter(
+            candidate => candidate.runnableByChecks && !candidate.alreadyDeclared
+        );
+        if (candidatos.length === 0) {
+            return (
+                <small className="cap-hint">
+                    a análise não encontrou build, testes ou tipos declarados neste projeto —
+                    declarar em <code>.instrument/checks.json</code> é o que faz o harness medir
+                </small>
+            );
+        }
+        return (
+            <>
+                <small className="cap-hint">
+                    o projeto já declara estes, e o harness ainda não os conhece:
+                </small>
+                {candidatos.map(candidate => (
+                    <div className="cap-receipt" key={`${candidate.slug}:${candidate.command}`}>
+                        <span className="cap-receipt-action check-not_run">{candidate.slug}</span>
+                        <span className="cap-receipt-detail">
+                            {candidate.command}
+                            {candidate.cwd ? ` (em ${candidate.cwd})` : ''}
+                        </span>
+                        <small>{candidate.provenance.path}{candidate.provenance.line ? `:${candidate.provenance.line}` : ''} — “{candidate.provenance.excerpt}”</small>
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={this.store.analysisBusy}
+                                title={`escreve ${candidate.slug} em .instrument/checks.json`}
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_ADOPT_COMMAND, candidate.slug)
+                                }
+                            >
+                                Declarar
+                            </button>
+                        </div>
+                    </div>
+                ))}
+            </>
+        );
+    }
+
     protected renderChecks(): React.ReactNode {
         const run = this.store.checks;
         const busy = this.store.checksBusy;
@@ -361,6 +435,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     {report.notRun} não executado — desconhecido e não executado não são aprovação
                 </small>
                 {run.not_run_reason && <p className="cap-detail">{run.not_run_reason}</p>}
+                {this.renderUndeclaredCommands(run.declared.length === 0)}
                 <small className="cap-hint">
                     varredura leu {run.files_scanned} arquivo(s)
                     {run.files_skipped > 0 && ` · ${run.files_skipped} pulado(s) por tamanho ou leitura`}
