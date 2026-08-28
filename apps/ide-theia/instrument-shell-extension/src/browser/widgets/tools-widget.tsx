@@ -1978,19 +1978,22 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 >
                                     Consolidar {cycle.nextVersion}
                                 </button>
-                                {/* PUBLICAR NÃO EXISTE AINDA, E O BOTÃO DIZ ISSO.
-                                    Enquanto os dois atos eram um só, a tela prometia
-                                    deploy e entregava registro local. Um botão
-                                    desabilitado com o motivo é honesto; um botão que
-                                    grava no caderno e diz "publicado" não é. */}
-                                <button
-                                    className="cap-btn"
-                                    disabled={true}
-                                    title="Nenhum destino configurado: publicar exige um adapter (release Git, provider, servidor local) e nenhum existe ainda neste projeto"
-                                >
-                                    Publicar… (sem destino)
-                                </button>
                             </div>
+                            {/* PUBLICAR NÃO É BOTÃO DAQUI, E DIZER ONDE ELE ESTÁ
+                                É PARTE DA HONESTIDADE.
+                                Enquanto os dois atos eram um só, esta seção
+                                prometia deploy e entregava registro local. Depois
+                                ela mostrou um "Publicar… (sem destino)"
+                                desabilitado — verdade na época, mentira assim que
+                                os adapters chegaram. Publicar é sempre POR ALGUM
+                                destino, cada um com a sua classe de efeito, então
+                                o lugar dele é a seção do destino. */}
+                            <small className="cap-hint">
+                                publicar é por destino, e cada um tem a sua seção: “Publicar
+                                (Git)” para tag e release, “Providers de deploy” para
+                                Netlify/Vercel/Render/Heroku, “Mostrar para alguém” para
+                                abrir o preview na rede ou por túnel
+                            </small>
                             {cycle.history.length > 0 && (
                                 <div className="cap-actions">
                                     {this.input('lifecycle-problem', 'problema observado que esta versão corrige')}
