@@ -166,19 +166,28 @@ fn free_port() -> Option<u16> {
     listener.local_addr().ok().map(|addr| addr.port())
 }
 
-/// Uma senha nova por compartilhamento.
+/// Uma senha nova por compartilhamento, com 128 bits do sistema.
 ///
-/// Não é criptografia: é o que separa "mandei o link para uma pessoa" de "está
-/// na internet aberta". Vem do relógio e do PID misturados em hex; se um dia
-/// isso precisar resistir a alguém tentando adivinhar em série, tem de virar
-/// aleatoriedade de verdade, e o comentário fica aqui para não fingir que já é.
-fn generate_password() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64 + d.as_secs())
-        .unwrap_or(0);
-    let pid = std::process::id() as u64;
-    format!("{:x}{:x}", nanos.wrapping_mul(2_654_435_761), pid)
+/// ── DEFEITO CORRIGIDO ANTES DE VALER ──────────────────────────────────────
+/// A primeira versão derivava a senha do relógio + PID. Os dois são
+/// OBSERVÁVEIS por quem recebe o link — a hora em que a página respondeu já
+/// estreita o relógio, e PID é um número pequeno — então a senha do túnel, que
+/// é o que separa "mandei para uma pessoa" de "está na internet aberta",
+/// caberia numa busca curta. Agora vem de `getrandom`, que é a fonte do sistema
+/// operacional.
+///
+/// Se o sistema não conseguir dar aleatoriedade, isto FALHA. Cair para uma
+/// senha fraca em silêncio seria pior do que não compartilhar: a pessoa acharia
+/// que o endereço está protegido.
+fn generate_password() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        format!(
+            "o sistema não deu aleatoriedade para gerar a senha ({error}); compartilhar sem \
+             senha forte deixaria o endereço aberto para quem tropeçasse nele"
+        )
+    })?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// A configuração do nginx que expõe o preview com senha.
@@ -381,7 +390,7 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
             .map_err(|error| format!("criar {}: {error}", dir.display()))?;
     }
     let user = "convidado".to_string();
-    let password = generate_password();
+    let password = generate_password()?;
     write_credentials(&dir, &user, &password)?;
     let config = dir.join("nginx.conf");
     fs::write(&config, nginx_config(listen, preview_port, &dir))
@@ -545,6 +554,21 @@ mod tests {
         );
         assert!(config.contains("autoindex off;"));
         assert!(config.contains("listen 0.0.0.0:8099;"));
+    }
+
+    /// A senha protege um endereço público: ela não pode caber numa busca curta,
+    /// e duas nunca podem sair iguais.
+    #[test]
+    fn a_senha_tem_128_bits_do_sistema_e_nao_se_repete() {
+        let primeira = generate_password().expect("aleatoriedade");
+        let segunda = generate_password().expect("aleatoriedade");
+
+        assert_eq!(primeira.len(), 32, "16 bytes em hex");
+        assert!(primeira.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(
+            primeira, segunda,
+            "senha derivada de relógio/PID repetiria dentro do mesmo instante"
+        );
     }
 
     #[test]

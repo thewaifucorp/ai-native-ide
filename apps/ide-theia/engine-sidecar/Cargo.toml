@@ -73,6 +73,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
+# Aleatoriedade do SISTEMA para a senha do compartilhamento. Ver o comentário em
+# `share::generate_password`: a senha é o que separa "mandei o link para uma
+# pessoa" de "está na internet aberta", e relógio + PID são observáveis.
+getrandom = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 
