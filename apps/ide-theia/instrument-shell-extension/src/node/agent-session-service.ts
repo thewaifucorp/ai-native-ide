@@ -20,7 +20,9 @@ import {
     PermissionEditView,
     SessionEventView,
     SessionPhase,
+    SessionUsage,
     SkippedFile,
+    SwapOutcome,
     WorktreeBaseline
 } from '../common/agent-session-protocol';
 
@@ -61,6 +63,10 @@ interface SessionState {
     baseline?: WorktreeBaseline;
     /** Permissions the agent is currently blocked on. */
     pending: PendingPermission[];
+    /** Spend so far, as the adapter reported it. */
+    usage?: SessionUsage;
+    /** The last adapter swap and what it cost in context. */
+    lastSwap?: SwapOutcome;
 }
 
 /** Run a command to completion; never throws. */
@@ -213,6 +219,89 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             this.absorb(state, event);
         }
         await this.applyPolicyToPending(rootUri, root, state);
+        await this.readUsage(state);
+        return this.view(state);
+    }
+
+    /**
+     * §10 — what this session has spent, as the ADAPTER reported it.
+     *
+     * `reported: false` is the load-bearing part: an adapter that does not report
+     * usage returns zero, and a zero rendered as spend would read as "cheap" when
+     * it means "not measured". The probe's `supportsUsageReporting` is what tells
+     * the two apart, so the flag travels with the number.
+     */
+    protected async readUsage(state: SessionState): Promise<void> {
+        if (!state.sessionId) {
+            return;
+        }
+        try {
+            const status = (await this.engine.agentSessionStatus(
+                state.agent,
+                state.sessionId
+            )) as { usage?: { inputTokens: number; outputTokens: number } | null };
+            const usage = status.usage;
+            state.usage = usage
+                ? {
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens,
+                    reported: usage.inputTokens > 0 || usage.outputTokens > 0
+                }
+                : { inputTokens: 0, outputTokens: 0, reported: false };
+        } catch {
+            // Um status indisponível não vira custo zero: fica sem número.
+            state.usage = undefined;
+        }
+    }
+
+    async swap(rootUri: string, toAgent: string): Promise<AgentSessionSnapshot> {
+        const root = this.rootPath(rootUri);
+        const state = this.state(root);
+        if (!state.sessionId) {
+            state.lastError = 'não há sessão aberta para trocar de adaptador';
+            return this.view(state);
+        }
+        const from = state.agent;
+        try {
+            // Captura ANTES: o que a troca leva é o que existia neste instante,
+            // e capturar depois de mexer na sessão descreveria outra coisa.
+            const captured = await this.engine.agentCaptureState(from, state.sessionId);
+            const result = from === toAgent
+                ? await this.engine.agentResume(toAgent, captured)
+                : await this.engine.agentSwap(toAgent, captured);
+            state.agent = toAgent;
+            state.sessionId = result.session_id;
+            state.phase = 'idle';
+            state.pending = [];
+            state.lastSwap = {
+                from,
+                to: toAgent,
+                resumed: result.resumed,
+                preserved: result.preserved,
+                dropped: result.dropped,
+                at: new Date().toISOString()
+            };
+            this.push(
+                state,
+                'adaptador',
+                result.resumed
+                    ? `sessão reatada em ${toAgent}: conversa e contexto preservados`
+                    : `sessão recomeçada em ${toAgent} — ${result.dropped.join('; ')} não são ` +
+                      'portáveis entre backends e foram perdidos'
+            );
+            // O projeto não é tocado por uma troca: ela não escreve nada, e o que
+            // o agente já tiver feito continua só na worktree até ser colhido.
+            this.push(
+                state,
+                'adaptador',
+                'o projeto não mudou: trocar de adaptador não escreve, e a colheita ' +
+                'pelo broker continua sendo o único caminho até ele'
+            );
+        } catch (err) {
+            // Uma troca que falha NÃO deixa o painel achando que trocou.
+            state.lastError = this.msg(err);
+            this.push(state, 'erro', `troca para ${toAgent} recusada: ${state.lastError}`);
+        }
         return this.view(state);
     }
 
@@ -949,7 +1038,9 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             changes: state.changes,
             skipped: state.skipped,
             baseline: state.baseline,
-            pending: state.pending
+            pending: state.pending,
+            usage: state.usage,
+            lastSwap: state.lastSwap
         };
     }
 

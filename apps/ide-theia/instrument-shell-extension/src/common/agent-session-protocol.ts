@@ -174,6 +174,29 @@ export interface WorktreeBaseline {
     recovered?: boolean;
 }
 
+/** §10 — spend, as the ADAPTER reported it. */
+export interface SessionUsage {
+    inputTokens: number;
+    outputTokens: number;
+    /**
+     * False when the adapter does not report usage at all. Without this, a zero
+     * would read as "cheap" when it means "not measured" — the same lie in a
+     * different currency.
+     */
+    reported: boolean;
+}
+
+/** §10 — what a swap moved and what it could not. */
+export interface SwapOutcome {
+    from: string;
+    to: string;
+    /** True only when the target reattached the original session. */
+    resumed: boolean;
+    preserved: string[];
+    dropped: string[];
+    at: string;
+}
+
 export interface AgentSessionSnapshot {
     agent: string;
     phase: SessionPhase;
@@ -191,6 +214,10 @@ export interface AgentSessionSnapshot {
     baseline?: WorktreeBaseline;
     /** Permissions awaiting a decision. Non-empty means the agent is blocked. */
     pending: PendingPermission[];
+    /** Spend so far, when the adapter reports it (§10). */
+    usage?: SessionUsage;
+    /** The last adapter swap, kept so the loss it declared stays on screen (§10). */
+    lastSwap?: SwapOutcome;
 }
 
 export interface AgentSessionService {
@@ -237,4 +264,14 @@ export interface AgentSessionService {
      * the agent wrote and nobody harvested is gone.
      */
     discard(rootUri: string): Promise<AgentSessionSnapshot>;
+
+    /**
+     * §10 — hand the live session to another adapter.
+     *
+     * The engine decides what survives: reattaching on the same adapter keeps the
+     * conversation; anything else starts fresh, because harness-owned context is
+     * not portable across backends. Either way the outcome is REPORTED, and the
+     * project is untouched — a swap never writes, so it cannot bypass the broker.
+     */
+    swap(rootUri: string, toAgent: string): Promise<AgentSessionSnapshot>;
 }

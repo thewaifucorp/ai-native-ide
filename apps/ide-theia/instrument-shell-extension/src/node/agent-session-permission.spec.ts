@@ -71,6 +71,49 @@ class FakeEngine {
         return { event: this.events.shift() ?? null };
     }
 
+    /** §10 — captura, retomada e troca, com o que cada uma move. */
+    captured = {
+        sessionId: { 0: 'sess-1' },
+        runtimeId: 'claude',
+        owner: 'owner:instrument-ide',
+        externalRef: 'ext-1',
+        origin: {},
+        usage: { inputTokens: 10, outputTokens: 5 },
+        lastStatus: 'idle'
+    };
+
+    swapAnswer: Record<string, unknown> | Error = {
+        session_id: 'sess-2',
+        agent: 'codex',
+        resumed: false,
+        preserved: ['owner and auth profile reference', 'accumulated usage totals'],
+        dropped: ['conversation history and harness context']
+    };
+
+    async agentCaptureState(): Promise<Record<string, unknown>> {
+        return this.captured;
+    }
+
+    async agentSwap(): Promise<Record<string, unknown>> {
+        if (this.swapAnswer instanceof Error) {
+            throw this.swapAnswer;
+        }
+        return this.swapAnswer;
+    }
+
+    async agentResume(): Promise<Record<string, unknown>> {
+        if (this.swapAnswer instanceof Error) {
+            throw this.swapAnswer;
+        }
+        return this.swapAnswer;
+    }
+
+    usageAnswer: { inputTokens: number; outputTokens: number } | null = null;
+
+    async agentSessionStatus(): Promise<{ status: unknown; usage: unknown }> {
+        return { status: 'idle', usage: this.usageAnswer };
+    }
+
     async agentRespondPermission(
         agent: string,
         sessionId: string,
@@ -129,6 +172,94 @@ function permissionEvent(requestId: number, edits: unknown[] = []): unknown {
         }
     };
 }
+
+// §10 — o adaptador é trocável, e a troca não pode mentir sobre o que sobrou.
+describe('AgentSessionServiceImpl — §10: troca de adaptador é honesta', () => {
+
+    it('trocar de adaptador diz o que PERDEU, não só o que preservou', async () => {
+        const { service, engine, rootUri } = fixture();
+
+        const snapshot = await service.swap(rootUri, 'codex');
+
+        assert.strictEqual(snapshot.agent, 'codex');
+        assert.strictEqual(snapshot.lastSwap?.resumed, false);
+        assert.deepStrictEqual(snapshot.lastSwap?.dropped, [
+            'conversation history and harness context'
+        ]);
+        const note = snapshot.events.find(e => e.text.includes('não são portáveis'));
+        assert.ok(note, 'a perda tem de estar na trilha, não só num campo');
+    });
+
+    /// Trocar NÃO escreve: o projeto só muda pelo broker, e a tela diz isso.
+    it('a troca declara que o projeto não mudou', async () => {
+        const { service, rootUri } = fixture();
+
+        const snapshot = await service.swap(rootUri, 'codex');
+
+        const note = snapshot.events.find(e => e.text.includes('o projeto não mudou'));
+        assert.ok(note);
+    });
+
+    it('reatar no MESMO adaptador preserva a conversa', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.swapAnswer = {
+            session_id: 'sess-3',
+            agent: 'claude',
+            resumed: true,
+            preserved: ['conversation history and harness context'],
+            dropped: []
+        };
+
+        const snapshot = await service.swap(rootUri, 'claude');
+
+        assert.strictEqual(snapshot.lastSwap?.resumed, true);
+        assert.deepStrictEqual(snapshot.lastSwap?.dropped, []);
+    });
+
+    // Uma troca que falha não pode deixar o painel achando que trocou.
+    it('troca recusada mantém o adaptador atual e diz o motivo', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.swapAnswer = new Error('adaptador não instalado');
+
+        const snapshot = await service.swap(rootUri, 'gemini');
+
+        assert.strictEqual(snapshot.agent, 'claude', 'o adaptador não pode mudar numa falha');
+        assert.ok(snapshot.lastError?.includes('adaptador não instalado'));
+        assert.strictEqual(snapshot.lastSwap, undefined);
+    });
+
+    it('sem sessão aberta, trocar é recusado em vez de silencioso', async () => {
+        const { service, rootUri } = fixture();
+        const state = (service as unknown as { state(root: string): { sessionId?: string } })
+            .state(rootUri.replace('file://', ''));
+        state.sessionId = undefined;
+
+        const snapshot = await service.swap(rootUri, 'codex');
+
+        assert.ok(snapshot.lastError?.includes('não há sessão aberta'));
+    });
+
+    // §10 — custo. Zero de um adaptador que não reporta uso NÃO é "barato".
+    it('custo não reportado é marcado como não medido, nunca como zero gasto', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.usageAnswer = null;
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.usage?.reported, false);
+        assert.strictEqual(snapshot.usage?.inputTokens, 0);
+    });
+
+    it('custo reportado chega com os totais do motor', async () => {
+        const { service, engine, rootUri } = fixture();
+        engine.usageAnswer = { inputTokens: 120, outputTokens: 45 };
+
+        const snapshot = await service.poll(rootUri);
+
+        assert.strictEqual(snapshot.usage?.reported, true);
+        assert.strictEqual(snapshot.usage?.outputTokens, 45);
+    });
+});
 
 describe('AgentSessionServiceImpl — permissão é decisão, não aviso', () => {
     it('mostra o pedido pendente, com o id que responde', async () => {

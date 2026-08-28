@@ -41,6 +41,56 @@ export interface BrokerActivity {
  * a missing `acpx`/agent binary reports `unavailable` with a `detail`, never a
  * fabricated `ready`.
  */
+/** What the IDE guarantees for one policy surface, in the engine's own words. */
+export type IdeCoverage = 'enforced' | 'declared_only' | 'harness_owned' | 'unknown';
+
+/**
+ * The capability card §10 requires to be shown BEFORE running an agent.
+ *
+ * `enforced` is the IDE guaranteeing it. `declared_only` is the adapter saying
+ * so with nobody checking. `harness_owned` is the agent's own harness deciding.
+ * `unknown` is nobody knowing. None of the four means "ok".
+ */
+export interface PolicyCoverage {
+    toolVisibility: IdeCoverage;
+    approvals: IdeCoverage;
+    egress: IdeCoverage;
+    budget: IdeCoverage;
+    sandbox: IdeCoverage;
+}
+
+/** One adapter the engine knows, with its honest availability and coverage. */
+export interface AdapterCard {
+    agent: string;
+    availability: 'ready' | 'degraded' | 'unavailable';
+    detail?: string;
+    supportsResume: boolean;
+    supportsPermissionBridge: boolean;
+    /** Absent when the facade could not even be built. */
+    policy?: PolicyCoverage;
+    degradations: string[];
+}
+
+/** A captured session, as the engine snapshots it. Opaque to the UI. */
+export interface AgentSessionState {
+    sessionId: unknown;
+    runtimeId: string;
+    owner: string;
+    externalRef: string;
+    origin: unknown;
+    usage: { inputTokens: number; outputTokens: number };
+    lastStatus: unknown;
+}
+
+/** What a resume or a swap actually moved. `resumed: false` means a fresh start. */
+export interface SwapResult {
+    session_id: string;
+    agent: string;
+    resumed: boolean;
+    preserved: string[];
+    dropped: string[];
+}
+
 export interface AgentProbe {
     /** Adapter id probed (e.g. "codex"). */
     agent: string;
@@ -57,6 +107,10 @@ export interface AgentProbe {
     targetVersion?: string;
     supportsResume?: boolean;
     supportsSteer?: boolean;
+    supportsUsageReporting?: boolean;
+    supportsPermissionBridge?: boolean;
+    /** What the IDE enforces vs what the adapter merely declares (§10). */
+    policy?: PolicyCoverage;
     /** Policy/capability surfaces the IDE does NOT enforce — shown, not hidden. */
     degradations: string[];
 }
@@ -115,6 +169,46 @@ export interface EngineService {
 
     /** The broker's honest audit trail for this (owner, root). */
     brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }>;
+
+    /**
+     * §10 — every adapter the ENGINE knows, probed one by one.
+     *
+     * The list comes from `bridge_command_for` in `ide-agent`, never from the UI:
+     * a screen that invented an adapter would be offering a path that does not
+     * exist. Each entry carries its own PolicyCoverage and degradations, so an
+     * adapter that cannot honour a gate says so before it runs.
+     */
+    agentAdapters(): Promise<{ adapters: AdapterCard[] }>;
+
+    /**
+     * Live status of a session, plus the spend the adapter reported.
+     *
+     * `usage` is null when the session could not be snapshotted; zeros mean the
+     * adapter reports no usage, which is NOT the same as cheap — pair it with
+     * `supportsUsageReporting` from the probe before showing a number.
+     */
+    agentSessionStatus(
+        agent: string,
+        sessionId: string
+    ): Promise<{ status: unknown; usage: { inputTokens: number; outputTokens: number } | null }>;
+
+    /** Snapshot of a live session: what a resume or a swap would carry. */
+    agentCaptureState(agent: string, sessionId: string): Promise<AgentSessionState>;
+
+    /**
+     * Reattach a captured session on the SAME adapter. Fails honestly when the
+     * adapter declares no resume protocol — never a pretend reattach.
+     */
+    agentResume(agent: string, state: AgentSessionState): Promise<SwapResult>;
+
+    /**
+     * Hand a captured session to ANOTHER adapter.
+     *
+     * Conversation history is harness-owned and not portable across backends, so
+     * a swap between adapters starts fresh and REPORTS that: `preserved` and
+     * `dropped` are the honest accounting, not a reassurance.
+     */
+    agentSwap(agent: string, state: AgentSessionState): Promise<SwapResult>;
 
     /** Real `ide-agent` probe: descriptor + honest health of an agent adapter. */
     agentProbe(agent: string): Promise<AgentProbe>;

@@ -77,6 +77,8 @@ export const CMD_SESSION_SUBMIT = 'instrument.session.submit';
 export const CMD_SESSION_HARVEST = 'instrument.session.harvest';
 export const CMD_SESSION_CANCEL = 'instrument.session.cancel';
 export const CMD_SESSION_DISCARD = 'instrument.session.discard';
+export const CMD_SESSION_ADAPTERS = 'instrument.session.adapters';
+export const CMD_SESSION_SWAP = 'instrument.session.swap';
 export const CMD_REFS_READ = 'instrument.references.read';
 export const CMD_REFS_LINK = 'instrument.references.link';
 export const CMD_REFS_UNLINK = 'instrument.references.unlink';
@@ -312,6 +314,14 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_WORK_PROVIDER, label: 'Instrument: usar o provider de trabalho padrão (§9)' },
             { execute: () => this.useWorkProvider() }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_ADAPTERS, label: 'Instrument: sondar adaptadores de agente (§10)' },
+            { execute: () => this.readAdapters() }
+        );
+        commands.registerCommand(
+            { id: CMD_SESSION_SWAP, label: 'Instrument: trocar o adaptador da sessão (§10)' },
+            { execute: (agent?: string) => (agent ? this.sessionSwap(agent) : undefined) }
         );
         commands.registerCommand(
             { id: CMD_LIFECYCLE_READ, label: 'Instrument: ler publicações e exports (§16)' },
@@ -1836,6 +1846,56 @@ export class InstrumentCapabilityContribution
             this.store.setSession(await this.session.discard(root));
         } catch (err) {
             this.messages.error(`Falha ao descartar a worktree: ${this.msg(err)}`);
+        }
+    }
+
+    // ── §10 adaptadores controlados ─────────────────────────────────────────
+
+    /** Probes every adapter the ENGINE knows. The list is never invented here. */
+    protected async readAdapters(): Promise<void> {
+        try {
+            const result = await this.engine.agentAdapters();
+            this.store.setAdapters(result.adapters);
+        } catch (err) {
+            this.messages.error(`Falha ao sondar adaptadores: ${this.msg(err)}`);
+            this.store.setAdapters(undefined);
+        }
+    }
+
+    /**
+     * Hands the live session to another adapter.
+     *
+     * The confirmation exists because the loss is real and asymmetric: swapping
+     * between adapters drops the conversation, and the person has to see that
+     * BEFORE it happens, not read about it afterwards.
+     */
+    protected async sessionSwap(agent: string): Promise<void> {
+        const root = this.root;
+        if (!root) {
+            return;
+        }
+        const current = this.store.session?.agent;
+        if (current && current !== agent) {
+            const confirmed = await new ConfirmDialog({
+                title: `Trocar de ${current} para ${agent}?`,
+                msg:
+                    'Conversa e contexto pertencem ao harness do agente atual e NÃO são ' +
+                    'portáveis entre backends: a sessão recomeça no novo adaptador. ' +
+                    'Projeto, worktree e o que já foi colhido pelo broker continuam como estão.',
+                ok: 'Trocar',
+                cancel: 'Ficar'
+            }).open();
+            if (!confirmed) {
+                return;
+            }
+        }
+        this.store.setSessionBusy(true);
+        try {
+            this.store.setSession(await this.session.swap(root, agent));
+        } catch (err) {
+            this.messages.error(`Troca de adaptador falhou: ${this.msg(err)}`);
+        } finally {
+            this.store.setSessionBusy(false);
         }
     }
 

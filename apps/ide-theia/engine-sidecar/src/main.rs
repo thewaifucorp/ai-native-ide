@@ -33,6 +33,9 @@
 //!   - `work_*`       the §9 items and the status they DERIVE (never a written one)
 //!   - `lifecycle_*`  the §16 export / publish / republish, with honest compensation
 //!   - `policy_decide` the §14 mode + permission policy for ONE effect
+//!   - `agent_adapters` the §10 adapters the engine knows, each with its coverage
+//!   - `agent_capture_state` / `agent_resume` / `agent_swap` the §10 session
+//!     handover, which reports what a swap preserved and what it dropped
 //!
 //! `diff` / `merge_selected` call straight into `ide_diff::{diff, merge_selected}`.
 //! The `broker_*` methods drive the REAL `ide_domain::WorkspaceEffectBroker`
@@ -1167,11 +1170,27 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             let p: AgentSessionParams =
                 serde_json::from_value(params).map_err(|e| e.to_string())?;
             let facade = facade_for(&p.agent).await?;
+            let session = AgentSessionId(p.session_id);
             let status = facade
-                .session_status(&AgentSessionId(p.session_id))
+                .session_status(&session)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(json!({ "status": status }))
+            // §10 — CUSTO junto do estado. O motor já acumulava os totais a cada
+            // evento `Usage` drenado; eles não saíam daqui, então a tela falava de
+            // uma sessão sem saber o que ela gastou. Um adaptador que não reporta
+            // uso devolve zero — e o `supportsUsageReporting` do probe é o que
+            // diz se zero significa "barato" ou "não medido".
+            let usage = facade
+                .capture_state(&session)
+                .await
+                .map(|state| {
+                    json!({
+                        "inputTokens": state.usage.input_tokens,
+                        "outputTokens": state.usage.output_tokens,
+                    })
+                })
+                .unwrap_or(Value::Null);
+            Ok(json!({ "status": status, "usage": usage }))
         }
         "agent_probe" => {
             #[derive(Deserialize)]
@@ -1202,6 +1221,13 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                         "targetVersion": d.target_version,
                         "supportsResume": d.supports_resume,
                         "supportsSteer": d.supports_steer,
+                        "supportsUsageReporting": d.supports_usage_reporting,
+                        "supportsPermissionBridge": d.supports_permission_bridge,
+                        // §10 — `PolicyCoverage` na resposta, não só no motor.
+                        // A diferença entre `enforced` e `declared_only` é a
+                        // diferença entre o IDE garantir e o IDE torcer, e é ela
+                        // que a pessoa precisa ver ANTES de rodar o agente.
+                        "policy": coverage_json(&d.policy),
                         "degradations": h.degradations,
                     }))
                 }
@@ -1214,8 +1240,118 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 })),
             }
         }
+        // §10 — captura, retomada e TROCA de adaptador.
+        //
+        // O motor já sabia fazer as três (`capture_state`, `resume`,
+        // `adopt_state`) e ninguém chamava. A troca é a que importa: ela devolve
+        // um `SwapReport` dizendo o que sobreviveu e o que se perdeu, porque
+        // conversa de harness NÃO é portável entre backends e fingir que é seria
+        // a mentira mais cara desta seção.
+        "agent_capture_state" => {
+            let p: AgentSessionParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            let state = facade
+                .capture_state(&AgentSessionId(p.session_id))
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(state).map_err(|e| e.to_string())
+        }
+        "agent_resume" | "agent_swap" => {
+            #[derive(Deserialize)]
+            struct SwapParams {
+                /// Adaptador que vai receber a sessão. Em `agent_resume` é o
+                /// mesmo que a abriu; em `agent_swap`, o novo.
+                agent: String,
+                state: ide_agent::AgentSessionState,
+            }
+            let swapping = method == "agent_swap";
+            let p: SwapParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let facade = facade_for(&p.agent).await?;
+            if swapping {
+                let (id, report) = facade
+                    .adopt_state(p.state)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(json!({
+                    "session_id": id.0,
+                    "agent": p.agent,
+                    "resumed": report.resumed,
+                    "preserved": report.preserved,
+                    "dropped": report.dropped,
+                }))
+            } else {
+                let id = facade.resume(&p.state).await.map_err(|e| e.to_string())?;
+                Ok(json!({
+                    "session_id": id.0,
+                    "agent": p.agent,
+                    "resumed": true,
+                    "preserved": ["conversation history and harness context"],
+                    "dropped": [],
+                }))
+            }
+        }
+        "agent_adapters" => {
+            // Os adaptadores que o MOTOR conhece, sondados um a um. A lista é do
+            // motor (`bridge_command_for`), não da tela: uma tela que inventasse
+            // adaptador ofereceria um caminho que não existe.
+            let mut adapters = Vec::new();
+            for agent in ["claude", "codex", "opencode", "gemini"] {
+                let entry = match AgentFacade::new(agent.to_string()) {
+                    Ok(facade) => {
+                        let d = facade.descriptor();
+                        let h = facade.health().await;
+                        json!({
+                            "agent": agent,
+                            "availability": match h.availability {
+                                AgentAvailability::Ready => "ready",
+                                AgentAvailability::Degraded => "degraded",
+                                AgentAvailability::Unavailable => "unavailable",
+                            },
+                            "detail": h.detail,
+                            "supportsResume": d.supports_resume,
+                            "supportsPermissionBridge": d.supports_permission_bridge,
+                            "policy": coverage_json(&d.policy),
+                            "degradations": h.degradations,
+                        })
+                    }
+                    Err(error) => json!({
+                        "agent": agent,
+                        "availability": "unavailable",
+                        "detail": error.to_string(),
+                        "supportsResume": false,
+                        "supportsPermissionBridge": false,
+                        "policy": Value::Null,
+                        "degradations": [],
+                    }),
+                };
+                adapters.push(entry);
+            }
+            Ok(json!({ "adapters": adapters }))
+        }
         other => Err(format!("unknown method: {other}")),
     }
+}
+
+/// `PolicyCoverage` como a tela precisa dele: quatro palavras que dizem se o IDE
+/// GARANTE, se apenas o adaptador declara, se quem manda é o harness do agente,
+/// ou se ninguém sabe. Nenhuma delas é traduzida para "ok".
+fn coverage_json(policy: &ide_agent::AgentPolicyCoverage) -> Value {
+    fn word(coverage: ide_agent::IdeCoverage) -> &'static str {
+        match coverage {
+            ide_agent::IdeCoverage::Enforced => "enforced",
+            ide_agent::IdeCoverage::DeclaredOnly => "declared_only",
+            ide_agent::IdeCoverage::HarnessOwned => "harness_owned",
+            ide_agent::IdeCoverage::Unknown => "unknown",
+        }
+    }
+    json!({
+        "toolVisibility": word(policy.tool_visibility),
+        "approvals": word(policy.approvals),
+        "egress": word(policy.egress),
+        "budget": word(policy.budget),
+        "sandbox": word(policy.sandbox),
+    })
 }
 
 fn main() -> io::Result<()> {

@@ -40,8 +40,10 @@ import {
     CMD_PREVIEW_STOP,
     CMD_RECONCILE_SCAN,
     CMD_RECONCILE_DECIDE,
+    CMD_SESSION_ADAPTERS,
     CMD_SESSION_CANCEL,
     CMD_SESSION_DISCARD,
+    CMD_SESSION_SWAP,
     CMD_SESSION_PERMISSION,
     CMD_SESSION_HARVEST,
     CMD_SESSION_START,
@@ -1252,6 +1254,21 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                         ' · baseline RECUPERADA: mudança anterior a ela não é distinguível da sua'}
                                 </small>
                             )}
+                            {session?.usage && (
+                                <small className="cap-evidence">
+                                    {session.usage.reported
+                                        ? `custo: ${session.usage.inputTokens} tokens de entrada · ${session.usage.outputTokens} de saída`
+                                        : 'custo: este adaptador não reporta uso — zero aqui significa NÃO MEDIDO, não barato'}
+                                </small>
+                            )}
+                            {session?.lastSwap && (
+                                <small className={session.lastSwap.resumed ? 'cap-evidence' : 'cap-remediation'}>
+                                    {session.lastSwap.from} → {session.lastSwap.to} ·{' '}
+                                    {session.lastSwap.resumed
+                                        ? `reatada: ${session.lastSwap.preserved.join(', ')}`
+                                        : `recomeçada — perdido: ${session.lastSwap.dropped.join(', ')}`}
+                                </small>
+                            )}
                             {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
                             <small className="cap-hint">
                                 o agente trabalha na worktree e só o broker traz mudança de ARQUIVO para o
@@ -1326,6 +1343,8 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                 )}
                             </div>
                         </div>
+
+                        {this.renderAdapters()}
 
                         {session && session.pending.length > 0 && (
                             <div className="cap-card">
@@ -1508,6 +1527,78 @@ export class WorkWidget extends AbstractInstrumentWidget {
                     </div>
                 </div>
             </section>
+        );
+    }
+
+    /**
+     * §10 — os adaptadores que o MOTOR conhece, com o que cada um cobre.
+     *
+     * A lista vem de `bridge_command_for`, nunca desta tela: oferecer um
+     * adaptador inventado seria oferecer um caminho que não existe. E o
+     * `PolicyCoverage` aparece ANTES de rodar, porque a diferença entre o IDE
+     * GARANTIR o portão (`enforced`) e o adaptador apenas dizer que tem
+     * (`declared_only`) muda o que a pessoa está aceitando.
+     */
+    protected renderAdapters(): React.ReactNode {
+        const adapters = this.store.adapters;
+        const session = this.store.session;
+        const busy = this.store.sessionBusy;
+        return (
+            <div className="cap-card">
+                <div className="cap-head">
+                    <b>Adaptadores</b>
+                    <button
+                        className="cap-btn"
+                        disabled={busy}
+                        onClick={() => this.commands.executeCommand(CMD_SESSION_ADAPTERS)}
+                    >
+                        {adapters ? 'Sondar de novo' : 'Sondar adaptadores'}
+                    </button>
+                </div>
+                <small className="cap-hint">
+                    trocar de adaptador NÃO escreve no projeto e não contorna o broker · conversa
+                    pertence ao harness do agente e não é portável entre backends: a troca diz o
+                    que perdeu
+                </small>
+                {!adapters && <small>não sondados — nenhuma disponibilidade é presumida</small>}
+                {adapters?.map(adapter => (
+                    <div className="cap-receipt" key={adapter.agent}>
+                        <span className="cap-receipt-action">{adapter.availability}</span>
+                        <span className="cap-receipt-detail">
+                            {adapter.agent}
+                            {session?.agent === adapter.agent ? ' · em uso' : ''}
+                        </span>
+                        {adapter.detail && <small>{adapter.detail}</small>}
+                        {adapter.policy && (
+                            <small className="cap-evidence">
+                                aprovação: {adapter.policy.approvals} · sandbox: {adapter.policy.sandbox} ·
+                                egress: {adapter.policy.egress} · budget: {adapter.policy.budget}
+                            </small>
+                        )}
+                        <small className="cap-evidence">
+                            {adapter.supportsResume ? 'retoma sessão' : 'não retoma sessão'} ·{' '}
+                            {adapter.supportsPermissionBridge
+                                ? 'pergunta antes de agir'
+                                : 'NÃO pergunta: resolve internamente'}
+                        </small>
+                        {adapter.degradations.map((degradation, index) => (
+                            <small className="cap-remediation" key={index}>{degradation}</small>
+                        ))}
+                        {session?.sessionId && session.agent !== adapter.agent && (
+                            <button
+                                className="cap-btn"
+                                disabled={busy || adapter.availability === 'unavailable'}
+                                title="Entrega a sessão viva a este adaptador; diz o que sobrevive"
+                                onClick={() =>
+                                    this.commands.executeCommand(CMD_SESSION_SWAP, adapter.agent)
+                                }
+                            >
+                                Trocar para este
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
         );
     }
 

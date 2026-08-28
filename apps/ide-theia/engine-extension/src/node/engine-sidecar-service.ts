@@ -22,7 +22,10 @@ import {
     SettingsPatch,
     SettingsSnapshot,
     SyncProposal,
+    AdapterCard,
     AgentProbe,
+    AgentSessionState,
+    SwapResult,
     BrokerActivity,
     EngineService,
     HarnessRun,
@@ -208,6 +211,29 @@ export class EngineSidecarService implements EngineService {
 
     brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }> {
         return this.call('broker_activity', { root, owner });
+    }
+
+    agentAdapters(): Promise<{ adapters: AdapterCard[] }> {
+        return this.call('agent_adapters', {});
+    }
+
+    agentSessionStatus(
+        agent: string,
+        sessionId: string
+    ): Promise<{ status: unknown; usage: { inputTokens: number; outputTokens: number } | null }> {
+        return this.call('agent_session_status', { agent, session_id: sessionId });
+    }
+
+    agentCaptureState(agent: string, sessionId: string): Promise<AgentSessionState> {
+        return this.call('agent_capture_state', { agent, session_id: sessionId });
+    }
+
+    agentResume(agent: string, state: AgentSessionState): Promise<SwapResult> {
+        return this.call('agent_resume', { agent, state });
+    }
+
+    agentSwap(agent: string, state: AgentSessionState): Promise<SwapResult> {
+        return this.call('agent_swap', { agent, state });
     }
 
     agentProbe(agent: string): Promise<AgentProbe> {

@@ -18,6 +18,7 @@ import {
     IntentReview,
     LibrarySnapshot,
     LifecycleSnapshot,
+    AdapterCard,
     PublishAttempt,
     ReferencesSnapshot,
     WorkSnapshot,
@@ -154,6 +155,10 @@ export class InstrumentStore {
     //    Abrir pasta não é registrar projeto.
     durable: ProjectSnapshot | undefined;
     durableBusy = false;
+
+    // ── REAL adaptadores de agente (§10): o que o MOTOR conhece, sondado um a
+    //    um, com o PolicyCoverage de cada um. `undefined` = nem sondado.
+    adapters: AdapterCard[] | undefined;
 
     // ── REAL referências (§13): serviço e ambiente do projeto durável. Elas
     //    têm endereço, não caminho — e nada aqui chama o endpoint.
@@ -449,6 +454,11 @@ export class InstrumentStore {
 
     setSettingsBusy(busy: boolean): void {
         this.settingsBusy = busy;
+        this.emit();
+    }
+
+    setAdapters(adapters: AdapterCard[] | undefined): void {
+        this.adapters = adapters;
         this.emit();
     }
 
