@@ -28,6 +28,7 @@ use ide_lifecycle::{
     ConfirmationDecision, ExportInputs, ExportManifest, ExportedResource, LifecycleEffect,
     PublishLog, PublishRecord, PublishTarget, Reversibility,
 };
+use ide_semantic::content_hash;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -185,7 +186,7 @@ pub fn export(root: &Path) -> Result<PublishAttempt, String> {
         .resources
         .iter()
         .map(|resource| ExportedResource {
-            id: resource.id.0.clone(),
+            id: portable_id(&resource.id.0),
             kind: format!("{:?}", resource.kind).to_lowercase(),
             label: relative_label(root, &resource.canonical_path),
         })
@@ -193,7 +194,7 @@ pub fn export(root: &Path) -> Result<PublishAttempt, String> {
 
     let snapshot = snapshot_of(root)?;
     let manifest = build_export_manifest(&ExportInputs {
-        project_id: record.id.0.clone(),
+        project_id: portable_id(&record.id.0),
         title: record.title.clone(),
         intent: record.intent.clone(),
         version: snapshot.next_version.clone(),
@@ -370,6 +371,26 @@ fn applied_packs(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A local id, made portable.
+///
+/// ── DEFEITO QUE SÓ APARECEU RODANDO ───────────────────────────────────────
+/// O id durável de um projeto é `project:<caminho canônico>`, e o de um recurso
+/// é `resource:<caminho canônico>`. O manifesto prometia não levar caminho de
+/// máquina e o `label` cumpria — mas os IDS iam inteiros, com `/home/<alguém>/…`
+/// dentro. Um export desses só reabre onde foi feito, que é o lock-in que esta
+/// seção existe para não ter, e ainda vaza o nome de usuário de quem exportou.
+///
+/// A parte depois do prefixo vira hash (o mesmo `content_hash` do §8), então o
+/// id continua estável para o mesmo projeto e deixa de descrever a máquina.
+fn portable_id(raw: &str) -> String {
+    match raw.split_once(':') {
+        Some((prefix, rest)) if rest.starts_with('/') || rest.contains('\\') => {
+            format!("{prefix}:{}", content_hash(rest))
+        }
+        _ => raw.to_string(),
+    }
+}
+
 /// A portable label for a resource: relative to the project when it lives inside
 /// it, and the bare directory name when it does not. Never an absolute path.
 fn relative_label(root: &Path, path: &Path) -> String {
@@ -426,6 +447,26 @@ mod tests {
             manifest.resources.iter().all(|r| !r.label.starts_with('/')),
             "export com caminho absoluto só reabre na máquina de quem exportou"
         );
+    }
+
+    /// O `label` já era relativo, mas os IDS levavam o caminho canônico inteiro —
+    /// isto é, o export prometia portabilidade e vazava `/home/<alguém>/…`. O
+    /// teste olha o JSON INTEIRO, não um campo escolhido a dedo.
+    #[test]
+    fn no_absolute_machine_path_survives_anywhere_in_the_manifest() {
+        let dir = registered_project();
+
+        let attempt = export(dir.path()).expect("export");
+        let target = attempt.compensation.expect("plano").target;
+        let raw = fs::read_to_string(dir.path().join(&target)).expect("manifesto");
+
+        assert!(
+            !raw.contains("/home/") && !raw.contains(&dir.path().display().to_string()),
+            "export com caminho de máquina só reabre onde foi feito: {raw}"
+        );
+        let manifest: ExportManifest = serde_json::from_str(&raw).expect("manifesto legível");
+        assert!(manifest.project_id.starts_with("project:"));
+        assert!(!manifest.project_id.contains('/'));
     }
 
     #[test]

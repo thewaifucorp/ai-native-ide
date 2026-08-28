@@ -1,0 +1,37 @@
+{
+  "providers": {
+    "instrument-work": {
+      "status": "active",
+      "stateVersion": "1.0.0"
+    },
+    "harness-conflict": {
+      "status": "registered",
+      "stateVersion": "1.0.0"
+    }
+  },
+  "bindings": {
+    "workflow": "instrument-work",
+    "work-hierarchy": "instrument-work",
+    "primary-status": "instrument-work"
+  },
+  "receipts": [
+    {
+      "at": "2026-08-28T00:16:45.762Z",
+      "providerId": "instrument-work",
+      "action": "register",
+      "detail": "manifesto 1.0.0 gravado em .harness/providers/instrument-work.json"
+    },
+    {
+      "at": "2026-08-28T00:16:45.773Z",
+      "providerId": "instrument-work",
+      "action": "activate",
+      "detail": "assumiu workflow, work-hierarchy, primary-status · 2 artefatos preservados"
+    },
+    {
+      "at": "2026-08-28T00:18:16.940Z",
+      "providerId": "harness-conflict",
+      "action": "register",
+      "detail": "manifesto 1.0.0 gravado em .harness/providers/harness-conflict.json"
+    }
+  ]
+}

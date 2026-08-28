@@ -1,0 +1,26 @@
+{
+  "id": "harness-conflict",
+  "label": "Harness rival (só workflow)",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "claims": [
+    "workflow"
+  ],
+  "extensions": {
+    "checks": [],
+    "packs": [],
+    "importers": [],
+    "views": []
+  },
+  "artifacts": {
+    "itemsDir": ".harness/items/harness-conflict",
+    "itemExtension": ".md"
+  },
+  "workflow": {
+    "states": [
+      "aberto",
+      "fechado"
+    ],
+    "initial": "aberto"
+  }
+}
