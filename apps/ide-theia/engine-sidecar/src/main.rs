@@ -31,7 +31,7 @@
 //!   - `notes_*`      the §7 notes by theme and their reconciliation
 //!   - `references_*` the §13 services and environments (address, never a path)
 //!   - `work_*`       the §9 items and the status they DERIVE (never a written one)
-//!   - `lifecycle_*`  the §16 export / publish / republish, with honest compensation
+//!   - `lifecycle_*`  the §16 export / consolidate / reopen, with honest compensation
 //!   - `policy_decide` the §14 mode + permission policy for ONE effect
 //!   - `agent_adapters` the §10 adapters the engine knows, each with its coverage
 //!   - `agent_capture_state` / `agent_resume` / `agent_swap` the §10 session
@@ -792,9 +792,10 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
-        // §16 — export, publish, republish. Reading and exporting are safe; the
-        // publish arm is the one that can produce an effect nobody can undo, and
-        // it refuses to do so without `confirmed`.
+        // §16 — export, consolidar versão, reabrir. Tudo aqui é local: o export
+        // grava um arquivo apagável e consolidar escreve no registro do projeto.
+        // Publicar num destino real, que é o passo com efeito externo, ainda não
+        // tem adapter — e nenhum destes braços finge que tem.
         "lifecycle_snapshot" | "lifecycle_export" => {
             #[derive(Deserialize)]
             struct RootOnly {
@@ -842,14 +843,14 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                     .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
-        "lifecycle_publish" => {
+        // Consolidar uma versão: registro LOCAL. O passo externo — publicar num
+        // destino real — é do adapter, e não existe ainda.
+        "lifecycle_consolidate" => {
             #[derive(Deserialize)]
-            struct PublishParams {
+            struct ConsolidateParams {
                 root: String,
-                #[serde(default = "default_publish_target")]
-                target: String,
                 /// The person's explicit act. Defaults to FALSE: a missing field
-                /// must never be read as consent for an external effect.
+                /// must never be read as consent.
                 #[serde(default)]
                 confirmed: bool,
                 #[serde(default)]
@@ -857,15 +858,11 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
                 #[serde(default)]
                 related_resources: Vec<String>,
             }
-            fn default_publish_target() -> String {
-                "compensable".to_string()
-            }
-            let p: PublishParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let p: ConsolidateParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let root = PathBuf::from(&p.root);
             let attempt = tokio::task::spawn_blocking(move || {
-                lifecycle::publish(
+                lifecycle::consolidate(
                     &root,
-                    &p.target,
                     p.confirmed,
                     p.problem.as_deref(),
                     p.related_resources,

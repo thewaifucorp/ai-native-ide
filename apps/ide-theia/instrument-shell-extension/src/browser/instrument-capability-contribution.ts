@@ -44,6 +44,7 @@ import {
     NoteLink,
     NoteRequest,
     GuidanceState,
+    PublishAttempt,
     PreviewSnapshot,
     ReconciliationChoice,
     SettingsPatch
@@ -91,7 +92,7 @@ export const CMD_LIFECYCLE_EXPORT = 'instrument.lifecycle.export';
 export const CMD_LIFECYCLE_DELETE_EXPORT = 'instrument.lifecycle.deleteExport';
 export const CMD_LIFECYCLE_REOPEN = 'instrument.lifecycle.reopen';
 export const CMD_LIFECYCLE_RELATE = 'instrument.lifecycle.relate';
-export const CMD_LIFECYCLE_PUBLISH = 'instrument.lifecycle.publish';
+export const CMD_LIFECYCLE_CONSOLIDATE = 'instrument.lifecycle.consolidate';
 export const CMD_SESSION_PERMISSION = 'instrument.session.permission';
 export const CMD_CHECKS_RUN = 'instrument.checks.run';
 
@@ -332,7 +333,7 @@ export class InstrumentCapabilityContribution
             { execute: (agent?: string) => (agent ? this.sessionSwap(agent) : undefined) }
         );
         commands.registerCommand(
-            { id: CMD_LIFECYCLE_READ, label: 'Instrument: ler publicações e exports (§16)' },
+            { id: CMD_LIFECYCLE_READ, label: 'Instrument: ler versões e exports (§16)' },
             { execute: () => this.readLifecycle() }
         );
         commands.registerCommand(
@@ -355,11 +356,11 @@ export class InstrumentCapabilityContribution
             { execute: (id?: string) => (id ? this.store.toggleLifecycleRelated(id) : undefined) }
         );
         commands.registerCommand(
-            { id: CMD_LIFECYCLE_PUBLISH, label: 'Instrument: publicar versão (efeito externo)' },
             {
-                execute: (target?: 'compensable' | 'immutable', problem?: string) =>
-                    this.lifecyclePublish(target ?? 'compensable', problem)
-            }
+                id: CMD_LIFECYCLE_CONSOLIDATE,
+                label: 'Instrument: consolidar versão (registro local)'
+            },
+            { execute: (problem?: string) => this.lifecycleConsolidate(problem) }
         );
         commands.registerCommand(
             { id: CMD_MATERIALS_ANALYZE, label: 'Instrument: analisar materiais do projeto (§5)' },
@@ -2204,18 +2205,17 @@ export class InstrumentCapabilityContribution
     }
 
     /**
-     * Publish, in two calls on purpose.
+     * Consolidar uma versão, em duas chamadas de propósito.
      *
-     * The first asks the ENGINE what this effect is; if it answers
-     * `needsConfirmation`, the dialog shows the engine's own sentence — the
-     * reversibility class and the compensation (or its absence) — and only an
-     * explicit OK produces the second call. Nothing is recorded in between, so a
-     * cancelled publish leaves no version behind.
+     * A primeira pergunta ao MOTOR o que este ato é; se ele responder
+     * `needsConfirmation`, o diálogo mostra a frase dele — e aqui a pergunta tem
+     * um motivo só: o harness está vermelho. Consolidar não sai da máquina, então
+     * herdar a confirmação de "efeito externo" seria cerimônia vazia, e cerimônia
+     * vazia treina a pessoa a clicar depressa nas confirmações que protegem algo.
+     *
+     * Nada é gravado entre as duas chamadas: cancelar não deixa versão para trás.
      */
-    protected async lifecyclePublish(
-        target: 'compensable' | 'immutable',
-        problem?: string
-    ): Promise<void> {
+    protected async lifecycleConsolidate(problem?: string): Promise<void> {
         const root = this.rootPath;
         if (!root) {
             return;
@@ -2225,56 +2225,58 @@ export class InstrumentCapabilityContribution
         // correção ao projeto, em vez de deixar o problema como texto solto.
         const relatedResources = [...this.store.lifecycleRelated];
         try {
-            const asked = await this.engine.lifecyclePublish(root, {
-                target,
+            const asked = await this.engine.lifecycleConsolidate(root, {
                 problem,
                 relatedResources
             });
             this.store.setLifecycleAttempt(asked);
             if (!asked.needsConfirmation) {
-                this.messages.info(asked.explain);
+                this.finishConsolidation(asked);
                 return;
             }
             // §15 — o que o harness sabia entra NO diálogo, antes do clique.
             //
-            // Publicar não consultava o harness: saía com check vermelho e com
-            // dimensões nunca avaliadas exatamente como sairia de um projeto
-            // medido. Falha conhecida pode ser uma escolha; não pode ser um
+            // O passo não consultava o harness: fechava versão com check vermelho
+            // e com dimensões nunca avaliadas exatamente como fecharia sobre um
+            // projeto medido. Falha conhecida pode ser escolha; não pode ser
             // acidente, e a escolha precisa da informação na mesma tela.
             const confirmed = await new ConfirmDialog({
-                title: `Publicar ${asked.snapshot.nextVersion}?`,
+                title: `Consolidar ${asked.snapshot.nextVersion} com falha conhecida?`,
                 msg: `${asked.explain}\n\nEstado medido: ${asked.evaluation.summary}`,
-                ok: asked.evaluation.failed > 0 ? 'Publicar mesmo assim' : 'Publicar',
-                cancel: 'Não publicar'
+                ok: 'Consolidar mesmo assim',
+                cancel: 'Não consolidar'
             }).open();
             if (!confirmed) {
-                this.messages.info('Nada foi publicado.');
+                this.messages.info('Nenhuma versão foi consolidada.');
                 return;
             }
-            const done = await this.engine.lifecyclePublish(root, {
-                target,
+            const done = await this.engine.lifecycleConsolidate(root, {
                 problem,
                 relatedResources,
                 confirmed: true
             });
             this.store.setLifecycleAttempt(done);
-            // A versão nova é outra história: manter o export anterior aberto com
-            // os recursos marcados faria a próxima republicação herdar o vínculo
-            // de um problema já corrigido.
-            this.store.setLifecycleReopened(undefined);
-            this.messages.info(
-                `Publicado ${done.record?.version ?? ''} · ` +
-                `${done.compensation?.note ?? 'sem compensação possível'} · ` +
-                `${done.record?.relatedResources.length
-                    ? `${done.record.relatedResources.length} recurso(s) ligado(s) ao problema · `
-                    : ''}` +
-                `estado medido: ${done.evaluation.summary}`
-            );
+            this.finishConsolidation(done);
         } catch (err) {
-            this.messages.error(`Publicação não aconteceu: ${this.msg(err)}`);
+            this.messages.error(`Versão não foi consolidada: ${this.msg(err)}`);
         } finally {
             this.store.setLifecycleBusy(false);
         }
+    }
+
+    /** Recibo da versão fechada, e limpeza do que era daquele problema.
+     *
+     *  A versão nova é outra história: manter o export anterior aberto com os
+     *  recursos marcados faria a PRÓXIMA versão herdar o vínculo de um problema
+     *  já corrigido. */
+    protected finishConsolidation(done: PublishAttempt): void {
+        this.store.setLifecycleReopened(undefined);
+        const ligados = done.record?.relatedResources.length ?? 0;
+        this.messages.info(
+            `Versão ${done.record?.version ?? ''} consolidada no registro local · ` +
+            `${ligados ? `${ligados} recurso(s) ligado(s) ao problema · ` : ''}` +
+            `estado medido: ${done.evaluation.summary}`
+        );
     }
 
     // ── external writes (WORK-05) ───────────────────────────────────────────

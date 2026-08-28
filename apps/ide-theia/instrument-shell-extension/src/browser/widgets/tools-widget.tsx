@@ -34,7 +34,7 @@ import {
     CMD_LIBRARY_READ,
     CMD_LIFECYCLE_DELETE_EXPORT,
     CMD_LIFECYCLE_EXPORT,
-    CMD_LIFECYCLE_PUBLISH,
+    CMD_LIFECYCLE_CONSOLIDATE,
     CMD_LIFECYCLE_READ,
     CMD_LIFECYCLE_RELATE,
     CMD_LIFECYCLE_REOPEN,
@@ -1396,12 +1396,19 @@ export class ToolsWidget extends AbstractInstrumentWidget {
     }
 
     /**
-     * PUBLICAR E EVOLUIR (§16).
+     * VERSÕES (§16) — consolidar, exportar, reabrir.
      *
-     * Duas coisas diferentes na mesma seção, e a diferença é o ponto: o export é
-     * local e tem undo de verdade (apagar o arquivo); publicar é efeito externo e
-     * NÃO tem undo — no máximo compensação, e em destino imutável nem isso. A
-     * tela mostra a classe que o motor calculou; ela não inventa um rollback nem
+     * A seção se chamava "Publicar" e essa palavra prometia deploy: a pessoa
+     * clicava esperando ver o produto no ar e o que acontecia era uma linha num
+     * registro local. Agora cada ato tem o seu nome e a sua classe de efeito:
+     *
+     *  • CONSOLIDAR congela a versão no registro do projeto. Local.
+     *  • EXPORTAR grava um manifesto portátil. Local, com undo de verdade.
+     *  • PUBLICAR leva a versão a um destino real, por adapter — o único com
+     *    efeito externo, e o único sem undo. Nenhum adapter existe ainda, e o
+     *    botão fica desabilitado DIZENDO isso em vez de fingir.
+     *
+     * A tela mostra a classe que o motor calculou; não inventa rollback nem
      * esconde a falta de um.
      */
     /**
@@ -1410,8 +1417,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
      * O ciclo só fecha quando um problema visto depois de publicar volta para o
      * projeto. Reabrir mostra o que aquela versão dizia e o que mudou desde ela;
      * marcar um recurso é o que LIGA o problema observado ao projeto — sem isso a
-     * republicação sai com um texto solto no log e ninguém consegue, depois,
-     * responder "o que essa correção tocou".
+     * versão seguinte sai com um texto solto no registro e ninguém consegue,
+     * depois, responder "o que essa correção tocou".
      *
      * Um recurso que sumiu do projeto continua marcável de propósito: ele pode
      * ser exatamente a causa do problema.
@@ -1428,8 +1435,8 @@ export class ToolsWidget extends AbstractInstrumentWidget {
             <div className="cap-card">
                 <div className="cap-head">
                     <b>reaberto: {reopened.title} {reopened.version}</b>
-                    <span className={reopened.published ? 'cap-pill ready' : 'cap-pill'}>
-                        {reopened.published ? 'publicado' : 'ensaio local'}
+                    <span className={reopened.recorded ? 'cap-pill ready' : 'cap-pill'}>
+                        {reopened.recorded ? 'versão consolidada' : 'ensaio local'}
                     </span>
                 </div>
                 <small className="cap-evidence">{reopened.summary}</small>
@@ -1445,7 +1452,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
 
                 <small className="cap-hint">
                     marque os recursos que o problema observado atinge · é o vínculo que a
-                    republicação grava, e o que responde depois “o que essa correção tocou”
+                    próxima versão grava, e o que responde depois “o que essa correção tocou”
                 </small>
                 {reopened.resources.length === 0 && (
                     <small className="cap-evidence">o export não listou recurso nenhum</small>
@@ -1482,7 +1489,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 )}
                 {related.length > 0 && (
                     <small className="cap-hint">
-                        {related.length} recurso(s) serão gravados na próxima republicação
+                        {related.length} recurso(s) serão gravados na próxima versão
                     </small>
                 )}
             </div>
@@ -1504,7 +1511,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
 
         return this.section(
             'lifecycle',
-            'Publicar',
+            'Versões',
             summary,
             () => (
                 <div className="cap-card">
@@ -1520,9 +1527,11 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 {cycle.logPath} · exports em {cycle.exportsPath}
                             </small>
                             <small className="cap-hint">
-                                export é local e reversível de verdade · publicar é efeito externo:
-                                não tem rollback, só compensação — e em destino imutável, nem isso ·
-                                nada aqui exige ShinAI ou Katsui
+                                consolidar é local: congela “esta é a versão X, corrige tal
+                                problema, tocou tais recursos” · export grava um arquivo portátil e
+                                apagar desfaz · publicar num destino real é outro passo, por
+                                adapter, e é o único com efeito externo · nada aqui exige ShinAI ou
+                                Katsui
                             </small>
 
                             <div className="cap-actions">
@@ -1538,17 +1547,28 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     disabled={busy || (cycle.history.length > 0 &&
                                         this.draft('lifecycle-problem').trim().length === 0)}
                                     title={cycle.history.length > 0
-                                        ? 'Republicar pede o problema observado que esta versão corrige'
-                                        : 'Publica a primeira versão; pede confirmação antes'}
+                                        ? 'Uma versão sobre outra pede o problema observado que ela corrige'
+                                        : 'Congela a primeira versão no registro local do projeto'}
                                     onClick={() =>
                                         this.commands.executeCommand(
-                                            CMD_LIFECYCLE_PUBLISH,
-                                            'compensable',
+                                            CMD_LIFECYCLE_CONSOLIDATE,
                                             this.draft('lifecycle-problem') || undefined
                                         )
                                     }
                                 >
-                                    {cycle.history.length > 0 ? 'Republicar' : 'Publicar'}
+                                    Consolidar {cycle.nextVersion}
+                                </button>
+                                {/* PUBLICAR NÃO EXISTE AINDA, E O BOTÃO DIZ ISSO.
+                                    Enquanto os dois atos eram um só, a tela prometia
+                                    deploy e entregava registro local. Um botão
+                                    desabilitado com o motivo é honesto; um botão que
+                                    grava no caderno e diz "publicado" não é. */}
+                                <button
+                                    className="cap-btn"
+                                    disabled={true}
+                                    title="Nenhum destino configurado: publicar exige um adapter (release Git, provider, servidor local) e nenhum existe ainda neste projeto"
+                                >
+                                    Publicar… (sem destino)
                                 </button>
                             </div>
                             {cycle.history.length > 0 && (
@@ -1576,7 +1596,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     <button
                                         className="cap-btn"
                                         disabled={busy}
-                                        title="Reabrir esta versão e ver o que mudou desde ela"
+                                        title="Reabrir este export e ver o que mudou desde ele"
                                         onClick={() =>
                                             this.commands.executeCommand(
                                                 CMD_LIFECYCLE_REOPEN,
@@ -1602,9 +1622,30 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 </div>
                             ))}
 
+                            {/* A LINHA DIZ QUAL DOS DOIS ATOS ELA FOI.
+                                Sem isto a separação só existiria no arquivo: na
+                                tela, uma versão apenas consolidada e uma que
+                                saiu para um destino teriam a mesma cara — que é
+                                exatamente a confusão que esta seção deixou de
+                                fazer. `published` aparece em linhas gravadas
+                                quando o passo se dizia externo. */}
                             {cycle.history.map(record => (
                                 <div className="cap-receipt" key={record.version}>
                                     <span className="cap-receipt-action">v{record.version}</span>
+                                    <span
+                                        className={
+                                            record.kind === 'published'
+                                                ? 'cap-pill ready'
+                                                : 'cap-pill'
+                                        }
+                                        title={
+                                            record.kind === 'published'
+                                                ? 'gravada como publicação externa'
+                                                : 'consolidada localmente; não foi para nenhum destino'
+                                        }
+                                    >
+                                        {record.kind === 'published' ? 'externa' : 'local'}
+                                    </span>
                                     <span className="cap-receipt-detail">
                                         {record.problem ? `corrige: ${record.problem}` : record.note}
                                         {record.relatedResources.length > 0 &&
@@ -1627,7 +1668,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     disabled={busy}
                     onClick={() => this.commands.executeCommand(CMD_LIFECYCLE_READ)}
                 >
-                    {busy ? 'lendo…' : 'Ler publicações'}
+                    {busy ? 'lendo…' : 'Ler versões'}
                 </button>
             </div>
         );

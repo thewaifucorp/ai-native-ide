@@ -464,18 +464,16 @@ export class EngineSidecarService implements EngineService {
         return this.call('lifecycle_reopen', { root, path });
     }
 
-    lifecyclePublish(
+    lifecycleConsolidate(
         root: string,
         options: {
-            target?: 'compensable' | 'immutable';
             confirmed?: boolean;
             problem?: string;
             relatedResources?: string[];
         } = {}
     ): Promise<PublishAttempt> {
-        return this.call('lifecycle_publish', {
+        return this.call('lifecycle_consolidate', {
             root,
-            target: options.target ?? 'compensable',
             // Never defaulted to true anywhere: consent is stated, not assumed.
             confirmed: options.confirmed === true,
             problem: options.problem,

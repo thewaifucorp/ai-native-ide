@@ -384,7 +384,7 @@ export interface EngineService {
      */
     workWriteItem(root: string, item: WorkItem): Promise<WorkSnapshot>;
 
-    // ── §16 publicar e evoluir ────────────────────────────────────────────────
+    // ── §16 versões: consolidar, exportar, reabrir ────────────────────────────
 
     lifecycleSnapshot(root: string): Promise<LifecycleSnapshot>;
     /** Writes the portable manifest locally. Reversible: deleting it undoes it. */
@@ -397,16 +397,18 @@ export interface EngineService {
      */
     lifecycleReopen(root: string, path: string): Promise<ReopenedExport>;
     /**
-     * Publishes (or republishes) the next version.
+     * Consolida a próxima versão no registro LOCAL: esta é a 0.0.3, corrige tal
+     * problema, tocou tais recursos. Nada sai da máquina — publicar num destino
+     * real é outro passo, por adapter, e é o único com efeito externo.
      *
-     * `confirmed` is the person's explicit act; without it an external effect
-     * comes back as `needsConfirmation` and NOTHING is recorded. A republish
-     * requires the observed problem it fixes.
+     * `confirmed` é o ato explícito da pessoa. Aqui ele é exigido por EVIDÊNCIA
+     * (consolidar sobre check vermelho), não por irreversibilidade; sem ele a
+     * resposta volta como `needsConfirmation` e NADA é gravado. Consolidar sobre
+     * uma versão anterior exige o problema observado que ela corrige.
      */
-    lifecyclePublish(
+    lifecycleConsolidate(
         root: string,
         options: {
-            target?: 'compensable' | 'immutable';
             confirmed?: boolean;
             problem?: string;
             relatedResources?: string[];
@@ -1107,7 +1109,7 @@ export interface WorkSnapshot {
     itemsDir: string;
 }
 
-// ── §16 lifecycle: export, publish, republish ────────────────────────────────
+// ── §16 lifecycle: consolidar versão, exportar, reabrir ──────────────────────
 
 /** A manifest already written to `.instrument/exports/`. */
 export interface ExportedFile {
@@ -1126,9 +1128,20 @@ export interface CompensationPlan {
     note: string;
 }
 
+/**
+ * O que uma linha do registro é.
+ *
+ * `consolidated` — versão congelada localmente, nada saiu da máquina.
+ * `published` — publicação externa. Registros gravados antes desta separação
+ * vêm como `published`: eles nasceram do passo que se dizia externo, e lê-los
+ * como locais mudaria retroativamente o que afirmam.
+ */
+export type RecordKind = 'consolidated' | 'published';
+
 export interface PublishRecord {
     projectId: string;
     version: string;
+    kind: RecordKind;
     problem?: string;
     relatedResources: string[];
     note: string;
@@ -1150,7 +1163,7 @@ export interface LifecycleSnapshot {
 }
 
 /**
- * The result of trying to export or publish.
+ * The result of trying to export or consolidate a version.
  *
  * `needsConfirmation` means NOTHING happened yet: the engine decided this effect
  * requires an explicit act first. The reversibility class and the compensation
@@ -1163,7 +1176,7 @@ export interface PublishAttempt {
     explain: string;
     record?: PublishRecord;
     snapshot: LifecycleSnapshot;
-    /** §15 — o que o harness sabia no instante de publicar. */
+    /** §15 — o que o harness sabia no instante de fechar a versão. */
     evaluation: PublishEvaluation;
 }
 
@@ -1222,10 +1235,10 @@ export interface ReopenedExport {
     packsAdded: string[];
     packsRemoved: string[];
     /**
-     * A publicação registrada com esta mesma versão, quando existe. Um export sem
-     * publicação correspondente é um ensaio local, não um produto no ar.
+     * A linha do registro com esta mesma versão, quando existe. Um export sem
+     * versão consolidada é um ensaio local, não um marco do projeto.
      */
-    published?: PublishRecord;
+    recorded?: PublishRecord;
     /** Frase para a tela. Nunca vazia. */
     summary: string;
 }

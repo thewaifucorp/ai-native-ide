@@ -1,4 +1,4 @@
-//! §16 — publicar e evoluir, sem exigir ShinAI nem Katsui.
+//! §16 — versões do projeto, sem exigir ShinAI nem Katsui.
 //!
 //! `ide_lifecycle` já modelava o ciclo inteiro e ninguém o chamava:
 //! `build_export_manifest`, `confirmation_for`, `compensation_for` e o
@@ -9,24 +9,31 @@
 //! * **Export local é reversível de verdade.** Ele grava um arquivo em
 //!   `.instrument/exports/` — estado de runtime do IDE, não conteúdo do projeto —
 //!   e a compensação é apagar esse arquivo. É o único efeito daqui com undo real.
-//! * **Publicação externa NÃO tem undo.** No máximo tem compensação: publicar
-//!   retratação ou versão corrigida. Em destino imutável não tem nem isso, e aí
-//!   a resposta é `compensation: null` em vez de um rollback inventado.
-//! * **Confirmação é do motor.** Quem decide se pergunta é `confirmation_for`, e
-//!   a pergunta é feita com a classe de reversibilidade na mão. A tela mostra
-//!   essa decisão; não simula uma.
+//! * **Consolidar não é apagável.** O registro de versões é o que responde "o
+//!   que aconteceu com este projeto"; apagar uma linha seria reescrever a
+//!   história. A compensação é consolidar uma versão corrigida por cima.
+//! * **Confirmação é do motor.** Quem decide se pergunta é `confirmation_for`.
+//!   Aqui a pergunta tem um motivo só — evidência vermelha — porque nada deste
+//!   módulo sai da máquina. A tela mostra essa decisão; não simula uma.
 //!
 //! # O que este módulo NÃO faz
 //!
-//! Não fala com serviço nenhum. "Publicar" aqui registra a publicação no log
-//! local com a evidência do que ela é — o transporte para um destino real é o
-//! próximo passo e não está fingido: `PublishTarget` diz qual classe de destino
-//! foi declarada, e nada mais.
+//! Não fala com serviço nenhum, e agora o nome do passo diz isso. O que existe
+//! aqui é **consolidar** uma versão: congelar no registro local que esta é a
+//! 0.0.3, qual problema ela corrige e o que ela tocou. **Publicar** — levar a
+//! versão a um destino real — é outro passo, feito por adapter, e é o único com
+//! efeito externo.
+//!
+//! Enquanto isto se chamava "publicar", a tela prometia um deploy que nunca
+//! acontecia: a pessoa clicava e lia "meu produto foi para o ar" quando o que
+//! saía era uma linha em `.instrument/lifecycle/publications.json`. Nenhum
+//! adapter de destino existe ainda, e a tela diz isso em vez de oferecer um
+//! botão que finge.
 
 use ide_lifecycle::{
     build_export_manifest, compensation_for, confirmation_for, CompensationPlan,
     ConfirmationDecision, ExportInputs, ExportManifest, ExportedResource, LifecycleEffect,
-    PublishLog, PublishRecord, PublishTarget, Reversibility,
+    PublishLog, PublishRecord, Reversibility,
 };
 use ide_semantic::content_hash;
 use serde::Serialize;
@@ -35,7 +42,7 @@ use std::path::Path;
 
 use crate::project;
 
-/// Where publications are recorded, and where exports land. Both are IDE runtime
+/// Where versions are recorded, and where exports land. Both are IDE runtime
 /// state for the project: an export is deletable evidence, not project content.
 const LOG_REL: &str = ".instrument/lifecycle";
 const EXPORTS_REL: &str = ".instrument/exports";
@@ -53,28 +60,28 @@ pub struct ExportedFile {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LifecycleSnapshot {
-    /// `None` while the folder is not a durable project yet — publishing
-    /// something that has no registered intent would publish nothing at all.
+    /// `None` while the folder is not a durable project yet — a version of
+    /// something with no registered intent would record nothing at all.
     pub project_id: Option<String>,
     pub title: Option<String>,
     /// Latest recorded version, when there is one.
     pub latest_version: Option<String>,
-    /// What the next publication would be called.
+    /// What the next version would be called.
     pub next_version: String,
     pub history: Vec<PublishRecord>,
     pub exports: Vec<ExportedFile>,
-    /// Why publishing is not available right now, when it is not.
+    /// Why closing a version is not available right now, when it is not.
     pub blocked_reason: Option<String>,
     pub log_path: String,
     pub exports_path: String,
 }
 
-/// What an attempted publication returned: either the question the engine says
+/// What an attempted version step returned: either the question the engine says
 /// must be asked first, or the record of what happened.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishAttempt {
-    /// True when nothing was published and a confirmation is required first.
+    /// True when nothing was recorded and a confirmation is required first.
     pub needs_confirmation: bool,
     /// The honest reversibility class of what is about to happen.
     pub reversibility: Reversibility,
@@ -82,23 +89,23 @@ pub struct PublishAttempt {
     pub compensation: Option<CompensationPlan>,
     /// Sentence for the confirmation dialog / receipt.
     pub explain: String,
-    /// The record, present only when the publication actually happened.
+    /// The record, present only when the version was actually consolidated.
     pub record: Option<PublishRecord>,
     pub snapshot: LifecycleSnapshot,
-    /// O que se sabia do projeto no momento da publicação — ver `PublishEvaluation`.
+    /// O que se sabia do projeto no momento de fechar a versão — ver `PublishEvaluation`.
     pub evaluation: PublishEvaluation,
 }
 
-/// O veredito do harness no instante de publicar.
+/// O veredito do harness no instante de fechar a versão.
 ///
 /// ── POR QUE ISTO EXISTE (§15) ─────────────────────────────────────────────
-/// Publicar não consultava o harness. Dava para publicar com check vermelho e
-/// com dimensões nunca avaliadas, e nada dizia — a publicação saía com a mesma
-/// cara de uma publicação sobre um projeto medido. "Deep evaluation em
-/// publicação" é isto: o que se sabia, e o que não se sabia, dito ANTES de
-/// confirmar, e carregado junto do que aconteceu.
+/// O passo não consultava o harness. Dava para fechar uma versão com check
+/// vermelho e com dimensões nunca avaliadas, e nada dizia — ela saía com a mesma
+/// cara de uma versão sobre projeto medido. "Deep evaluation em publicação" é
+/// isto: o que se sabia, e o que não se sabia, dito ANTES de confirmar, e
+/// carregado junto do que aconteceu.
 ///
-/// O harness roda aqui SEM executar comandos declarados: publicar não pode
+/// O harness roda aqui SEM executar comandos declarados: fechar versão não pode
 /// disparar build ou teste por conta própria, que é o automático que o §4 proíbe.
 /// Então build e testes aparecem como não avaliados, o que é a verdade.
 #[derive(Debug, Clone, Serialize)]
@@ -113,7 +120,7 @@ pub struct PublishEvaluation {
 }
 
 /// Roda o harness, sem executar comandos, e resume o que ele soube.
-fn evaluate_before_publishing(root: &Path) -> PublishEvaluation {
+fn evaluate_before_recording(root: &Path) -> PublishEvaluation {
     let run = crate::harness::run(root, 0, false);
     let unevaluated: Vec<String> = run
         .report
@@ -138,14 +145,6 @@ fn evaluate_before_publishing(root: &Path) -> PublishEvaluation {
         failed: run.report.failed,
         unevaluated,
         summary,
-    }
-}
-
-fn target_of(value: &str) -> Result<PublishTarget, String> {
-    match value {
-        "compensable" => Ok(PublishTarget::ExternalCompensable),
-        "immutable" => Ok(PublishTarget::ExternalImmutable),
-        other => Err(format!("destino de publicação desconhecido: {other}")),
     }
 }
 
@@ -202,8 +201,8 @@ fn snapshot_of(root: &Path) -> Result<LifecycleSnapshot, String> {
     Ok(LifecycleSnapshot {
         blocked_reason: if project_id.is_none() {
             Some(
-                "esta pasta ainda não é um projeto durável: publicar sem título e intenção \
-                 registrados publicaria nada — registre o projeto primeiro"
+                "esta pasta ainda não é um projeto durável: fechar versão sem título e \
+                 intenção registrados congelaria nada — registre o projeto primeiro"
                     .to_string(),
             )
         } else {
@@ -268,7 +267,7 @@ pub fn export(root: &Path) -> Result<PublishAttempt, String> {
     Ok(PublishAttempt {
         // O export local também carrega o que se sabia: reabrir um export e
         // descobrir depois que ele saiu com check vermelho é a mesma surpresa.
-        evaluation: evaluate_before_publishing(root),
+        evaluation: evaluate_before_recording(root),
         needs_confirmation: false,
         reversibility: effect.reversibility(),
         compensation: compensation_for(&effect),
@@ -359,10 +358,10 @@ pub struct ReopenedExport {
     pub guidance_removed: Vec<String>,
     pub packs_added: Vec<String>,
     pub packs_removed: Vec<String>,
-    /// A publicação registrada com esta mesma versão, quando ela existe. Um
-    /// export sem publicação correspondente é um ensaio, não um produto no ar,
-    /// e a tela não pode tratar os dois igual.
-    pub published: Option<PublishRecord>,
+    /// A linha do registro com esta mesma versão, quando ela existe. Um export
+    /// sem versão consolidada é um ensaio, não um marco do projeto, e a tela não
+    /// pode tratar os dois igual.
+    pub recorded: Option<PublishRecord>,
     /// Uma frase para a tela e para o recibo. Nunca vazia.
     pub summary: String,
 }
@@ -422,13 +421,13 @@ pub fn reopen(root: &Path, relative: &str) -> Result<ReopenedExport, String> {
     let packs_added = missing_from(&packs_now, &manifest.applied_packs);
     let packs_removed = missing_from(&manifest.applied_packs, &packs_now);
 
-    let published = log(root)?
+    let recorded = log(root)?
         .history(&manifest.project_id)
         .into_iter()
         .find(|entry| entry.version == manifest.version)
         .or_else(|| {
             // O log guarda o id LOCAL do projeto; o manifesto, o portátil. Reabrir
-            // um export feito nesta mesma máquina tem de encontrar a publicação,
+            // um export feito nesta mesma máquina tem de encontrar a versão,
             // então a busca também tenta pelo id de hoje.
             record.and_then(|p| {
                 log(root)
@@ -457,9 +456,9 @@ pub fn reopen(root: &Path, relative: &str) -> Result<ReopenedExport, String> {
     if steering > 0 {
         mudancas.push(format!("{steering} mudança(s) de guidance/packs"));
     }
-    let estado = match &published {
-        Some(entry) => format!("publicado como {}", entry.version),
-        None => "nunca publicado — este export é um ensaio local".to_string(),
+    let estado = match &recorded {
+        Some(entry) => format!("consolidada como {}", entry.version),
+        None => "versão nunca consolidada — este export é um ensaio local".to_string(),
     };
     let summary = if mudancas.is_empty() {
         format!(
@@ -489,7 +488,7 @@ pub fn reopen(root: &Path, relative: &str) -> Result<ReopenedExport, String> {
         guidance_removed,
         packs_added,
         packs_removed,
-        published,
+        recorded,
         summary,
     })
 }
@@ -505,76 +504,69 @@ fn missing_from(left: &[String], right: &[String]) -> Vec<String> {
     out
 }
 
-/// Publishes (or republishes) the next version.
+/// Consolida a próxima versão no registro LOCAL do projeto.
 ///
-/// `confirmed` is the person's explicit act. Whether it is required at all is
-/// `confirmation_for`'s decision, asked with the honest reversibility of the
-/// effect: an external publication has no rollback, so it counts as irreversible
-/// for the purpose of that question even when a compensation exists. Nothing is
-/// written to the log while a required confirmation is missing.
-pub fn publish(
+/// ── O PASSO SE CHAMAVA "PUBLICAR" E ISSO ERA UMA MENTIRA ─────────────────
+/// Ele nunca falou com serviço nenhum: escrevia uma linha em
+/// `.instrument/lifecycle/publications.json`. Quem clicava lia "meu produto foi
+/// para o ar" e o que acontecia era um registro local. Agora o nome diz o ato:
+/// consolidar congela "esta é a versão X, corrige tal problema, tocou tais
+/// recursos". Levar isso a um destino real é PUBLICAR, é outro passo, e vai por
+/// adapter — é lá que mora o efeito externo, com a confirmação que ele exige.
+///
+/// Duas consequências que não são cosméticas:
+///
+///  * **A confirmação muda de motivo.** Antes ela vinha de "publicação externa
+///    não tem rollback". Consolidar não sai da máquina, então a única razão que
+///    sobra para perguntar é evidência: consolidar sobre check vermelho pode ser
+///    escolha, não pode ser acidente.
+///  * **A compensação muda de forma.** Não é "publicar retratação": é consolidar
+///    uma versão corrigida por cima, com a errada continuando no registro.
+///
+/// `confirmed` continua sendo o ato explícito da pessoa, e nada é gravado
+/// enquanto uma confirmação exigida não chega.
+pub fn consolidate(
     root: &Path,
-    target: &str,
     confirmed: bool,
     problem: Option<&str>,
     related_resources: Vec<String>,
 ) -> Result<PublishAttempt, String> {
-    let target = target_of(target)?;
     let snapshot = snapshot_of(root)?;
-    let evaluation = evaluate_before_publishing(root);
+    let evaluation = evaluate_before_recording(root);
     let project_id = snapshot
         .project_id
         .clone()
         .ok_or_else(|| snapshot.blocked_reason.clone().unwrap_or_default())?;
-    let republishing = snapshot.latest_version.is_some();
-    if republishing && problem.map(str::trim).unwrap_or("").is_empty() {
+    let succeeding = snapshot.latest_version.is_some();
+    if succeeding && problem.map(str::trim).unwrap_or("").is_empty() {
         return Err(
-            "republicar pede o problema observado que esta versão corrige — é o que liga a \
-             correção ao que aconteceu"
+            "consolidar uma versão sobre outra pede o problema observado que ela corrige — é o \
+             que liga a correção ao que aconteceu"
                 .to_string(),
         );
     }
 
-    let planned = if republishing {
-        LifecycleEffect::Republish {
-            project_id: project_id.clone(),
-            version: snapshot.next_version.clone(),
-            target,
-        }
-    } else {
-        LifecycleEffect::Publish {
-            project_id: project_id.clone(),
-            version: snapshot.next_version.clone(),
-            target,
-        }
+    let planned = LifecycleEffect::ConsolidateVersion {
+        project_id: project_id.clone(),
+        version: snapshot.next_version.clone(),
     };
     let reversibility = planned.reversibility();
     let compensation = compensation_for(&planned);
-    let explain = match (&reversibility, &compensation) {
-        (Reversibility::Irreversible, _) => format!(
-            "Publicar {} em destino imutável: não tem undo e não tem compensação. \
-             Depois disto, nada nesta tela desfaz.",
-            snapshot.next_version
-        ),
-        (_, Some(plan)) => format!(
-            "Publicar {} é efeito externo: não tem rollback. O que existe é compensação — {}",
-            snapshot.next_version, plan.note
-        ),
-        (_, None) => format!(
-            "Publicar {} não tem compensação conhecida.",
-            snapshot.next_version
-        ),
-    };
+    let explain = format!(
+        "Consolidar {} é local: nada sai desta máquina e nada vai para o ar. \
+         Publicar num destino real é outro passo. {}",
+        snapshot.next_version,
+        compensation
+            .as_ref()
+            .map(|plan| plan.note.clone())
+            .unwrap_or_else(|| "Sem compensação conhecida.".to_string())
+    );
 
-    // O motor decide se pergunta. `Reversible` seria o único caso que dispensa,
-    // e publicação externa nunca é reversível.
-    let irreversible = !matches!(reversibility, Reversibility::Reversible);
-    // Check vermelho também pede confirmação, mesmo em alvo reversível: publicar
-    // sobre falha conhecida pode ser uma escolha, mas não pode ser um acidente.
-    let precisa_por_evidencia = evaluation.failed > 0;
-    if confirmation_for(irreversible || precisa_por_evidencia, confirmed)
-        == ConfirmationDecision::ConfirmFirst
-    {
+    // A ÚNICA razão para perguntar aqui é evidência. Consolidar não sai da
+    // máquina, então herdar a pergunta de "efeito externo" treinaria a pessoa a
+    // clicar em confirmação que não protege nada — e a clicar depressa nas que
+    // protegem.
+    if confirmation_for(evaluation.failed > 0, confirmed) == ConfirmationDecision::ConfirmFirst {
         return Ok(PublishAttempt {
             needs_confirmation: true,
             reversibility,
@@ -587,17 +579,9 @@ pub fn publish(
     }
 
     let mut log = log(root)?;
-    let record = if republishing {
-        log.republish_to(
-            &project_id,
-            problem.unwrap_or_default(),
-            related_resources,
-            target,
-        )
-    } else {
-        log.publish_to(&project_id, target)
-    }
-    .map_err(|error| format!("{error:#}"))?;
+    let record = log
+        .consolidate(&project_id, problem, related_resources)
+        .map_err(|error| format!("{error:#}"))?;
 
     Ok(PublishAttempt {
         needs_confirmation: false,
@@ -675,23 +659,19 @@ fn relative_label(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ide_lifecycle::RecordKind;
 
-    /// §15 — publicar carrega o que se sabia, e falha conhecida pede decisão.
+    /// §15 — consolidar carrega o que se sabia, e a pergunta vem da evidência.
     ///
-    /// Publicar não consultava o harness: dava para publicar com check vermelho e
-    /// com dimensões nunca avaliadas, e a publicação saía com a mesma cara de uma
-    /// publicação sobre projeto medido.
+    /// O passo não consultava o harness: dava para fechar uma versão com check
+    /// vermelho e com dimensões nunca avaliadas, e ela saía com a mesma cara de
+    /// uma versão sobre projeto medido.
     #[test]
-    fn publicar_carrega_o_veredito_do_harness() {
-        let dir = tempfile::tempdir().expect("dir");
+    fn consolidar_carrega_o_veredito_do_harness() {
+        let dir = projeto_medido_sem_falha();
         let root = dir.path();
-        std::fs::create_dir_all(root.join(".instrument")).expect("instrument");
-        // Projeto registrado é pré-requisito de publicar; sem isso o teste
-        // mediria a recusa, não a avaliação.
-        crate::project::register(root, "Lista", "Anotar itens e ver de dois telefones")
-            .expect("registro");
 
-        let tentativa = publish(root, "compensable", false, None, Vec::new()).expect("attempt");
+        let tentativa = consolidate(root, false, None, Vec::new()).expect("attempt");
 
         assert!(
             !tentativa.evaluation.summary.trim().is_empty(),
@@ -699,13 +679,27 @@ mod tests {
         );
         assert!(
             !tentativa.evaluation.unevaluated.is_empty(),
-            "num projeto sem comandos declarados, há dimensões não avaliadas — e publicar tem \
+            "num projeto sem comandos declarados, há dimensões não avaliadas — e o passo tem \
              de dizer QUAIS"
         );
-        assert!(
+        assert_eq!(
             tentativa.needs_confirmation,
-            "publicação externa compensável pede confirmação antes de sair"
+            tentativa.evaluation.failed > 0,
+            "a pergunta é da evidência: só falha conhecida faz consolidar perguntar"
         );
+    }
+
+    /// Projeto cuja intenção o harness mede SEM achar falha.
+    ///
+    /// A distinção importa e o teste não a inventa: a camada semântica do §15
+    /// avalia a intenção durável, e a do `registered_project` ("construir um
+    /// leilão local") sai vermelha. As duas existem de propósito — uma prova que
+    /// verde não pergunta, a outra que vermelho pergunta.
+    fn projeto_medido_sem_falha() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        project::register(dir.path(), "Lista", "Anotar itens e ver de dois telefones")
+            .expect("register");
+        dir
     }
 
     fn registered_project() -> tempfile::TempDir {
@@ -791,57 +785,76 @@ mod tests {
         assert!(dir.path().join("alvo.md").exists());
     }
 
-    /// A primeira publicação PERGUNTA, e enquanto pergunta não grava nada.
+    /// Consolidar é local — e por isso NÃO pergunta por reversibilidade.
+    ///
+    /// Enquanto era "publicar", toda versão abria um "tem certeza?" por ser
+    /// efeito externo. Não era: nada saía da máquina. Herdar essa pergunta
+    /// treinaria a pessoa a clicar depressa nas confirmações que protegem algo.
     #[test]
-    fn publishing_asks_first_and_records_nothing_until_confirmed() {
+    fn consolidar_projeto_verde_nao_pergunta_e_grava_a_primeira_versao() {
+        let dir = projeto_medido_sem_falha();
+
+        let done = consolidate(dir.path(), false, None, vec![]).expect("consolidar");
+
+        assert_eq!(
+            done.evaluation.failed, 0,
+            "o fixture precisa estar verde para o teste medir o que quer medir"
+        );
+        assert!(
+            !done.needs_confirmation,
+            "consolidar não sai da máquina: perguntar aqui seria cerimônia vazia"
+        );
+        let record = done.record.expect("registro");
+        assert_eq!(record.version, "0.0.1");
+        assert_eq!(record.kind, RecordKind::Consolidated);
+        assert_eq!(done.snapshot.history.len(), 1);
+        assert!(
+            done.explain.contains("local"),
+            "a frase da tela tem de dizer que nada foi para o ar: {}",
+            done.explain
+        );
+    }
+
+    /// E o inverso, que é o motivo de a pergunta ainda existir: falha conhecida
+    /// pede decisão, e enquanto ela não vem NADA é gravado.
+    #[test]
+    fn consolidar_com_check_vermelho_pergunta_e_nao_grava_ate_confirmar() {
         let dir = registered_project();
 
-        let asked = publish(dir.path(), "compensable", false, None, vec![]).expect("attempt");
+        let asked = consolidate(dir.path(), false, None, vec![]).expect("attempt");
 
+        assert!(
+            asked.evaluation.failed > 0,
+            "este fixture existe justamente por sair vermelho na medição"
+        );
         assert!(asked.needs_confirmation);
         assert!(asked.record.is_none());
         assert!(asked.snapshot.history.is_empty(), "nada foi registrado");
-        assert_eq!(asked.reversibility, Reversibility::CompensationOnly);
-        assert!(asked.explain.contains("não tem rollback"));
 
-        let done = publish(dir.path(), "compensable", true, None, vec![]).expect("publish");
+        let done = consolidate(dir.path(), true, None, vec![]).expect("consolidar");
 
         assert!(!done.needs_confirmation);
         assert_eq!(done.record.expect("registro").version, "0.0.1");
-        assert_eq!(done.snapshot.history.len(), 1);
     }
 
+    /// A segunda versão liga a correção ao problema observado — sem problema
+    /// escrito, ela não é correção, é uma versão a mais sem história.
     #[test]
-    fn an_immutable_target_says_there_is_no_compensation_at_all() {
+    fn consolidar_sobre_outra_versao_exige_o_problema_e_mantem_o_historico() {
         let dir = registered_project();
+        consolidate(dir.path(), true, None, vec![]).expect("primeira");
 
-        let asked = publish(dir.path(), "immutable", false, None, vec![]).expect("attempt");
-
-        assert!(asked.needs_confirmation);
-        assert_eq!(asked.reversibility, Reversibility::Irreversible);
-        assert!(asked.compensation.is_none());
-        assert!(asked.explain.contains("não tem compensação"));
-    }
-
-    /// Republicar liga a correção ao problema observado — sem problema escrito,
-    /// a republicação não é uma correção, é uma versão a mais sem história.
-    #[test]
-    fn republishing_requires_the_observed_problem_and_keeps_the_history() {
-        let dir = registered_project();
-        publish(dir.path(), "compensable", true, None, vec![]).expect("publish");
-
-        let error = publish(dir.path(), "compensable", true, None, vec![])
-            .expect_err("republicar sem problema deve falhar");
+        let error =
+            consolidate(dir.path(), true, None, vec![]).expect_err("sem problema deve falhar");
         assert!(error.contains("problema observado"));
 
-        let done = publish(
+        let done = consolidate(
             dir.path(),
-            "compensable",
             true,
             Some("leaderboard vazava id"),
             vec!["r1".to_string()],
         )
-        .expect("republish");
+        .expect("segunda");
 
         let record = done.record.expect("registro");
         assert_eq!(record.version, "0.0.2");
@@ -880,17 +893,17 @@ mod tests {
             "a intenção de hoje é o que liga o problema observado ao projeto"
         );
         assert!(
-            reaberto.published.is_none(),
-            "exportar não publica; dizer o contrário inventaria um produto no ar"
+            reaberto.recorded.is_none(),
+            "exportar não consolida versão; dizer o contrário inventaria um marco"
         );
         assert!(reaberto.summary.contains("a intenção mudou"));
-        assert!(reaberto.summary.contains("nunca publicado"));
+        assert!(reaberto.summary.contains("nunca consolidada"));
     }
 
     /// Reaberto DEPOIS de publicado, o mesmo caminho tem de encontrar a
-    /// publicação — senão a tela trata um produto no ar como ensaio local.
+    /// versão — senão a tela trata um marco do projeto como ensaio local.
     #[test]
-    fn reabrir_encontra_a_publicacao_da_mesma_versao() {
+    fn reabrir_encontra_a_versao_consolidada_correspondente() {
         let dir = registered_project();
         let root = dir.path();
         let alvo = export(root)
@@ -898,13 +911,13 @@ mod tests {
             .compensation
             .expect("plano")
             .target;
-        publish(root, "compensable", true, None, vec![]).expect("publish");
+        consolidate(root, true, None, vec![]).expect("consolidar");
 
         let reaberto = reopen(root, &alvo).expect("reabrir");
 
-        let publicado = reaberto.published.expect("a versão 0.0.1 foi publicada");
-        assert_eq!(publicado.version, "0.0.1");
-        assert!(reaberto.summary.contains("publicado como 0.0.1"));
+        let registrada = reaberto.recorded.expect("a versão 0.0.1 foi consolidada");
+        assert_eq!(registrada.version, "0.0.1");
+        assert!(reaberto.summary.contains("consolidada como 0.0.1"));
     }
 
     /// A mesma recusa do apagar vale para o reabrir: caminho de fora não entra.
@@ -918,35 +931,25 @@ mod tests {
         assert!(error.contains(EXPORTS_REL));
     }
 
-    /// Republicar carrega os recursos afetados: é o que transforma "corrige X" em
-    /// um vínculo com o projeto, em vez de um texto solto no log.
+    /// A versão que corrige carrega os recursos afetados: é o que transforma
+    /// "corrige X" em vínculo com o projeto, em vez de texto solto no registro.
     #[test]
-    fn republicar_guarda_os_recursos_ligados_ao_problema() {
+    fn consolidar_guarda_os_recursos_ligados_ao_problema() {
         let dir = registered_project();
-        publish(dir.path(), "compensable", true, None, vec![]).expect("publish");
+        consolidate(dir.path(), true, None, vec![]).expect("primeira");
 
-        let done = publish(
+        let done = consolidate(
             dir.path(),
-            "compensable",
             true,
             Some("lance mínimo não era respeitado"),
             vec!["resource:abc".to_string(), "resource:def".to_string()],
         )
-        .expect("republish");
+        .expect("segunda");
 
         let record = done.record.expect("registro");
         assert_eq!(record.related_resources.len(), 2);
         assert!(record
             .related_resources
             .contains(&"resource:abc".to_string()));
-    }
-
-    #[test]
-    fn an_unknown_target_fails_instead_of_falling_back_to_the_forgiving_one() {
-        let dir = registered_project();
-
-        let error = publish(dir.path(), "qualquer", true, None, vec![]).expect_err("deve falhar");
-
-        assert!(error.contains("destino de publicação desconhecido"));
     }
 }

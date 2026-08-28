@@ -1,10 +1,21 @@
-//! Free, portable export/publish/republish lifecycle for the AI-Native IDE.
+//! Free, portable version/export/publish lifecycle for the AI-Native IDE.
 //!
-//! The essential path is local-first and free: a project exports to a portable
-//! manifest with no mandatory ShinAI infrastructure and no lock-in. The first
-//! irreversible external effect requires an explicit just-in-time confirmation.
-//! A published product can be reopened, related to its problem, and republished
-//! as a new version — the version history is preserved, not overwritten.
+//! # Consolidar e publicar são passos diferentes
+//!
+//! **Consolidar** uma versão é local: congela "esta é a 0.0.3, corrige tal
+//! problema, tocou tais recursos" no registro do projeto. Nada sai da máquina.
+//! **Publicar** leva a versão para um destino real, e é o único dos dois com
+//! efeito externo — logo, o único que não tem undo.
+//!
+//! Os dois estavam no mesmo passo, chamado "publicar", e a pessoa lia "meu
+//! produto foi para o ar" quando o que acontecia era uma linha num arquivo
+//! local. [`RecordKind`] é o que mantém as duas coisas distinguíveis no registro.
+//!
+//! O caminho essencial é local-first e livre: o projeto exporta um manifesto
+//! portátil, sem infraestrutura ShinAI obrigatória e sem lock-in. O primeiro
+//! efeito externo irreversível exige confirmação explícita na hora. Uma versão
+//! pode ser reaberta, ligada ao problema observado e sucedida por outra — o
+//! histórico é preservado, nunca sobrescrito.
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -109,6 +120,16 @@ pub enum PublishTarget {
 pub enum LifecycleEffect {
     /// A local export produced a deletable file at this portable path.
     LocalExport { path: String },
+    /// Consolidating a version: a durable LOCAL record that this is version X,
+    /// what problem it fixes and what it touched. Nothing leaves the machine.
+    ///
+    /// ── POR QUE É UM EFEITO SEPARADO ──────────────────────────────────────
+    /// Consolidar e publicar estavam no mesmo passo, e o passo se chamava
+    /// "publicar" — a pessoa lia "meu produto foi para o ar" quando o que
+    /// acontecia era uma linha num registro local. Separar é o que devolve
+    /// significado às duas palavras: consolidar congela a versão; publicar leva
+    /// para um destino, por um adapter, e SÓ ele é efeito externo.
+    ConsolidateVersion { project_id: String, version: String },
     /// A first external publication of a version.
     Publish {
         project_id: String,
@@ -129,6 +150,11 @@ impl LifecycleEffect {
     pub fn reversibility(&self) -> Reversibility {
         match self {
             LifecycleEffect::LocalExport { .. } => Reversibility::Reversible,
+            // Local, mas não apagável: o registro de versões é o que responde
+            // "o que aconteceu com este projeto". Apagar uma linha dele seria
+            // reescrever a história; o que existe é consolidar uma versão
+            // corrigida por cima.
+            LifecycleEffect::ConsolidateVersion { .. } => Reversibility::CompensationOnly,
             LifecycleEffect::Publish { target, .. } | LifecycleEffect::Republish { target, .. } => {
                 match target {
                     PublishTarget::ExternalCompensable => Reversibility::CompensationOnly,
@@ -148,6 +174,9 @@ pub enum CompensationKind {
     /// Publish a compensating version (a retraction or a corrected version).
     /// This mitigates but never truly undoes the original publication.
     PublishCompensatingVersion,
+    /// Consolidate a corrected version over a wrong one, in the local record.
+    /// The wrong version stays in the history — that is the point of a record.
+    ConsolidateCorrectedVersion,
 }
 
 /// A concrete, honest description of what can be undone and how. A plan is only
@@ -181,6 +210,17 @@ pub fn compensation_for(effect: &LifecycleEffect) -> Option<CompensationPlan> {
             target: path.clone(),
             note: "Excluir o arquivo exportado desfaz o export por completo.".to_owned(),
         }),
+        LifecycleEffect::ConsolidateVersion {
+            project_id,
+            version,
+        } => Some(CompensationPlan {
+            reversibility: Reversibility::CompensationOnly,
+            kind: CompensationKind::ConsolidateCorrectedVersion,
+            target: format!("{project_id}@{version}"),
+            note: "Consolidar uma versão corrigida por cima; a versão errada continua \
+                   no registro, que é para isso que ele serve."
+                .to_owned(),
+        }),
         LifecycleEffect::Publish {
             project_id,
             version,
@@ -204,11 +244,34 @@ pub fn compensation_for(effect: &LifecycleEffect) -> Option<CompensationPlan> {
     }
 }
 
+/// O que uma linha do registro é: uma versão consolidada localmente, ou uma
+/// publicação externa.
+///
+/// O default de desserialização é `Published` de propósito. Registros gravados
+/// antes desta separação nasceram do passo que se chamava "publicar" e se
+/// declarava externo; lê-los como consolidação local mudaria, retroativamente, o
+/// que aquelas linhas afirmam ter acontecido.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordKind {
+    /// Versão congelada no registro local. Nada saiu da máquina.
+    Consolidated,
+    /// Publicação externa, por um destino declarado.
+    Published,
+}
+
+fn default_record_kind() -> RecordKind {
+    RecordKind::Published
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishRecord {
     pub project_id: String,
     pub version: String,
+    /// Consolidação local ou publicação externa — ver [`RecordKind`].
+    #[serde(default = "default_record_kind")]
+    pub kind: RecordKind,
     /// Present only when this version fixed an observed problem (a republish).
     pub problem: Option<String>,
     /// Resources related to the problem being fixed.
@@ -285,6 +348,47 @@ impl PublishLog {
             .map(|record| record.version.clone())
     }
 
+    /// Consolidates the next version in the LOCAL record: this is version X, and
+    /// (when it fixes something) what problem it fixes and what it touched.
+    ///
+    /// Nothing leaves the machine here. Publishing to a real destination is a
+    /// separate act, performed by an adapter, and it is the only one that carries
+    /// an external effect.
+    pub fn consolidate(
+        &mut self,
+        project_id: &str,
+        problem: Option<&str>,
+        related_resources: Vec<String>,
+    ) -> anyhow::Result<PublishRecord> {
+        let version = match self.latest_version(project_id) {
+            Some(previous) => bump_patch(&previous),
+            None => "0.0.1".to_owned(),
+        };
+        let effect = LifecycleEffect::ConsolidateVersion {
+            project_id: project_id.to_owned(),
+            version: version.clone(),
+        };
+        let record = PublishRecord {
+            project_id: project_id.to_owned(),
+            version,
+            kind: RecordKind::Consolidated,
+            problem: problem.map(str::to_owned),
+            related_resources,
+            note: match problem {
+                Some(_) => "Versão consolidada corrigindo um problema observado.".to_owned(),
+                None => "Versão consolidada no registro local do projeto.".to_owned(),
+            },
+            reversibility: effect.reversibility(),
+            compensation: compensation_for(&effect),
+        };
+        self.records
+            .entry(project_id.to_owned())
+            .or_default()
+            .push(record.clone());
+        self.persist()?;
+        Ok(record)
+    }
+
     /// Publishes the next version to a compensable registry. The first
     /// publication is `0.0.1`; later ones bump the patch of the latest recorded
     /// version.
@@ -315,6 +419,7 @@ impl PublishLog {
         let record = PublishRecord {
             project_id: project_id.to_owned(),
             version,
+            kind: RecordKind::Published,
             problem: None,
             related_resources: Vec::new(),
             note: match target {
@@ -374,6 +479,7 @@ impl PublishLog {
         let record = PublishRecord {
             project_id: project_id.to_owned(),
             version,
+            kind: RecordKind::Published,
             problem: Some(problem.to_owned()),
             related_resources,
             note: "Republicação corrigindo um problema observado.".to_owned(),
@@ -436,6 +542,61 @@ mod tests {
             confirmation_for(false, false),
             ConfirmationDecision::Proceed
         );
+    }
+
+    /// Consolidar é local, e o registro tem de dizer isso de três formas que não
+    /// dependem de leitura de texto: a classe do efeito, a compensação oferecida
+    /// e o `kind` da linha. Se qualquer uma delas dissesse "externo", a tela
+    /// voltaria a prometer um deploy que não aconteceu.
+    #[test]
+    fn consolidar_e_local_e_nao_se_declara_publicacao_externa() {
+        let root = temp_root("consolidate");
+        let _ = fs::remove_dir_all(&root);
+        let mut log = PublishLog::open(&root).unwrap();
+
+        let first = log.consolidate("auction", None, vec![]).unwrap();
+        assert_eq!(first.version, "0.0.1");
+        assert_eq!(first.kind, RecordKind::Consolidated);
+        assert_eq!(
+            first.compensation.as_ref().map(|plan| plan.kind),
+            Some(CompensationKind::ConsolidateCorrectedVersion),
+            "a compensação de consolidar é consolidar corrigido, não publicar retratação"
+        );
+
+        let second = log
+            .consolidate(
+                "auction",
+                Some("lance mínimo não era respeitado"),
+                vec!["resource:abc".to_owned()],
+            )
+            .unwrap();
+        assert_eq!(second.version, "0.0.2");
+        assert_eq!(
+            second.problem.as_deref(),
+            Some("lance mínimo não era respeitado")
+        );
+        assert_eq!(second.related_resources, vec!["resource:abc".to_owned()]);
+        assert_eq!(log.history("auction").len(), 2, "a versão anterior fica");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Registro gravado antes da separação nasceu do passo externo. Lê-lo como
+    /// consolidação local mudaria, retroativamente, o que a linha afirma.
+    #[test]
+    fn registro_antigo_sem_kind_continua_sendo_publicacao_externa() {
+        let raw = r#"{
+            "projectId": "auction",
+            "version": "0.0.1",
+            "problem": null,
+            "relatedResources": [],
+            "note": "Publicação em destino que aceita correção posterior.",
+            "reversibility": "compensation_only"
+        }"#;
+
+        let record: PublishRecord = serde_json::from_str(raw).unwrap();
+
+        assert_eq!(record.kind, RecordKind::Published);
     }
 
     #[test]
