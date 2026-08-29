@@ -19,6 +19,7 @@ import {
     LibrarySnapshot,
     LifecycleSnapshot,
     AdapterCard,
+    PromotionSnapshot,
     ProvidersSnapshot,
     PublishAttempt,
     ReleaseSnapshot,
@@ -188,6 +189,11 @@ export class InstrumentStore {
     //    versão consolidada, onde ela chegou. `undefined` = nem lido.
     release: ReleaseSnapshot | undefined;
     releaseBusy = false;
+
+    // ── REAL promoção protótipo → durável (§14): o que virou durável e o que
+    //    ainda deve a reconciliação que a própria promoção criou.
+    promotion: PromotionSnapshot | undefined;
+    promotionBusy = false;
 
     // ── REAL compartilhamento (§16): o que está exposto, para quem, com que
     //    senha e até quando. `undefined` = nem lido.
@@ -526,6 +532,16 @@ export class InstrumentStore {
         if (attempt) {
             this.lifecycle = attempt.snapshot;
         }
+        this.emit();
+    }
+
+    setPromotion(snapshot: PromotionSnapshot | undefined): void {
+        this.promotion = snapshot;
+        this.emit();
+    }
+
+    setPromotionBusy(busy: boolean): void {
+        this.promotionBusy = busy;
         this.emit();
     }
 

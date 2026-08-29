@@ -98,6 +98,9 @@ export const CMD_RELEASE_TAG = 'instrument.release.tag';
 export const CMD_RELEASE_DELETE_TAG = 'instrument.release.deleteTag';
 export const CMD_RELEASE_PUSH = 'instrument.release.push';
 export const CMD_RELEASE_GITHUB = 'instrument.release.github';
+export const CMD_PROMOTION_READ = 'instrument.promotion.read';
+export const CMD_PROMOTION_PROMOTE = 'instrument.promotion.promote';
+export const CMD_PROMOTION_RECONCILE = 'instrument.promotion.reconcile';
 export const CMD_SHARE_READ = 'instrument.share.read';
 export const CMD_SHARE_START = 'instrument.share.start';
 export const CMD_SHARE_STOP = 'instrument.share.stop';
@@ -365,6 +368,26 @@ export class InstrumentCapabilityContribution
                 label: 'Instrument: ligar/desligar um recurso do problema observado'
             },
             { execute: (id?: string) => (id ? this.store.toggleLifecycleRelated(id) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_PROMOTION_READ, label: 'Instrument: ler as promoções protótipo → durável' },
+            { execute: () => this.readPromotion() }
+        );
+        commands.registerCommand(
+            { id: CMD_PROMOTION_PROMOTE, label: 'Instrument: promover protótipo a durável (§14)' },
+            {
+                execute: (prototypeId?: string, checkpointId?: string, note?: string) =>
+                    prototypeId
+                        ? this.promote(prototypeId, checkpointId ?? '', note ?? '')
+                        : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_PROMOTION_RECONCILE, label: 'Instrument: reconciliar uma promoção' },
+            {
+                execute: (prototypeId?: string, how?: string) =>
+                    prototypeId && how ? this.reconcilePromotion(prototypeId, how) : undefined
+            }
         );
         commands.registerCommand(
             { id: CMD_SHARE_READ, label: 'Instrument: ler o estado do compartilhamento' },
@@ -2343,6 +2366,70 @@ export class InstrumentCapabilityContribution
             `${ligados ? `${ligados} recurso(s) ligado(s) ao problema · ` : ''}` +
             `estado medido: ${done.evaluation.summary}`
         );
+    }
+
+    // ── §14 promover protótipo a durável ────────────────────────────────────
+
+    protected async readPromotion(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPromotionBusy(true);
+        try {
+            this.store.setPromotion(await this.engine.promotionSnapshot(root));
+        } catch (err) {
+            this.messages.error(`Promoções não foram lidas: ${this.msg(err)}`);
+            this.store.setPromotion(undefined);
+        } finally {
+            this.store.setPromotionBusy(false);
+        }
+    }
+
+    /**
+     * Promover não pergunta nada: é ato local e explícito, e o que ele produz é
+     * uma DÍVIDA visível — a promoção nasce pendente de reconciliação. Pedir
+     * confirmação aqui seria cerimônia; o que protege é a pendência não sumir.
+     */
+    protected async promote(
+        prototypeId: string,
+        checkpointId: string,
+        note: string
+    ): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPromotionBusy(true);
+        try {
+            const depois = await this.engine.promotionPromote(root, prototypeId, checkpointId, note);
+            this.store.setPromotion(depois);
+            this.messages.info(
+                `${prototypeId} virou durável · ${depois.pending} promoção(ões) ainda devem `
+                + 'dizer o que mudou na intenção do projeto'
+            );
+        } catch (err) {
+            this.messages.error(`Promoção não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setPromotionBusy(false);
+        }
+    }
+
+    protected async reconcilePromotion(prototypeId: string, how: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        this.store.setPromotionBusy(true);
+        try {
+            const depois = await this.engine.promotionReconcile(root, prototypeId, how);
+            this.store.setPromotion(depois);
+            this.messages.info(`${prototypeId} reconciliado · ${depois.pending} pendente(s)`);
+        } catch (err) {
+            this.messages.error(`Reconciliação não aconteceu: ${this.msg(err)}`);
+        } finally {
+            this.store.setPromotionBusy(false);
+        }
     }
 
     // ── §16 mostrar para alguém ─────────────────────────────────────────────

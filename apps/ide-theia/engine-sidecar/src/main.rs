@@ -36,6 +36,7 @@
 //!   - `share_*`      the §16 sharing: LAN or tunnel, always behind a password
 //!   - `providers_*`  the §16 provider adapters: config, steps and a GET that checks
 //!   - `policy_decide` the §14 mode + permission policy for ONE effect
+//!   - `promotion_*`  the §14 prototype→durable promotion and its reconciliation
 //!   - `agent_adapters` the §10 adapters the engine knows, each with its coverage
 //!   - `agent_capture_state` / `agent_resume` / `agent_swap` the §10 session
 //!     handover, which reports what a swap preserved and what it dropped
@@ -57,6 +58,7 @@ mod policy;
 mod preview;
 mod proc;
 mod project;
+mod promotion;
 mod providers;
 mod reconcile;
 mod references;
@@ -888,6 +890,60 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(resultado).map_err(|e| e.to_string())
+        }
+        // §14 — promover protótipo a durável. Só existe em Hybrid, e nasce
+        // devendo a reconciliação que a própria promoção cria.
+        "promotion_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || promotion::snapshot(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "promotion_promote" => {
+            #[derive(Deserialize)]
+            struct PromoteParams {
+                root: String,
+                prototype_effect_id: String,
+                #[serde(default)]
+                checkpoint_effect_id: String,
+                #[serde(default)]
+                note: String,
+            }
+            let p: PromoteParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                promotion::promote(
+                    &root,
+                    &p.prototype_effect_id,
+                    &p.checkpoint_effect_id,
+                    &p.note,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "promotion_reconcile" => {
+            #[derive(Deserialize)]
+            struct ReconcileParams {
+                root: String,
+                prototype_effect_id: String,
+                how: String,
+            }
+            let p: ReconcileParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                promotion::reconcile(&root, &p.prototype_effect_id, &p.how)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         "share_snapshot" | "share_stop" => {
             #[derive(Deserialize)]

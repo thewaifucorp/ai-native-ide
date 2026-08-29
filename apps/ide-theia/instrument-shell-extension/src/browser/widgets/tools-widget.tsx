@@ -40,6 +40,9 @@ import {
     CMD_RELEASE_PUSH,
     CMD_RELEASE_READ,
     CMD_RELEASE_TAG,
+    CMD_PROMOTION_READ,
+    CMD_PROMOTION_PROMOTE,
+    CMD_PROMOTION_RECONCILE,
     CMD_SHARE_READ,
     CMD_SHARE_START,
     CMD_SHARE_STOP,
@@ -129,6 +132,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderWork()}
                 {this.renderLifecycle()}
                 {this.renderRelease()}
+                {this.renderPromotion()}
                 {this.renderShare()}
                 {this.renderDeployProviders()}
                 {this.renderPacks()}
@@ -1651,6 +1655,137 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     className="cap-btn"
                     disabled={busy}
                     onClick={() => this.commands.executeCommand(CMD_RELEASE_READ)}
+                >
+                    {busy ? 'lendo…' : 'Ler'}
+                </button>
+            </div>
+        );
+    }
+
+    /**
+     * PROMOVER PROTÓTIPO A DURÁVEL (§14).
+     *
+     * O `ide-modes` já decidia o que uma promoção é — só em Hybrid, com
+     * checkpoint, nascendo NÃO reconciliada — e nada chamava. A tela existia sem
+     * o caminho, então "Hybrid" era um rótulo no config e não uma regra.
+     *
+     * O que esta seção mostra, e é o ponto: a promoção CRIA uma divergência. No
+     * instante em que o descartável vira o que o projeto sustenta, a intenção
+     * escrita ainda descreve o mundo anterior. A pendência fica visível até
+     * alguém dizer o que resolveu — marcar como resolvido na hora esconderia
+     * exatamente aquilo que a promoção provocou.
+     */
+    protected renderPromotion(): React.ReactNode {
+        const promotion = this.store.promotion;
+        const busy = this.store.promotionBusy;
+        const summary = busy
+            ? 'lendo…'
+            : !promotion
+                ? 'não lido'
+                : promotion.blockedReason
+                    ? `só em Hybrid · ${promotion.mode}`
+                    : promotion.pending > 0
+                        ? `${promotion.pending} devendo explicação`
+                        : `${promotion.promotions.length} promovida(s), tudo explicado`;
+
+        return this.section(
+            'promotion',
+            'Protótipo → durável',
+            summary,
+            () => (
+                <div className="cap-card">
+                    {!promotion && <small>não lido — clique em “ler” para ver o que virou durável</small>}
+                    {promotion?.blockedReason && (
+                        <p className="cap-detail">{promotion.blockedReason}</p>
+                    )}
+                    {promotion && !promotion.blockedReason && (
+                        <>
+                            <small className="cap-hint">
+                                promover diz “isto o projeto passa a sustentar” · a promoção nasce
+                                devendo a reconciliação que ela mesma cria: a intenção escrita ainda
+                                descreve o mundo anterior · {promotion.path}
+                            </small>
+                            <div className="cap-actions">
+                                {this.input('promotion-prototype', 'efeito do protótipo (id)')}
+                                {this.input('promotion-checkpoint', 'checkpoint que segura o estado anterior')}
+                            </div>
+                            <div className="cap-actions">
+                                {this.input('promotion-note', 'o que este protótipo virou')}
+                                <button
+                                    className="cap-btn primary"
+                                    disabled={busy
+                                        || this.draft('promotion-prototype').trim().length === 0
+                                        || this.draft('promotion-checkpoint').trim().length === 0}
+                                    title="Sem checkpoint, desfazer a promoção não teria para onde voltar"
+                                    onClick={() =>
+                                        this.commands.executeCommand(
+                                            CMD_PROMOTION_PROMOTE,
+                                            this.draft('promotion-prototype'),
+                                            this.draft('promotion-checkpoint'),
+                                            this.draft('promotion-note')
+                                        )
+                                    }
+                                >
+                                    Promover
+                                </button>
+                            </div>
+
+                            {promotion.promotions.length === 0 && (
+                                <small className="cap-evidence">
+                                    nenhuma promoção registrada neste projeto
+                                </small>
+                            )}
+                            {promotion.promotions.map(item => (
+                                <div className="cap-receipt" key={item.prototypeEffectId}>
+                                    <span
+                                        className={item.reconciled ? 'cap-pill ready' : 'cap-pill'}
+                                        title={item.reconciled
+                                            ? 'a divergência criada pela promoção foi explicada'
+                                            : 'promovido, e a intenção do projeto ainda descreve o mundo anterior'}
+                                    >
+                                        {item.reconciled ? 'explicada' : 'devendo'}
+                                    </span>
+                                    <span className="cap-receipt-detail">
+                                        {item.prototypeEffectId}
+                                        {item.note ? ` · ${item.note}` : ''}
+                                        {item.reconciled && item.reconciliation
+                                            ? ` · resolvida: ${item.reconciliation}`
+                                            : ''}
+                                    </span>
+                                    <small>checkpoint {item.checkpointEffectId}</small>
+                                    {!item.reconciled && (
+                                        <button
+                                            className="cap-btn"
+                                            disabled={busy
+                                                || this.draft('promotion-how').trim().length === 0}
+                                            title="Reconciliar pede o que MUDOU: sem isso, marcar como resolvido só apaga a pergunta"
+                                            onClick={() =>
+                                                this.commands.executeCommand(
+                                                    CMD_PROMOTION_RECONCILE,
+                                                    item.prototypeEffectId,
+                                                    this.draft('promotion-how')
+                                                )
+                                            }
+                                        >
+                                            Reconciliar
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                            {promotion.pending > 0 && (
+                                <div className="cap-actions">
+                                    {this.input('promotion-how', 'o que mudou na intenção para isto ser durável')}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    disabled={busy}
+                    onClick={() => this.commands.executeCommand(CMD_PROMOTION_READ)}
                 >
                     {busy ? 'lendo…' : 'Ler'}
                 </button>

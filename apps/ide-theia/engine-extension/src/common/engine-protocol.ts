@@ -456,6 +456,27 @@ export interface EngineService {
         url: string
     ): Promise<VerifyResult>;
 
+    // ── §14 promover protótipo a durável ──────────────────────────────────────
+
+    /** O que este projeto promoveu, e quantas promoções ainda devem explicação. */
+    promotionSnapshot(root: string): Promise<PromotionSnapshot>;
+    /**
+     * Promove um protótipo. Só existe em Hybrid, exige o checkpoint que segura o
+     * estado anterior, e a promoção NASCE pendente de reconciliação.
+     */
+    promotionPromote(
+        root: string,
+        prototypeEffectId: string,
+        checkpointEffectId: string,
+        note: string
+    ): Promise<PromotionSnapshot>;
+    /** Fecha a dívida dizendo o que mudou para o protótipo virar durável. */
+    promotionReconcile(
+        root: string,
+        prototypeEffectId: string,
+        how: string
+    ): Promise<PromotionSnapshot>;
+
     /**
      * §14 — what the project's mode and permissions require for ONE effect.
      *
@@ -1424,6 +1445,36 @@ export interface VerifyResult {
     explain: string;
     /** Só 2xx/3xx vira destino registrado na linha da versão. */
     recorded: boolean;
+}
+
+// ── §14 promoção protótipo → durável ─────────────────────────────────────────
+
+/**
+ * Uma promoção registrada.
+ *
+ * `reconciled` nasce falso de propósito: no instante em que um protótipo vira
+ * durável, a intenção escrita do projeto ainda descreve o mundo anterior. Marcar
+ * como resolvido na hora esconderia a divergência que a promoção CRIA.
+ */
+export interface Promotion {
+    prototypeEffectId: string;
+    checkpointEffectId: string;
+    note: string;
+    reconciled: boolean;
+    /** O que resolveu a divergência — texto de pessoa, não rótulo do motor. */
+    reconciliation?: string;
+    atEpochSecs: number;
+}
+
+export interface PromotionSnapshot {
+    /** `full_vibes` | `hybrid` | `spec`. */
+    mode: string;
+    /** Por que promover não está disponível agora, quando não está. */
+    blockedReason?: string;
+    promotions: Promotion[];
+    /** Quantas ainda devem explicação. */
+    pending: number;
+    path: string;
 }
 
 /** §14 — the policy answer for one effect, from `ide-modes` + `ide-config`. */

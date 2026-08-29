@@ -17,6 +17,7 @@ import {
     ProjectSnapshot,
     PublishAttempt,
     GeneratedConfig,
+    PromotionSnapshot,
     ProvidersSnapshot,
     ReleaseAttempt,
     ReleaseSnapshot,
@@ -539,6 +540,36 @@ export class EngineSidecarService implements EngineService {
         url: string
     ): Promise<VerifyResult> {
         return this.call('providers_verify', { root, provider, version, url });
+    }
+
+    promotionSnapshot(root: string): Promise<PromotionSnapshot> {
+        return this.call('promotion_snapshot', { root });
+    }
+
+    promotionPromote(
+        root: string,
+        prototypeEffectId: string,
+        checkpointEffectId: string,
+        note: string
+    ): Promise<PromotionSnapshot> {
+        return this.call('promotion_promote', {
+            root,
+            prototype_effect_id: prototypeEffectId,
+            checkpoint_effect_id: checkpointEffectId,
+            note
+        });
+    }
+
+    promotionReconcile(
+        root: string,
+        prototypeEffectId: string,
+        how: string
+    ): Promise<PromotionSnapshot> {
+        return this.call('promotion_reconcile', {
+            root,
+            prototype_effect_id: prototypeEffectId,
+            how
+        });
     }
 
     policyDecide(
