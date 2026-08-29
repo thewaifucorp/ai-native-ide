@@ -746,6 +746,17 @@ mod tests {
         assert_eq!(registro.deployments.len(), 1);
         assert_eq!(registro.deployments[0].target, TARGET_TAG);
         assert!(registro.deployments[0].reference.ends_with("v0.0.1"));
+
+        // O REGISTRO NÃO É PROVA DE QUE A TAG CHEGOU.
+        // Anotar o destino é fácil; o que importa é o remoto TER a tag. Sem esta
+        // asserção, um `git push` que falhasse em silêncio deixaria o projeto
+        // dizendo "publicado" com o remoto vazio.
+        let (ok, tags, erro) = run(remoto.path(), "git", &["tag", "--list"]);
+        assert!(ok, "listar tags do remoto: {erro}");
+        assert!(
+            tags.lines().any(|tag| tag.trim() == "v0.0.1"),
+            "a tag não chegou no remoto; o que veio foi {tags:?}"
+        );
     }
 
     /// Sem remoto, empurrar não tem para onde — e a recusa diz o comando.

@@ -1824,6 +1824,15 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     ? ` · publicáveis que existem: ${snapshot.publishCandidates.join(', ')}`
                                     : ' · nenhum diretório de build encontrado ainda'}
                             </small>
+                            {/* O HEROKU NÃO PUBLICA DIRETÓRIO, PUBLICA PROCESSO.
+                                Ele precisa do comando que FICA de pé servindo, e
+                                esse o projeto declara no preview do §4. Mostrar
+                                isso aqui é o que evita gerar um Procfile com o
+                                build dentro — que sobe e morre. */}
+                            <small className="cap-evidence">
+                                processo web declarado: {snapshot.webCommand
+                                    ?? 'nenhum em .instrument/preview.json — o Heroku depende dele'}
+                            </small>
                             <small className="cap-hint">
                                 a IDE gera a configuração e confere o endereço · o deploy é seu, na
                                 sua conta: nenhum token nosso entra no caminho
@@ -1843,10 +1852,15 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     </span>
                                     <button
                                         className="cap-btn"
-                                        disabled={busy || provider.configExists || !snapshot.buildCommand}
+                                        disabled={busy
+                                            || provider.configExists
+                                            || !snapshot.buildCommand
+                                            || (provider.id === 'heroku' && !snapshot.webCommand)}
                                         title={provider.configExists
                                             ? 'Já existe: sobrescrever trocaria a configuração real por uma derivada daqui'
-                                            : provider.steps.join(' → ')}
+                                            : provider.id === 'heroku' && !snapshot.webCommand
+                                                ? 'O Heroku precisa do processo web declarado em .instrument/preview.json — o comando de build não serve: ele compila, sai, e o dyno morre'
+                                                : provider.steps.join(' → ')}
                                         onClick={() =>
                                             this.commands.executeCommand(
                                                 CMD_PROVIDERS_GENERATE,

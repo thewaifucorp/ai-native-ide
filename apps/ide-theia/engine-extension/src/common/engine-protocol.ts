@@ -1395,6 +1395,13 @@ export interface ProviderCard {
 export interface ProvidersSnapshot {
     providers: ProviderCard[];
     buildCommand?: string;
+    /**
+     * O comando do PROCESSO WEB declarado em `.instrument/preview.json`.
+     *
+     * O Heroku precisa dele e não pode derivá-lo do build: `npm run build`
+     * compila e sai, e um dyno cujo processo termina é derrubado.
+     */
+    webCommand?: string;
     /** Diretórios publicáveis que EXISTEM no projeto — nunca um palpite. */
     publishCandidates: string[];
     curl: ShareToolState;

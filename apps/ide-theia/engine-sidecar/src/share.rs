@@ -659,6 +659,140 @@ mod tests {
         assert!(lan.contains("30 min") && tunel.contains("30 min"));
     }
 
+    /// A PROVA COM NGINX DE VERDADE.
+    ///
+    /// Os outros testes deste módulo leem texto e recusas; este sobe o proxy,
+    /// bate nele de fora e derruba. Foi exatamente aqui que os dois defeitos
+    /// sérios moravam — a senha não valendo e o `stop` mentindo — e nenhum teste
+    /// de texto os pegaria.
+    ///
+    /// Sem nginx na máquina, ele NÃO passa calado: cobra a recusa honesta, que é
+    /// o que a pessoa veria. Um teste que some quando a ferramenta falta ensina
+    /// que a ausência é normal.
+    #[test]
+    fn com_nginx_o_compartilhamento_sobe_pede_senha_e_fecha_de_verdade() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = dir.path();
+        crate::project::register(root, "Lista", "Anotar itens e ver de dois telefones")
+            .expect("registro");
+
+        let tem_nginx = tool("nginx", &["-v"], "").present;
+
+        // O "preview" deste teste é um servidor de verdade, em porta livre.
+        let porta = free_port().expect("porta livre");
+        std::fs::create_dir_all(root.join("publico")).expect("dir");
+        std::fs::write(root.join("publico/index.html"), "<h1>ok</h1>").expect("index");
+        std::fs::write(
+            root.join(".instrument/preview.json"),
+            format!(
+                r#"{{"command": "python3 -m http.server {porta} --bind 127.0.0.1", "cwd": "publico", "url": "http://127.0.0.1:{porta}/"}}"#
+            ),
+        )
+        .expect("preview.json");
+        crate::preview::start(root).expect("preview sobe");
+        // O servidor precisa estar atendendo antes de alguém apontar para ele.
+        for _ in 0..40 {
+            if std::net::TcpStream::connect(("127.0.0.1", porta)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let resultado = start(root, ShareMode::Lan, 30);
+        if !tem_nginx {
+            let erro = resultado.expect_err("sem nginx, compartilhar tem de recusar");
+            assert!(erro.contains("nginx"));
+            let _ = crate::preview::stop(root);
+            return;
+        }
+
+        let aberto = resultado.expect("compartilhamento");
+        let ativo = aberto.active.expect("ativo");
+        let porta_proxy = port_of(&ativo.url).expect("porta do proxy");
+
+        // Sem senha: recusado. Com senha: o que o preview serve. Escondido: 404.
+        let sem = http_status(porta_proxy, "/", None);
+        let com = http_status(
+            porta_proxy,
+            "/",
+            Some(&format!("{}:{}", ativo.user, ativo.password)),
+        );
+        let escondido = http_status(
+            porta_proxy,
+            "/.git/config",
+            Some(&format!("{}:{}", ativo.user, ativo.password)),
+        );
+        assert_eq!(
+            sem,
+            Some(401),
+            "endereço exposto sem senha é endereço público"
+        );
+        assert_eq!(com, Some(200));
+        assert_eq!(escondido, Some(404), ".env e .git não podem sair daqui");
+
+        stop(root).expect("fechar");
+
+        // O defeito que isto existe para pegar: o `stop` voltava dizendo
+        // "fechado" com os workers do nginx ainda segurando a porta.
+        let mut ainda = None;
+        for _ in 0..20 {
+            ainda = http_status(porta_proxy, "/", None);
+            if ainda.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            ainda, None,
+            "depois de parar, a porta continuou atendendo — foi assim que a tela mentiu"
+        );
+        let _ = crate::preview::stop(root);
+    }
+
+    /// Um GET cru, sem depender de `curl` estar instalado no CI.
+    #[cfg(test)]
+    fn http_status(port: u16, path: &str, auth: Option<&str>) -> Option<u16> {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+        // Basic auth em base64, à mão: uma dependência a menos num teste.
+        let cabecalho = match auth {
+            Some(credencial) => format!("Authorization: Basic {}\r\n", base64(credencial)),
+            None => String::new(),
+        };
+        let pedido = format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n{cabecalho}\r\n"
+        );
+        stream.write_all(pedido.as_bytes()).ok()?;
+        let mut resposta = String::new();
+        let _ = stream.read_to_string(&mut resposta);
+        resposta.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    #[cfg(test)]
+    fn base64(texto: &str) -> String {
+        const TABELA: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bytes = texto.as_bytes();
+        let mut saida = String::new();
+        for pedaco in bytes.chunks(3) {
+            let b = [
+                pedaco[0],
+                *pedaco.get(1).unwrap_or(&0),
+                *pedaco.get(2).unwrap_or(&0),
+            ];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            for i in 0..4 {
+                if i <= pedaco.len() {
+                    saida.push(TABELA[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
+                } else {
+                    saida.push('=');
+                }
+            }
+        }
+        saida
+    }
+
     #[test]
     fn a_porta_do_preview_sai_da_url_declarada() {
         assert_eq!(port_of("http://127.0.0.1:5173/health"), Some(5173));

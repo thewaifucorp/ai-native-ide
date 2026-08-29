@@ -66,6 +66,9 @@ pub struct ProvidersSnapshot {
     pub providers: Vec<ProviderCard>,
     /// O comando de build declarado em `.instrument/checks.json`, quando existe.
     pub build_command: Option<String>,
+    /// O comando do processo web declarado em `.instrument/preview.json`. É o
+    /// que o Heroku precisa, e o que ele NÃO pode inventar do build.
+    pub web_command: Option<String>,
     /// Diretórios publicáveis que EXISTEM no projeto agora.
     pub publish_candidates: Vec<String>,
     /// `curl`, que é como a conferência é feita.
@@ -142,6 +145,20 @@ fn declared_build(root: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// O comando do processo web que o projeto declarou para o preview (§4).
+///
+/// É a MESMA declaração que o preview supervisiona: o processo que fica de pé
+/// servindo. Deduzir isso de outro lugar seria inventar o que roda em produção.
+fn web_process(root: &Path) -> Option<String> {
+    let raw = fs::read(root.join(".instrument/preview.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    value
+        .get("command")?
+        .as_str()
+        .map(str::to_string)
+        .filter(|command| !command.trim().is_empty())
+}
+
 fn publish_candidates(root: &Path) -> Vec<String> {
     CANDIDATOS
         .iter()
@@ -154,7 +171,12 @@ fn publish_candidates(root: &Path) -> Vec<String> {
 ///
 /// Público para o teste poder cobrar o formato sem depender de nenhuma CLI
 /// instalada: o que quebra o deploy é o conteúdo, não a nossa vontade.
-pub fn config_for(provider: &str, build: &str, publish: &str) -> Result<(String, String), String> {
+pub fn config_for(
+    provider: &str,
+    build: &str,
+    publish: &str,
+    web: Option<&str>,
+) -> Result<(String, String), String> {
     match provider {
         "netlify" => Ok((
             "netlify.toml".to_string(),
@@ -178,12 +200,30 @@ pub fn config_for(provider: &str, build: &str, publish: &str) -> Result<(String,
                  buildCommand: {build}\n    staticPublishPath: {publish}\n"
             ),
         )),
-        "heroku" => Ok((
-            "Procfile".to_string(),
-            // Heroku não serve estático por si: o Procfile diz o processo web, e
-            // dizer "publish dir" aqui seria mentir sobre o modelo dele.
-            format!("web: {build}\n"),
-        )),
+        "heroku" => {
+            // ── DEFEITO DE DESENHO, NÃO SÓ DE PROVA ───────────────────────
+            // A primeira versão escrevia `web: <comando de BUILD>`. Build não é
+            // processo web: `npm run build` compila e SAI, e um dyno cujo
+            // processo termina é derrubado pelo Heroku. Para app estático não
+            // sobe de jeito nenhum. O Procfile precisa do comando que FICA de
+            // pé, e esse o projeto já declara em `.instrument/preview.json` —
+            // é o mesmo processo que o §4 supervisiona. Sem essa declaração, a
+            // resposta é recusar; escrever o build ali produziria um deploy que
+            // falha longe daqui, com mensagem do Heroku e não nossa.
+            let web = web.ok_or_else(|| {
+                "o Heroku precisa do comando do PROCESSO WEB (o que fica de pé servindo), \
+                 e ele não é o comando de build. O projeto declara esse processo em \
+                 .instrument/preview.json — declare o preview e gere de novo"
+                    .to_string()
+            })?;
+            Ok((
+                "Procfile".to_string(),
+                format!(
+                    "# Gerado pelo IDE a partir do processo web declarado em \
+                     .instrument/preview.json.\nweb: {web}\n"
+                ),
+            ))
+        }
         other => Err(format!("provider desconhecido: {other}")),
     }
 }
@@ -208,6 +248,8 @@ fn steps_for(provider: &str) -> Vec<String> {
             "copie a URL do serviço e confira aqui".to_string(),
         ],
         "heroku" => vec![
+            "declare o processo web em .instrument/preview.json (é o que vai no Procfile)"
+                .to_string(),
             "heroku login".to_string(),
             "heroku create <nome> (uma vez)".to_string(),
             "git push heroku HEAD:main".to_string(),
@@ -248,7 +290,7 @@ pub fn snapshot(root: &Path) -> Result<ProvidersSnapshot, String> {
     let providers = ["netlify", "vercel", "render", "heroku"]
         .iter()
         .map(|id| {
-            let (path, _) = config_for(id, "…", "…").unwrap_or_default_pair();
+            let (path, _) = config_for(id, "…", "…", Some("…")).unwrap_or_default_pair();
             ProviderCard {
                 id: (*id).to_string(),
                 name: match *id {
@@ -269,6 +311,7 @@ pub fn snapshot(root: &Path) -> Result<ProvidersSnapshot, String> {
     Ok(ProvidersSnapshot {
         providers,
         build_command: declared_build(root),
+        web_command: web_process(root),
         publish_candidates: publish_candidates(root),
         curl: tool(
             "curl",
@@ -323,7 +366,7 @@ pub fn generate(root: &Path, provider: &str, publish: &str) -> Result<GeneratedC
                 .to_string(),
         );
     }
-    let (nome, conteudo) = config_for(provider, &build, publish)?;
+    let (nome, conteudo) = config_for(provider, &build, publish, web_process(root).as_deref())?;
     let destino = root.join(&nome);
     if destino.exists() {
         return Err(format!(
@@ -479,20 +522,71 @@ mod tests {
     /// cobra — sem depender de nenhuma CLI instalada.
     #[test]
     fn cada_provider_gera_o_seu_formato() {
-        let (nome, netlify) = config_for("netlify", "npm run build", "dist").unwrap();
+        let (nome, netlify) = config_for("netlify", "npm run build", "dist", None).unwrap();
         assert_eq!(nome, "netlify.toml");
         assert!(netlify.contains("command = \"npm run build\""));
         assert!(netlify.contains("publish = \"dist\""));
 
-        let (nome, vercel) = config_for("vercel", "npm run build", "dist").unwrap();
+        let (nome, vercel) = config_for("vercel", "npm run build", "dist", None).unwrap();
         assert_eq!(nome, "vercel.json");
         let json: serde_json::Value = serde_json::from_str(&vercel).expect("vercel.json é JSON");
         assert_eq!(json["outputDirectory"], "dist");
 
-        let (nome, _) = config_for("render", "npm run build", "dist").unwrap();
+        let (nome, _) = config_for("render", "npm run build", "dist", None).unwrap();
         assert_eq!(nome, "render.yaml");
 
-        assert!(config_for("provider-que-nao-existe", "x", "y").is_err());
+        assert!(config_for("provider-que-nao-existe", "x", "y", None).is_err());
+    }
+
+    /// `web: npm run build` derruba o dyno: build compila e SAI, e o Heroku
+    /// mata um processo web que termina. O Procfile precisa do que FICA de pé.
+    #[test]
+    fn heroku_usa_o_processo_web_declarado_e_nunca_o_build() {
+        let (nome, procfile) = config_for(
+            "heroku",
+            "npm run build",
+            "dist",
+            Some("node server.js --port $PORT"),
+        )
+        .expect("com processo web declarado");
+
+        assert_eq!(nome, "Procfile");
+        assert!(procfile.contains("web: node server.js --port $PORT"));
+        assert!(
+            !procfile.contains("npm run build"),
+            "o comando de build no Procfile produz um deploy que morre: {procfile}"
+        );
+
+        let erro = config_for("heroku", "npm run build", "dist", None)
+            .expect_err("sem processo web declarado, recusa");
+        assert!(erro.contains("preview.json"));
+    }
+
+    /// E a recusa chega pelo caminho de verdade, não só pela função pura.
+    #[test]
+    fn gerar_procfile_sem_preview_declarado_e_recusado() {
+        let dir = projeto_com_versao();
+
+        let erro = generate(dir.path(), "heroku", "dist").expect_err("deve recusar");
+
+        assert!(erro.contains("PROCESSO WEB"));
+        assert!(!dir.path().join("Procfile").exists());
+    }
+
+    /// Com o preview declarado, o Procfile sai com ele.
+    #[test]
+    fn gerar_procfile_usa_o_comando_do_preview() {
+        let dir = projeto_com_versao();
+        fs::write(
+            dir.path().join(".instrument/preview.json"),
+            r#"{"command": "node server.js", "url": "http://127.0.0.1:8124/"}"#,
+        )
+        .expect("preview");
+
+        generate(dir.path(), "heroku", "").expect("gerar");
+
+        let procfile = fs::read_to_string(dir.path().join("Procfile")).expect("Procfile");
+        assert_eq!(procfile.lines().last(), Some("web: node server.js"));
     }
 
     /// Sem build declarado, o arquivo teria um comando que ninguém escreveu.
