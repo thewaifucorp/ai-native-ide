@@ -277,4 +277,26 @@ describe('ProductServiceImpl — análise propõe candidatos, não ativa nada', 
         const model = await f.service.model(f.rootUri);
         assert.strictEqual(model.declared, false);
     });
+
+    /**
+     * O botão "Adotar" da view Produto entrega o candidato COMO VEIO da análise.
+     * Se o validador recusasse essa forma, o projeto cru continuaria sem saída
+     * pela tela — que era exatamente o buraco: o backend sabia adotar e só o
+     * agente, pelo MCP, chegava lá.
+     */
+    it('adota o candidato exatamente como a análise o devolveu', async () => {
+        const f = fixture();
+        const candidates = await f.service.candidates(f.rootUri);
+
+        const afterSot = await f.service.declareSot(f.rootUri, candidates.sots[0]);
+        assert.strictEqual(afterSot.declared, true);
+        // Candidato de SoT vem sem `claims`: adotar não pode inventar verificação.
+        assert.strictEqual(afterSot.claims.length, 0);
+
+        const afterResource = await f.service.declareResource(f.rootUri, candidates.resources[0]);
+        assert.deepStrictEqual(afterResource.resources.map(r => r.id), ['src']);
+        // Sem autoridade declarada, e isso aparece como lacuna, não como conformidade.
+        assert.deepStrictEqual(afterResource.withoutAuthority, ['src']);
+        assert.deepStrictEqual(afterResource.invalid, []);
+    });
 });

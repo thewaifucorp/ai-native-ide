@@ -18,6 +18,7 @@ import { CommandService } from '@theia/core/lib/common/command';
 import { AbstractInstrumentWidget } from './abstract-instrument-widget';
 import { CMD_OPEN_RESOURCE } from '../instrument-data-contribution';
 import {
+    CMD_PRODUCT_ADOPT,
     CMD_PRODUCT_ANALYZE,
     CMD_PRODUCT_REFRESH,
     CMD_PRODUCT_RESOLVE
@@ -60,6 +61,7 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
                     </div>
                 </div>
                 {this.renderClaims(model)}
+                {this.renderCandidates()}
                 {this.renderResources(model)}
                 {this.renderSots(model)}
                 {this.renderInvalid(model)}
@@ -241,6 +243,86 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
                         {graph?.detail ? ` — ${graph.detail}` : ''} · a cadeia acima não depende dele
                     </span>
                 )}
+            </div>
+        );
+    }
+
+    /**
+     * PROJ-06 — o que a análise encontrou num projeto que ainda não declarou
+     * nada. É a única parte desta view que fala de algo que NÃO está no disco,
+     * então cada item diz onde seria gravado antes de a pessoa clicar.
+     *
+     * Adotar um SoT candidato não produz verificação nenhuma: o candidato vem sem
+     * `claims`, e o cartão diz isso — senão a tela venderia "fonte da verdade" e
+     * entregaria um arquivo que não afirma nada.
+     */
+    protected renderCandidates(): React.ReactNode {
+        const found = this.store.productCandidates;
+        if (!found || (found.resources.length === 0 && found.sots.length === 0)) {
+            return null;
+        }
+        const busy = this.store.productBusy;
+        return (
+            <div className="nav-sec">
+                <span className="tag">Candidatos encontrados</span>
+                <div className="cap-card">
+                    <small>
+                        nada foi gravado ainda — adotar escreve UM artefato em `.product/`, que
+                        entra no Git como qualquer outro arquivo
+                    </small>
+                </div>
+                {found.sots.map(sot => (
+                    <div className="cap-card" key={`sot:${sot.id}`}>
+                        <div className="cap-head">
+                            <b>{sot.label || sot.id}</b>
+                            <span className="cap-pill not-installed">{sot.kind}</span>
+                        </div>
+                        <small
+                            role="button"
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => this.openPath(sot.path)}
+                        >
+                            documento: {sot.path}
+                        </small>
+                        <small>gravaria em: .product/sot/{sot.id}.json</small>
+                        <small>
+                            sem afirmações — depois de adotar, escreva `claims` no artefato para
+                            haver divergência a calcular
+                        </small>
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn primary"
+                                disabled={busy}
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_PRODUCT_ADOPT, 'sot', sot.id
+                                )}
+                            >
+                                Adotar fonte
+                            </button>
+                        </div>
+                    </div>
+                ))}
+                {found.resources.map(resource => (
+                    <div className="cap-card" key={`res:${resource.id}`}>
+                        <div className="cap-head">
+                            <b>{resource.label || resource.id}</b>
+                            <span className="cap-pill unknown">candidato</span>
+                        </div>
+                        <small>{resource.paths.length} arquivo(s)</small>
+                        <small>gravaria em: .product/resources/{resource.id}.json</small>
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={busy}
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_PRODUCT_ADOPT, 'resource', resource.id
+                                )}
+                            >
+                                Adotar recurso
+                            </button>
+                        </div>
+                    </div>
+                ))}
             </div>
         );
     }

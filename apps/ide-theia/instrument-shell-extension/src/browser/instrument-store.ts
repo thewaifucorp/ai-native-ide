@@ -39,7 +39,7 @@ import { HarnessSnapshot } from '../common/harness-protocol';
 import { ObserverReport } from '../common/observer-protocol';
 import { ProjectAnalysis } from '../common/analysis-protocol';
 import { AgentSessionSnapshot } from '../common/agent-session-protocol';
-import { ProductModel } from '../common/product-protocol';
+import { ProductModel, ProjectResource, SourceOfTruth } from '../common/product-protocol';
 import { AgentProbe } from 'engine-extension';
 
 export type WorkView = 'home' | 'build' | 'notas';
@@ -227,6 +227,11 @@ export class InstrumentStore {
     product: ProductModel | undefined;
     productBusy = false;
 
+    // ── Candidatos de `.product/` (PROJ-06): o que a análise ENCONTROU num
+    //    projeto que ainda não declarou nada. Candidato não é declaração — fica
+    //    aqui até alguém adotar, e adotar escreve o artefato.
+    productCandidates: { resources: ProjectResource[]; sots: SourceOfTruth[] } | undefined;
+
     /** Ids of collapsed sections in the Ferramentas view (session-local). */
     collapsedSections: string[] = ['workbench', 'broker', 'harness', 'packs', 'library', 'settings', 'durable'];
 
@@ -367,6 +372,13 @@ export class InstrumentStore {
 
     setProductBusy(busy: boolean): void {
         this.productBusy = busy;
+        this.emit();
+    }
+
+    setProductCandidates(
+        found: { resources: ProjectResource[]; sots: SourceOfTruth[] } | undefined
+    ): void {
+        this.productCandidates = found;
         this.emit();
     }
 

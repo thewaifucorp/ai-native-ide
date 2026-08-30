@@ -161,6 +161,7 @@ export const CMD_REGISTER_REFERENCE = 'instrument.project.registerReference';
 export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
 export const CMD_PRODUCT_RESOLVE = 'instrument.product.resolve';
 export const CMD_PRODUCT_ANALYZE = 'instrument.product.analyze';
+export const CMD_PRODUCT_ADOPT = 'instrument.product.adopt';
 
 /** Items the proof provider seeds, so slot lifecycle has state to preserve. */
 const SEED_ITEMS = ['prova/marco-1', 'prova/fase-1', 'prova/tarefa-1'];
@@ -691,6 +692,15 @@ export class InstrumentCapabilityContribution
             { id: CMD_PRODUCT_ANALYZE, label: 'Instrument: analisar projeto (candidatos)' },
             { execute: () => this.analyzeProject() }
         );
+        commands.registerCommand(
+            { id: CMD_PRODUCT_ADOPT, label: 'Instrument: adotar candidato (§3)' },
+            {
+                execute: (kind?: 'resource' | 'sot', id?: string) =>
+                    (kind === 'resource' || kind === 'sot') && id
+                        ? this.adoptCandidate(kind, id)
+                        : undefined
+            }
+        );
     }
 
     // ── capabilities ────────────────────────────────────────────────────────
@@ -864,21 +874,83 @@ export class InstrumentCapabilityContribution
         }
     }
 
-    /** Candidatos revisáveis; nenhuma ativação silenciosa. */
+    /**
+     * Candidatos revisáveis; nenhuma ativação silenciosa.
+     *
+     * Antes isto terminava num toast contando quantos candidatos existiam e
+     * mandando a pessoa "escrever os artefatos em `.product/`" à mão. Num projeto
+     * cru — que é justamente onde o botão aparece — o caminho inteiro morria ali:
+     * o backend já sabia adotar (`declareResource`/`declareSot`, e um agente
+     * chegava neles pelo MCP), e só a pessoa não tinha por onde. Agora o
+     * resultado fica na tela, item a item, e adotar é um clique que escreve UM
+     * artefato de cada vez.
+     */
     protected async analyzeProject(): Promise<void> {
         const root = this.root;
         if (!root) {
             return;
         }
+        this.store.setProductBusy(true);
         try {
             const found = await this.product.candidates(root);
-            this.messages.info(
-                `Análise: ${found.resources.length} recurso(s) e ${found.sots.length} fonte(s) da ` +
-                'verdade candidatas. Nada foi declarado — escreva os artefatos em `.product/` ' +
-                'para adotá-los.'
-            );
+            this.store.setProductCandidates(found);
+            if (found.resources.length === 0 && found.sots.length === 0) {
+                this.messages.info(
+                    'Análise: nenhum candidato encontrado — nem diretório com código no primeiro ' +
+                    'nível, nem documento de intenção reconhecível.'
+                );
+            }
         } catch (err) {
             this.messages.error(`Falha ao analisar: ${this.msg(err)}`);
+        } finally {
+            this.store.setProductBusy(false);
+        }
+    }
+
+    /**
+     * Adota UM candidato: grava `.product/resources/<id>.json` ou
+     * `.product/sot/<id>.json` e relê o modelo. É escrita de arquivo versionado,
+     * então o desfazer é o próprio Git — e por isso adota-se um por vez, com o
+     * que foi gravado dito no toast.
+     */
+    protected async adoptCandidate(kind: 'resource' | 'sot', id: string): Promise<void> {
+        const root = this.root;
+        const found = this.store.productCandidates;
+        if (!root || !found) {
+            return;
+        }
+        this.store.setProductBusy(true);
+        try {
+            if (kind === 'resource') {
+                const resource = found.resources.find(r => r.id === id);
+                if (!resource) {
+                    return;
+                }
+                this.store.setProduct(await this.product.declareResource(root, resource));
+                this.store.setProductCandidates({
+                    ...found,
+                    resources: found.resources.filter(r => r.id !== id)
+                });
+                this.messages.info(`Recurso declarado em .product/resources/${id}.json`);
+            } else {
+                const sot = found.sots.find(s => s.id === id);
+                if (!sot) {
+                    return;
+                }
+                this.store.setProduct(await this.product.declareSot(root, sot));
+                this.store.setProductCandidates({
+                    ...found,
+                    sots: found.sots.filter(s => s.id !== id)
+                });
+                this.messages.info(
+                    `Fonte da verdade declarada em .product/sot/${id}.json — sem afirmações ainda, ` +
+                    'então ela não afirma nada verificável até você escrever `claims`.'
+                );
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao adotar: ${this.msg(err)}`);
+        } finally {
+            this.store.setProductBusy(false);
         }
     }
 
