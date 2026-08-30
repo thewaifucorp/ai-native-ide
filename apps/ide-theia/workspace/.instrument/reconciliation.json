@@ -13,6 +13,24 @@
       },
       "status": "accepted_scoped_exception",
       "atMs": 1787857442644
+    },
+    {
+      "divergenceId": "preview-responde::observed:preview-failure:health:1787883526612:1",
+      "choice": {
+        "kind": "change_implementation",
+        "proposed_effect_id": "wmtcbn7k7dg3h-1"
+      },
+      "status": "pending_verification",
+      "atMs": 1787883586232
+    },
+    {
+      "divergenceId": "preview-responde::observed:preview-failure:health:1787886244847:1",
+      "choice": {
+        "kind": "change_implementation",
+        "proposed_effect_id": "wmtcd9zixjmmg-1"
+      },
+      "status": "pending_verification",
+      "atMs": 1787886310215
     }
   ]
 }

@@ -193,8 +193,28 @@ fn generate_password() -> Result<String, String> {
 ///
 /// Pura de propósito: o teste lê o texto e cobra o que ele precisa negar, sem
 /// depender de ter nginx instalado na máquina de quem roda o teste.
-pub fn nginx_config(listen_port: u16, preview_port: u16, share_dir: &Path) -> String {
+pub fn nginx_config(
+    listen_port: u16,
+    preview_port: u16,
+    share_dir: &Path,
+    feedback_port: Option<u16>,
+) -> String {
     let dir = share_dir.display();
+    // O caminho de volta (§16, LIFE-05) entra atrás da MESMA senha e no MESMO
+    // endereço: quem viu a coisa escreve de onde está, sem sair do link. O
+    // prefixo é longo de propósito — ele não pode roubar uma rota do app que
+    // está sendo mostrado.
+    let retorno = match feedback_port {
+        Some(porta) => format!(
+            r#"
+        location /_instrument/observacao {{
+            proxy_pass http://127.0.0.1:{porta}/;
+            proxy_set_header Host $host;
+        }}
+"#
+        ),
+        None => String::new(),
+    };
     format!(
         r#"# Gerado pelo IDE para compartilhar o preview. Não editar à mão:
 # cada compartilhamento reescreve este arquivo.
@@ -220,7 +240,7 @@ http {{
         # Arquivo escondido nunca sai daqui: é onde moram .env e .git, e um
         # deles basta para entregar credencial e histórico inteiro.
         location ~ /\. {{ return 404; }}
-
+{retorno}
         location / {{
             proxy_pass http://127.0.0.1:{preview_port};
             proxy_set_header Host $host;
@@ -239,11 +259,26 @@ fn share_dir(root: &Path) -> PathBuf {
     root.join(SHARE_REL)
 }
 
+/// A senha no formato que o nginx aceita sem `apache2-utils` instalado.
+///
+/// `{SHA}` é SHA-1 sem sal, e sem sal é ruim para senha ESCOLHIDA por gente:
+/// uma tabela pronta quebra "1234" na hora. Aqui a senha tem 128 bits vindos do
+/// sistema e vive minutos — não existe tabela para isso, e o que o formato
+/// resolve é o que importava: a senha deixa de estar em claro num arquivo do
+/// disco. Antes era `{PLAIN}`, e quem lesse o arquivo lia a senha.
+fn htpasswd_hash(password: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let digest = Sha1::digest(password.as_bytes());
+    format!(
+        "{{SHA}}{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, digest)
+    )
+}
+
 fn write_credentials(dir: &Path, user: &str, password: &str) -> Result<(), String> {
     let path = dir.join("htpasswd");
-    // `{PLAIN}` é aceito pelo nginx e evita depender do `htpasswd` (apache2-utils)
-    // estar instalado. O arquivo é local e fica 0600.
-    fs::write(&path, format!("{user}:{{PLAIN}}{password}\n"))
+    // O arquivo é local e fica 0600 — e mesmo assim não guarda a senha em claro.
+    fs::write(&path, format!("{user}:{}\n", htpasswd_hash(password)))
         .map_err(|error| format!("gravar {}: {error}", path.display()))?;
     #[cfg(unix)]
     {
@@ -391,9 +426,24 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
     let user = "convidado".to_string();
     let password = generate_password()?;
     write_credentials(&dir, &user, &password)?;
+    // O caminho de volta sobe ANTES do proxy, porque a configuração precisa da
+    // porta dele. A versão que vai junto é a última consolidada: é sobre ela que
+    // quem abrir o link está falando, e sem isso a observação chega solta.
+    let versao = crate::lifecycle::snapshot(root)
+        .ok()
+        .and_then(|s| s.history.last().map(|r| r.version.clone()));
+    let modo = match mode {
+        ShareMode::Lan => "lan",
+        ShareMode::Tunnel => "tunnel",
+    };
+    let feedback_port = crate::feedback::start(root, versao, modo)?;
+
     let config = dir.join("nginx.conf");
-    fs::write(&config, nginx_config(listen, preview_port, &dir))
-        .map_err(|error| format!("gravar {}: {error}", config.display()))?;
+    fs::write(
+        &config,
+        nginx_config(listen, preview_port, &dir, Some(feedback_port)),
+    )
+    .map_err(|error| format!("gravar {}: {error}", config.display()))?;
 
     let mut nginx = Command::new("nginx");
     nginx
@@ -564,6 +614,9 @@ pub fn stop(root: &Path) -> Result<ShareSnapshot, String> {
             }
         }
     }
+    // O caminho de volta fecha junto: ele existe enquanto a coisa está sendo
+    // mostrada. O que já chegou fica no projeto — o receptor é que some.
+    crate::feedback::stop();
     // A senha some junto: ela valia para aquele compartilhamento e mais nada.
     let _ = fs::remove_file(share_dir(root).join("htpasswd"));
     snapshot(root)
@@ -579,12 +632,35 @@ mod tests {
     fn a_configuracao_nega_arquivo_escondido_e_exige_senha() {
         let dir = tempfile::tempdir().expect("dir");
 
-        let config = nginx_config(8099, 5173, dir.path());
+        let config = nginx_config(8099, 5173, dir.path(), Some(7788));
 
         assert!(
             config.contains("auth_basic_user_file"),
             "sem senha, mandar o link para um amigo é o mesmo que publicar"
         );
+        // O caminho de volta (LIFE-05) fica DENTRO do mesmo `server`, portanto
+        // atrás da mesma `auth_basic`. Um receptor fora dela aceitaria observação
+        // de quem passasse na porta, sem senha nenhuma.
+        assert!(
+            config.contains("location /_instrument/observacao"),
+            "quem viu tem de conseguir responder sem sair do link"
+        );
+        assert!(
+            config.contains("proxy_pass http://127.0.0.1:7788/"),
+            "a rota de volta aponta para o receptor local"
+        );
+        let antes_do_auth = config.find("auth_basic ").expect("auth_basic");
+        let rota = config
+            .find("location /_instrument/observacao")
+            .expect("rota");
+        assert!(
+            antes_do_auth < rota,
+            "a rota de volta tem de herdar a senha declarada acima dela"
+        );
+        // Sem receptor, a rota simplesmente não existe — em vez de apontar para
+        // uma porta que ninguém está ouvindo e dar 502 a quem tentou ajudar.
+        assert!(!nginx_config(8099, 5173, dir.path(), None)
+            .contains("location /_instrument/observacao"));
         assert!(
             config.contains("location ~ /\\."),
             ".env e .git não podem sair daqui: um deles entrega credencial e histórico"
@@ -619,7 +695,17 @@ mod tests {
         write_credentials(dir.path(), "convidado", "segredo").expect("gravar");
 
         let conteudo = fs::read_to_string(dir.path().join("htpasswd")).expect("ler");
-        assert!(conteudo.starts_with("convidado:{PLAIN}"));
+        assert!(conteudo.starts_with("convidado:{SHA}"));
+        assert!(
+            !conteudo.contains("segredo"),
+            "a senha não pode estar em claro no arquivo: era assim antes, com {{PLAIN}}"
+        );
+        // O valor é o SHA-1 de `segredo` em base64 — conferido contra o que o
+        // `htpasswd -s` do apache produz, senão o teste só repetiria o código.
+        assert_eq!(
+            conteudo.trim(),
+            "convidado:{SHA}eB7LUlmj3JBXtTMuV+cmA9a/4Po="
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

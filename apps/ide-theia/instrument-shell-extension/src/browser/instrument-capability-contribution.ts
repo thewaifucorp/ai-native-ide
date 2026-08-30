@@ -162,6 +162,7 @@ export const CMD_PRODUCT_REFRESH = 'instrument.product.refresh';
 export const CMD_PRODUCT_RESOLVE = 'instrument.product.resolve';
 export const CMD_PRODUCT_ANALYZE = 'instrument.product.analyze';
 export const CMD_PRODUCT_ADOPT = 'instrument.product.adopt';
+export const CMD_OBSERVATIONS_READ = 'instrument.observations.read';
 
 /** Items the proof provider seeds, so slot lifecycle has state to preserve. */
 const SEED_ITEMS = ['prova/marco-1', 'prova/fase-1', 'prova/tarefa-1'];
@@ -397,8 +398,8 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_SHARE_START, label: 'Instrument: compartilhar o preview (rede ou túnel)' },
             {
-                execute: (mode?: 'lan' | 'tunnel') =>
-                    mode ? this.shareStart(mode) : undefined
+                execute: (mode?: 'lan' | 'tunnel', minutes?: number) =>
+                    mode ? this.shareStart(mode, minutes) : undefined
             }
         );
         commands.registerCommand(
@@ -691,6 +692,10 @@ export class InstrumentCapabilityContribution
         commands.registerCommand(
             { id: CMD_PRODUCT_ANALYZE, label: 'Instrument: analisar projeto (candidatos)' },
             { execute: () => this.analyzeProject() }
+        );
+        commands.registerCommand(
+            { id: CMD_OBSERVATIONS_READ, label: 'Instrument: ler o que voltou do link (§16)' },
+            { execute: () => this.readObservations() }
         );
         commands.registerCommand(
             { id: CMD_PRODUCT_ADOPT, label: 'Instrument: adotar candidato (§3)' },
@@ -2520,6 +2525,26 @@ export class InstrumentCapabilityContribution
         } finally {
             this.store.setShareBusy(false);
         }
+        await this.readObservations();
+    }
+
+    /**
+     * O que voltou de quem abriu o link (§16, LIFE-05).
+     *
+     * É lido junto com o estado do compartilhamento, e não só enquanto ele está
+     * aberto: a observação sobrevive à demo, e ler só com o túnel de pé faria
+     * ela sumir da tela justamente quando é hora de agir sobre ela.
+     */
+    protected async readObservations(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            this.store.setObservations(await this.engine.observationsRead(root));
+        } catch (err) {
+            this.messages.error(`Observações não foram lidas: ${this.msg(err)}`);
+        }
     }
 
     /**
@@ -2528,20 +2553,27 @@ export class InstrumentCapabilityContribution
      * inteira apontando para esta máquina. Por isso a confirmação mostra o aviso
      * do MODO escolhido, vindo do motor, e não uma frase genérica.
      */
-    protected async shareStart(mode: 'lan' | 'tunnel'): Promise<void> {
+    protected async shareStart(mode: 'lan' | 'tunnel', minutes?: number): Promise<void> {
         const root = this.rootPath;
         if (!root) {
             return;
         }
+        // O prazo escolhido tem de aparecer na confirmação. Enquanto o texto
+        // dizia "30 min" fixo, escolher duas horas na tela e ler "fecha em 30"
+        // no diálogo era a própria confirmação mentindo sobre o que ia acontecer.
+        const prazo = minutes && minutes > 0 ? minutes : 30;
+        const fecha = prazo >= 60 && prazo % 60 === 0
+            ? `${prazo / 60} h`
+            : `${prazo} min`;
         const confirmado = await new ConfirmDialog({
             title: mode === 'lan' ? 'Abrir na rede local?' : 'Abrir um endereço público?',
             msg: mode === 'lan'
                 ? 'Qualquer pessoa na mesma rede vai alcançar este endereço — não é só quem '
                   + 'receber o link. A conexão é sem TLS: o que for digitado passa em texto '
-                  + 'claro na rede. Fecha sozinho em 30 min.'
+                  + `claro na rede. Fecha sozinho em ${fecha}.`
                 : 'O endereço é público na internet e aponta para ESTA máquina. Quem tiver o '
                   + 'link e a senha vê o que o app mostra e faz o que o app faz; enquanto '
-                  + 'estiver aberto, seu computador é o servidor. Fecha sozinho em 30 min.',
+                  + `estiver aberto, seu computador é o servidor. Fecha sozinho em ${fecha}.`,
             ok: mode === 'lan' ? 'Abrir na rede' : 'Abrir na internet',
             cancel: 'Não abrir'
         }).open();
@@ -2551,7 +2583,7 @@ export class InstrumentCapabilityContribution
         }
         this.store.setShareBusy(true);
         try {
-            const snapshot = await this.engine.shareStart(root, mode);
+            const snapshot = await this.engine.shareStart(root, mode, prazo);
             this.store.setShare(snapshot);
             if (snapshot.active) {
                 this.messages.info(

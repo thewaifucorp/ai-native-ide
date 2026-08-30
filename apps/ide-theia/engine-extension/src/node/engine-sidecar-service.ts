@@ -21,6 +21,7 @@ import {
     ProvidersSnapshot,
     ReleaseAttempt,
     ReleaseSnapshot,
+    Observation,
     ShareSnapshot,
     VerifyResult,
     ReopenedExport,
@@ -519,6 +520,10 @@ export class EngineSidecarService implements EngineService {
 
     shareStop(root: string): Promise<ShareSnapshot> {
         return this.call('share_stop', { root });
+    }
+
+    observationsRead(root: string): Promise<Observation[]> {
+        return this.call('observations_read', { root });
     }
 
     providersSnapshot(root: string): Promise<ProvidersSnapshot> {

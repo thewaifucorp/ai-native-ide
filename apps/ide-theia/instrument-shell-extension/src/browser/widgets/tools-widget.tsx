@@ -1515,6 +1515,52 @@ export class ToolsWidget extends AbstractInstrumentWidget {
     }
 
     /**
+     * O QUE VOLTOU (§16, LIFE-05).
+     *
+     * A metade que faltava do "mostrar para alguém". Mostrar já funcionava; o
+     * retorno não existia: quem abria o link, via o problema e tinha de sair do
+     * link para contar por outro canal. O que chegava ao projeto era a lembrança
+     * de quem recebeu o recado.
+     *
+     * Cada observação chega grudada na VERSÃO que estava sendo mostrada, e é por
+     * isso que o botão daqui fecha o ciclo: ela vira o problema observado da
+     * próxima versão, que é o campo que a seção "Versões" exige para consolidar
+     * uma versão sobre outra.
+     */
+    protected renderObservations(): React.ReactNode {
+        const observacoes = this.store.observations;
+        if (observacoes.length === 0) {
+            return null;
+        }
+        return (
+            <>
+                <span className="tag">O que voltou de quem viu</span>
+                {observacoes.map((obs, i) => (
+                    <div className="cap-receipt" key={`${obs.atEpochSecs}:${i}`}>
+                        <span className="cap-receipt-detail">{obs.text}</span>
+                        <small>
+                            {obs.version
+                                ? `sobre ${obs.version}`
+                                : 'sem versão — o projeto ainda não tinha consolidado nenhuma'}
+                            {' · '}
+                            {obs.via === 'tunnel' ? 'pelo túnel' : 'pela rede local'}
+                            {' · '}
+                            {new Date(obs.atEpochSecs * 1000).toLocaleString()}
+                        </small>
+                        <button
+                            className="cap-btn tiny"
+                            title="Leva este texto para o campo do problema observado, na seção Versões"
+                            onClick={() => this.setDraft('lifecycle-problem', obs.text)}
+                        >
+                            usar como problema
+                        </button>
+                    </div>
+                ))}
+            </>
+        );
+    }
+
+    /**
      * PUBLICAR (§16) — o adapter Git, e os três atos que ele tem.
      *
      * Esta seção é o "publicar" de verdade, separado do consolidar: aqui a
@@ -1851,13 +1897,34 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     {share.cloudflared.remediation}
                                 </small>
                             )}
+                            <label className="cap-field">
+                                <span>fecha sozinho em</span>
+                                <select
+                                    value={String(this.store.shareMinutes)}
+                                    disabled={busy}
+                                    onChange={event =>
+                                        this.store.setShareMinutes(Number(event.target.value))
+                                    }
+                                >
+                                    <option value="15">15 min</option>
+                                    <option value="30">30 min</option>
+                                    <option value="60">1 hora</option>
+                                    <option value="120">2 horas</option>
+                                </select>
+                            </label>
+                            <small className="cap-hint">
+                                o prazo é o que fecha o que ficou aberto depois que a demo acabou —
+                                escolher mais tempo é escolher mais exposição
+                            </small>
                             <div className="cap-actions">
                                 <button
                                     className="cap-btn"
                                     disabled={busy || !share.nginx.present}
                                     title="Alcança quem está na mesma rede — o café inteiro, não só quem receber o link"
                                     onClick={() =>
-                                        this.commands.executeCommand(CMD_SHARE_START, 'lan')
+                                        this.commands.executeCommand(
+                                            CMD_SHARE_START, 'lan', this.store.shareMinutes
+                                        )
                                     }
                                 >
                                     Abrir na rede local
@@ -1867,7 +1934,9 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                     disabled={busy || !share.nginx.present || !share.cloudflared.present}
                                     title="Endereço público na internet apontando para ESTA máquina"
                                     onClick={() =>
-                                        this.commands.executeCommand(CMD_SHARE_START, 'tunnel')
+                                        this.commands.executeCommand(
+                                            CMD_SHARE_START, 'tunnel', this.store.shareMinutes
+                                        )
                                     }
                                 >
                                     Mandar para alguém (túnel)
@@ -1886,6 +1955,12 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             <small className="cap-evidence">
                                 usuário {share.active.user} · senha {share.active.password}
                             </small>
+                            <small className="cap-hint">
+                                quem abrir o link pode responder em{' '}
+                                {share.active.url.replace(/\/$/, '')}/_instrument/observacao — a
+                                observação chega aqui com a versão que estava sendo mostrada, sem
+                                a pessoa sair do link
+                            </small>
                             <p className="cap-remediation">{share.active.warning}</p>
                             <div className="cap-actions">
                                 <button
@@ -1898,6 +1973,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             </div>
                         </>
                     )}
+                    {this.renderObservations()}
                 </div>
             ),
             <div className="cap-actions" style={{ margin: '0 6px 6px' }}>

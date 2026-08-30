@@ -23,6 +23,7 @@ import {
     ProvidersSnapshot,
     PublishAttempt,
     ReleaseSnapshot,
+    Observation,
     ShareSnapshot,
     VerifyResult,
     ReopenedExport,
@@ -199,6 +200,24 @@ export class InstrumentStore {
     //    senha e até quando. `undefined` = nem lido.
     share: ShareSnapshot | undefined;
     shareBusy = false;
+
+    /**
+     * Prazo escolhido para o próximo compartilhamento, em minutos.
+     *
+     * O padrão continua sendo o do motor (30 min): o que muda é quem decide.
+     * Prazo é a única coisa que fecha o que ficou aberto depois da demo, então
+     * ele é uma escolha visível, e não um número escondido no código.
+     */
+    shareMinutes = 30;
+
+    /**
+     * O que voltou de quem abriu um link compartilhado (§16, LIFE-05).
+     *
+     * Vive no projeto, não no compartilhamento: o receptor fecha quando a demo
+     * acaba, e a observação continua — é ela que vira o problema da próxima
+     * versão.
+     */
+    observations: Observation[] = [];
 
     // ── REAL providers (§16): catálogo, o que já existe no projeto e a última
     //    conferência de endereço.
@@ -564,6 +583,16 @@ export class InstrumentStore {
 
     setShareBusy(busy: boolean): void {
         this.shareBusy = busy;
+        this.emit();
+    }
+
+    setShareMinutes(minutes: number): void {
+        this.shareMinutes = minutes;
+        this.emit();
+    }
+
+    setObservations(list: Observation[]): void {
+        this.observations = list;
         this.emit();
     }
 

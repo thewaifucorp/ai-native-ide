@@ -1,7 +1,7 @@
 {
   "mode": {
     "value": "hybrid",
-    "source": "default"
+    "source": "user"
   },
   "depth": {
     "value": "raw",

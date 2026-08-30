@@ -2114,6 +2114,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ide-notes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ide-packs"
 version = "0.1.0"
 dependencies = [
@@ -2144,6 +2153,13 @@ name = "ide-semantic"
 version = "0.1.0"
 dependencies = [
  "ide-harness",
+ "serde",
+]
+
+[[package]]
+name = "ide-work"
+version = "0.1.0"
+dependencies = [
  "serde",
 ]
 

@@ -444,6 +444,14 @@ export interface EngineService {
     /** Fecha o compartilhamento: derruba túnel e proxy. */
     shareStop(root: string): Promise<ShareSnapshot>;
 
+    /**
+     * O que quem abriu um link compartilhado devolveu (§16, LIFE-05).
+     *
+     * Fica no projeto e sobrevive ao compartilhamento que a trouxe — o receptor
+     * fecha, a observação não.
+     */
+    observationsRead(root: string): Promise<Observation[]>;
+
     /** Catálogo de providers, com CLI, passos e o que já existe no projeto. */
     providersSnapshot(root: string): Promise<ProvidersSnapshot>;
     /** Gera o arquivo de configuração do provider. Recusa sobrescrever. */
@@ -1381,6 +1389,22 @@ export interface ShareToolState {
  * túnel é igual. A senha aparece aqui porque só existe aqui — é gerada por
  * compartilhamento e some quando ele fecha.
  */
+/**
+ * O que alguém que abriu o link devolveu (§16, LIFE-05).
+ *
+ * Nasce grudada na versão que estava sendo mostrada: "o botão não funciona" sem
+ * versão é um recado solto, e era exatamente isso que sobrava antes — a lembrança
+ * de quem recebeu o recado por fora do IDE.
+ */
+export interface Observation {
+    atEpochSecs: number;
+    text: string;
+    /** A versão mostrada; ausente quando o projeto ainda não consolidou nenhuma. */
+    version?: string;
+    /** `lan` ou `tunnel` — por onde a pessoa alcançou. */
+    via: string;
+}
+
 export interface ActiveShare {
     mode: 'lan' | 'tunnel';
     url: string;

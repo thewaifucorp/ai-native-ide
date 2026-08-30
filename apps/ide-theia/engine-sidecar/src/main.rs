@@ -48,6 +48,7 @@
 //! propose → approve → propose-executes → rollback lifecycle spans requests.
 
 mod context;
+mod feedback;
 mod harness;
 mod intent;
 mod library;
@@ -944,6 +945,18 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "observations_read" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let lista = tokio::task::spawn_blocking(move || feedback::read(&root))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(lista).map_err(|e| e.to_string())
         }
         "share_snapshot" | "share_stop" => {
             #[derive(Deserialize)]
