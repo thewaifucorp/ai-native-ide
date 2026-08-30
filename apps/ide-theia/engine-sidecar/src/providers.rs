@@ -194,9 +194,12 @@ pub fn config_for(
         )),
         "render" => Ok((
             "render.yaml".to_string(),
+            // `runtime: static`, e não `env: static`: o Render renomeou a chave, e
+            // um blueprint com a antiga é recusado na hora de valer — longe daqui,
+            // com mensagem deles. Conferido na especificação de blueprint atual.
             format!(
                 "# Gerado pelo IDE a partir do build declarado do projeto.\n\
-                 services:\n  - type: web\n    name: site\n    env: static\n    \
+                 services:\n  - type: web\n    name: site\n    runtime: static\n    \
                  buildCommand: {build}\n    staticPublishPath: {publish}\n"
             ),
         )),
@@ -216,11 +219,24 @@ pub fn config_for(
                  .instrument/preview.json — declare o preview e gere de novo"
                     .to_string()
             })?;
+            // O Heroku ATRIBUI a porta por `$PORT`, e um processo que escuta numa
+            // porta fixa nunca é considerado saudável lá — o deploy sobe e o dyno
+            // é derrubado por timeout de bind. O comando do preview é local, então
+            // quase sempre tem porta fixa: dizer isso aqui é a diferença entre a
+            // pessoa ajustar em dez segundos e perder a tarde lendo log do Heroku.
+            let aviso = if web.contains("$PORT") {
+                String::new()
+            } else {
+                "# ATENÇÃO: este comando não usa $PORT. O Heroku decide a porta e a\n\
+                 # passa nessa variável; um processo com porta fixa não fica saudável\n\
+                 # lá. Ajuste o comando para escutar em $PORT antes de subir.\n"
+                    .to_string()
+            };
             Ok((
                 "Procfile".to_string(),
                 format!(
                     "# Gerado pelo IDE a partir do processo web declarado em \
-                     .instrument/preview.json.\nweb: {web}\n"
+                     .instrument/preview.json.\n{aviso}web: {web}\n"
                 ),
             ))
         }
@@ -532,8 +548,13 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&vercel).expect("vercel.json é JSON");
         assert_eq!(json["outputDirectory"], "dist");
 
-        let (nome, _) = config_for("render", "npm run build", "dist", None).unwrap();
+        let (nome, render) = config_for("render", "npm run build", "dist", None).unwrap();
         assert_eq!(nome, "render.yaml");
+        // A chave é `runtime`. `env: static` é a forma antiga e o Render recusa o
+        // blueprint — o erro apareceria no painel deles, não aqui.
+        assert!(render.contains("runtime: static"));
+        assert!(!render.contains("env: static"));
+        assert!(render.contains("staticPublishPath: dist"));
 
         assert!(config_for("provider-que-nao-existe", "x", "y", None).is_err());
     }
@@ -560,6 +581,32 @@ mod tests {
         let erro = config_for("heroku", "npm run build", "dist", None)
             .expect_err("sem processo web declarado, recusa");
         assert!(erro.contains("preview.json"));
+
+        // Porta fixa no comando: o Heroku decide a porta por $PORT, e um processo
+        // que a ignora é derrubado por timeout de bind. O arquivo tem de avisar.
+        let (_, fixa) = config_for(
+            "heroku",
+            "npm run build",
+            "dist",
+            Some("python3 -m http.server 8124"),
+        )
+        .expect("gera com aviso");
+        assert!(
+            fixa.contains("$PORT"),
+            "o aviso da porta tem de estar lá: {fixa}"
+        );
+
+        let (_, dinamica) = config_for(
+            "heroku",
+            "npm run build",
+            "dist",
+            Some("node server.js --port $PORT"),
+        )
+        .expect("gera sem aviso");
+        assert!(
+            !dinamica.contains("ATENÇÃO"),
+            "quem já usa $PORT não precisa de aviso: {dinamica}"
+        );
     }
 
     /// E a recusa chega pelo caminho de verdade, não só pela função pura.
