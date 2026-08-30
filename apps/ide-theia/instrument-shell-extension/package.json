@@ -14,6 +14,7 @@
     "@theia/core": "1.74.1",
     "@theia/editor": "1.74.1",
     "@theia/filesystem": "1.74.1",
+    "@theia/markers": "1.74.1",
     "@theia/workspace": "1.74.1",
     "engine-extension": "link:../engine-extension"
   },

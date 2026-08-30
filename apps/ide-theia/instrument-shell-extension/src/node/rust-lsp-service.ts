@@ -48,7 +48,18 @@ interface Server {
     buffer: Buffer;
     /** Diagnósticos por caminho absoluto, como o servidor os publicou. */
     diagnostics: Map<string, RustDiagnostic[]>;
-    open: Set<string>;
+    /**
+     * Arquivos abertos no servidor, com a ÚLTIMA versão enviada de cada um.
+     *
+     * A versão não é enfeite: o campo `version` do LSP é um `i32`, e o
+     * rust-analyzer descarta em silêncio a notificação que não desserializa.
+     * Era um `Set` e a versão saía de `Date.now()` — 1,79e12, muito acima de
+     * `i32::MAX`. Resultado: TODA `didChange` era jogada fora, e o servidor
+     * respondia para sempre sobre o texto do momento em que o arquivo foi
+     * aberto. Medido: `nome.` num `String` devolvia a lista de escopo com
+     * `votos: Vec<u32>` — um nome que já não existia no arquivo.
+     */
+    open: Map<string, number>;
     ready: boolean;
     problem?: string;
     nextId: number;
@@ -213,7 +224,7 @@ export class RustLspServiceImpl implements RustLspService {
         }
         const fsPath = FileUri.fsPath(new URI(fileUri));
         if (!server.open.has(fsPath)) {
-            server.open.add(fsPath);
+            server.open.set(fsPath, 1);
             this.notify(server, 'textDocument/didOpen', {
                 textDocument: {
                     uri: this.toUri(fsPath),
@@ -222,6 +233,21 @@ export class RustLspServiceImpl implements RustLspService {
                     text
                 }
             });
+        } else {
+            // Já aberto NÃO quer dizer "com este texto".
+            //
+            // O servidor mora no backend e sobrevive ao navegador: recarregar a
+            // página, reabrir o arquivo, ou mudar o arquivo por fora (git, outro
+            // editor, o próprio broker) chega aqui como um `open` novo com o
+            // texto de agora. A versão anterior descartava esse texto em
+            // silêncio, e o servidor seguia respondendo sobre o conteúdo da
+            // primeira abertura.
+            //
+            // Medido na tela: `votos.` devolvia `assert!`, `Box`, `cfg!` — a lista
+            // de escopo — enquanto o mesmo rust-analyzer, perguntado direto na
+            // mesma posição, devolvia `iter`, `contains`, `swap_remove`. Não era
+            // o servidor fraco: era o IDE perguntando sobre um texto morto.
+            this.enviarMudanca(server, fsPath, text);
         }
         return this.status(root);
     }
@@ -233,8 +259,21 @@ export class RustLspServiceImpl implements RustLspService {
         if (!server || !server.open.has(fsPath)) {
             return;
         }
+        this.enviarMudanca(server, fsPath, text);
+    }
+
+    /**
+     * Manda o texto inteiro como a nova versão do documento.
+     *
+     * A versão vem do contador por arquivo, e não do relógio: o `version` do LSP
+     * é `i32`, e um `Date.now()` ali não é "um número grande", é uma notificação
+     * que o servidor não consegue ler e joga fora sem dizer nada.
+     */
+    protected enviarMudanca(server: Server, fsPath: string, text: string): void {
+        const versao = (server.open.get(fsPath) ?? 1) + 1;
+        server.open.set(fsPath, versao);
         this.notify(server, 'textDocument/didChange', {
-            textDocument: { uri: this.toUri(fsPath), version: Date.now() },
+            textDocument: { uri: this.toUri(fsPath), version: versao },
             contentChanges: [{ text }]
         });
     }
@@ -430,7 +469,7 @@ export class RustLspServiceImpl implements RustLspService {
             child,
             buffer: Buffer.alloc(0),
             diagnostics: new Map(),
-            open: new Set(),
+            open: new Map(),
             ready: false,
             nextId: 1,
             pending: new Map()

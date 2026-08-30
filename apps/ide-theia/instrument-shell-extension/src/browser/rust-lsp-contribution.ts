@@ -19,6 +19,8 @@ import { inject, injectable } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { EditorManager, TextEditor } from '@theia/editor/lib/browser';
 import * as monaco from '@theia/monaco-editor-core';
+import { ProblemManager } from '@theia/markers/lib/browser/problem/problem-manager';
+import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { RustLspService } from '../common/rust-lsp-protocol';
 
@@ -41,6 +43,7 @@ export class RustLspContribution implements FrontendApplicationContribution {
     @inject(RustLspService) protected readonly lsp!: RustLspService;
     @inject(EditorManager) protected readonly editors!: EditorManager;
     @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
+    @inject(ProblemManager) protected readonly problemas!: ProblemManager;
 
     protected timer?: number;
     protected registrado = false;
@@ -163,6 +166,39 @@ export class RustLspContribution implements FrontendApplicationContribution {
                     severity: this.severidade(d.severity)
                 }))
             );
+            // O rabisco vermelho no editor NÃO alimenta o contador da barra de
+            // status nem a lista de Problemas: essas duas leem o ProblemManager
+            // do Theia, e este cliente escreve direto no Monaco. Sem publicar
+            // aqui também, o rodapé dizia "0 erros" com dois rabiscos na tela —
+            // e a barra é onde se olha para saber se o projeto está são.
+            this.problemas.setMarkers(
+                new URI(model.uri.toString()),
+                MARKER_OWNER,
+                lista.map(d => ({
+                    range: {
+                        // O ProblemManager fala LSP: linha e coluna contam de 0.
+                        start: { line: d.line - 1, character: d.column - 1 },
+                        end: { line: d.endLine - 1, character: d.endColumn - 1 }
+                    },
+                    message: d.message,
+                    severity: this.severidadeLsp(d.severity),
+                    source: d.source
+                }))
+            );
+        }
+    }
+
+    /** Severidade no vocabulário do LSP, que é o que o ProblemManager guarda. */
+    protected severidadeLsp(nome: string): 1 | 2 | 3 | 4 {
+        switch (nome) {
+            case 'error':
+                return 1;
+            case 'warning':
+                return 2;
+            case 'information':
+                return 3;
+            default:
+                return 4;
         }
     }
 

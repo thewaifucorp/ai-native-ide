@@ -12,7 +12,7 @@ import { RustLspServiceImpl } from './rust-lsp-service';
 interface ServidorFalso {
     buffer: Buffer;
     diagnostics: Map<string, { message: string }[]>;
-    open: Set<string>;
+    open: Map<string, number>;
     ready: boolean;
     nextId: number;
     pending: Map<number, unknown>;
@@ -26,7 +26,7 @@ class Sonda extends RustLspServiceImpl {
         return {
             buffer: Buffer.alloc(0),
             diagnostics: new Map(),
-            open: new Set<string>(),
+            open: new Map<string, number>(),
             ready: false,
             nextId: 1,
             pending: new Map()
@@ -106,6 +106,94 @@ describe('RustLspServiceImpl — enquadramento LSP', () => {
         assert.strictEqual(sonda.recebidas.length, 0, 'incompleta ainda não é mensagem');
         sonda.exporReceive(server, inteiro.subarray(inteiro.length - 5));
         assert.strictEqual(sonda.recebidas.length, 1, 'completada, virou uma mensagem');
+    });
+});
+
+/**
+ * O servidor mora no backend e sobrevive ao navegador. "Já aberto" nunca foi o
+ * mesmo que "aberto com este texto", e essa confusão fazia o rust-analyzer
+ * responder sobre o conteúdo da primeira abertura para sempre.
+ */
+class SondaDeAbertura extends RustLspServiceImpl {
+    enviadas: { method: string; params: unknown }[] = [];
+
+    /** Um servidor de mentira já registrado, para `open` não subir processo. */
+    plantar(root: string): void {
+        (this as unknown as { servers: Map<string, unknown> }).servers.set(root, {
+            child: { exitCode: null, killed: false },
+            buffer: Buffer.alloc(0),
+            diagnostics: new Map(),
+            open: new Map<string, number>(),
+            ready: true,
+            nextId: 1,
+            pending: new Map()
+        });
+    }
+
+    protected notify(_server: never, method: string, params: unknown): void {
+        this.enviadas.push({ method, params });
+    }
+}
+
+describe('RustLspServiceImpl — o texto que o servidor tem é o texto de agora', () => {
+
+    it('reabrir o mesmo arquivo manda o conteúdo novo, em vez de descartá-lo', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-open-'));
+        const arquivo = path.join(dir, 'main.rs');
+        const rootUri = `file://${dir}`;
+        const fileUri = `file://${arquivo}`;
+
+        const sonda = new SondaDeAbertura();
+        sonda.plantar(dir);
+
+        await sonda.open(rootUri, fileUri, 'fn main() {}\n');
+        await sonda.open(rootUri, fileUri, 'fn main() { let v: Vec<u32> = vec![]; v. }\n');
+
+        const metodos = sonda.enviadas.map(e => e.method);
+        assert.deepStrictEqual(
+            metodos,
+            ['textDocument/didOpen', 'textDocument/didChange'],
+            'a segunda abertura tem de virar didChange, não silêncio'
+        );
+        const mudanca = sonda.enviadas[1].params as { contentChanges: { text: string }[] };
+        assert.ok(
+            mudanca.contentChanges[0].text.includes('Vec<u32>'),
+            'o texto enviado é o de agora, não o da primeira abertura'
+        );
+    });
+
+    /**
+     * A causa raiz, e a que mais custou: o `version` do LSP é `i32`. A versão
+     * saía de `Date.now()` (~1,79e12), o rust-analyzer não conseguia
+     * desserializar a notificação e a descartava SEM ERRO. Toda digitação era
+     * jogada fora, e o servidor respondia para sempre sobre o texto da abertura.
+     *
+     * Medido antes e depois, com o rust-analyzer de verdade e a mesma posição:
+     * com `Date.now()` vinha a lista de escopo, com um contador vinham os
+     * métodos de `String`.
+     */
+    it('numera as versões dentro do i32 que o protocolo exige', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-versao-'));
+        const rootUri = `file://${dir}`;
+        const fileUri = `file://${path.join(dir, 'main.rs')}`;
+
+        const sonda = new SondaDeAbertura();
+        sonda.plantar(dir);
+
+        await sonda.open(rootUri, fileUri, 'fn main() {}\n');
+        await sonda.change(rootUri, fileUri, 'fn main() { 1 }\n');
+        await sonda.change(rootUri, fileUri, 'fn main() { 2 }\n');
+
+        const versoes = sonda.enviadas.map(
+            e => (e.params as { textDocument: { version: number } }).textDocument.version
+        );
+        assert.deepStrictEqual(versoes, [1, 2, 3], 'versão é contador, não relógio');
+        for (const v of versoes) {
+            assert.ok(
+                Number.isInteger(v) && v <= 2_147_483_647,
+                `versão ${v} não cabe em i32 — o servidor descartaria a notificação calado`
+            );
+        }
     });
 });
 
