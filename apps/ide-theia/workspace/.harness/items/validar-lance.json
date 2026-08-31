@@ -1,0 +1,21 @@
+{
+  "id": "validar-lance",
+  "title": "Recusar lance abaixo do atual",
+  "kind": "task",
+  "parents": ["leilao-lances"],
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "lance menor que o atual é recusado",
+      "evidence": {
+        "passed": true,
+        "atMs": 1787900000000,
+        "subject": "src/main.ts",
+        "subjectHash": "9090ce86b4809397",
+        "note": "conferido na implementação de src/main.ts"
+      }
+    }
+  ],
+  "implementation": ["src/main.ts"],
+  "blocked": null
+}

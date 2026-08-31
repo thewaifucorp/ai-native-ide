@@ -1,0 +1,94 @@
+# Standalone package — deliberately NOT a member of the ai-native-ide Rust
+# workspace. The empty `[workspace]` table below makes this directory its own
+# workspace root so `cargo build` here never gets absorbed into a parent
+# workspace, while still pulling in the REAL `ide-diff` engine by path.
+[package]
+name = "engine-sidecar"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "engine-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+# The real engines from the sibling ai-native-ide Rust workspace.
+#  - ide-diff:   line-level diff/merge (M1..M3)
+#  - ide-domain: the REAL WorkspaceEffectBroker (capability + SqliteApprovalGate +
+#                snapshot store) that replaces the M3 Node governance stand-in (M4)
+ide-diff = { path = "../../../crates/ide-diff" }
+ide-domain = { path = "../../../crates/ide-domain" }
+#  - ide-agent: the REAL AcpxAgentFacade (descriptor + honest health probe) so the
+#               dock's "Contexto ativo" reflects a real agent adapter, not mock text (M5)
+ide-agent = { path = "../../../crates/ide-agent" }
+#  - ide-reconciliation: the REAL preview supervisor + evidence ledger + literal
+#                       intent-vs-observed reconciliation (§4). Shell-neutral by
+#                       design, same as ide-harness: it starts no process and
+#                       opens no socket, so `preview.rs` is the half that does.
+#  - ide-packs:   the REAL declarative pack registry (§4 local packs)
+#  - ide-harness: the REAL deterministic Layer-0 checks (§4). Shell-neutral by
+#                 design — it evaluates facts a host observed and never runs a
+#                 process itself, so gathering those facts is this sidecar's job.
+ide-harness = { path = "../../../crates/ide-harness" }
+ide-reconciliation = { path = "../../../crates/ide-reconciliation" }
+#  - ide-context: the REAL deterministic context compiler (§6) — ordering,
+#                 verbatim policy segments and honest budget drops. It reads no
+#                 disk either, so `context.rs` gathers the declared material.
+#  - ide-context / ide-guidance: the REAL context compiler (§6) and the REAL
+#    Guidance Library + Truth Registry (§13). `ide-guidance` owns its own
+#    persistence (`.guidance/registry.json` + a Markdown mirror per set), which is
+#    why the library module here is thin.
+ide-context = { path = "../../../crates/ide-context" }
+ide-guidance = { path = "../../../crates/ide-guidance" }
+#  - ide-config: the REAL config schema shared by the simple UI and the file (§13)
+#  - ide-modes:  the REAL mode/permission policy (§14). It decides WHEN the IDE
+#                asks; it never lets an effect skip the broker, so `policy.rs` is
+#                consulted before a governed write and decides nothing itself.
+ide-config = { path = "../../../crates/ide-config" }
+ide-modes = { path = "../../../crates/ide-modes" }
+#  - ide-lifecycle: the REAL export/publish/republish lifecycle (§16) — portable
+#    manifest, honest reversibility classes and the publication log. It talks to
+#    no service: `lifecycle.rs` writes the local export and records what a
+#    publication IS, and never pretends a rollback an external effect cannot have.
+ide-lifecycle = { path = "../../../crates/ide-lifecycle" }
+#  - ide-work: the REAL §9 status calculation. Status is DERIVED from criteria,
+#    implementation and evidence freshness — the artifact has no status field to
+#    write, which is what makes "status é calculado" true instead of a habit.
+ide-work = { path = "../../../crates/ide-work" }
+#  - ide-references: serviço e ambiente como REFERÊNCIA (§13). É o tipo que o
+#    `project.rs` declarava faltar: recurso durável é diretório canônico, e um
+#    serviço não tem diretório. Não é a "referência" do §5, que é material do
+#    projeto com procedência e passa pelo broker.
+ide-references = { path = "../../../crates/ide-references" }
+#  - ide-semantic: the REAL Layer-1 evaluators (§8). Findings are HYPOTHESES —
+#    they never block and never enter agent context.
+ide-semantic = { path = "../../../crates/ide-semantic" }
+#  - ide-notes: the REAL notes-by-theme store and the deterministic conflict
+#    comparison (§7). It decides nothing: promotion, merge and discard are acts.
+ide-notes = { path = "../../../crates/ide-notes" }
+ide-packs = { path = "../../../crates/ide-packs" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# Aleatoriedade do SISTEMA para a senha do compartilhamento. Ver o comentário em
+# `share::generate_password`: a senha é o que separa "mandei o link para uma
+# pessoa" de "está na internet aberta", e relógio + PID são observáveis.
+getrandom = "0.4"
+sha1 = "0.10"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Detach from any parent Cargo workspace: this crate is self-contained.
+# `[workspace.package]` here so the path-dep `ide-domain` — which declares
+# `edition.workspace = true` / `license.workspace = true` — can inherit them from
+# THIS workspace root instead of the ai-native-ide one it normally lives in.
+[workspace]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"

@@ -6,7 +6,27 @@
 node_modules/
 target/
 dist/
+.local-install/
 *.log
 
 # Rebuildable planning research cache
 .planning/research/.cache/
+
+# Test-automation output + runtime artifacts
+.playwright-mcp/
+**/.instrument/
+
+# EXCEÇÃO: o workspace de demonstração é a prova, e prova que não viaja no clone
+# não é prova de nada. Vão só os arquivos DECLARATIVOS — checks, preview, config,
+# reconciliação e revisão de intenção. Ficam de fora, de propósito, os
+# bancos (`*.sqlite3`, estado do broker e do store semântico), o `preview.log` e
+# a `agent-worktree/` — que é uma worktree git de verdade dentro do projeto.
+!apps/ide-theia/workspace/.instrument/
+apps/ide-theia/workspace/.instrument/*
+!apps/ide-theia/workspace/.instrument/*.json
+# `harness.json` NÃO entra: é estado morto de uma versão antiga — nada no código
+# atual lê ou escreve esse arquivo (o estado do harness vive em
+# `.harness/state.json`, que é artefato de projeto e já viaja). Commitá-lo fazia
+# o clone afirmar que outro provider era dono dos slots.
+apps/ide-theia/workspace/.instrument/harness.json
+apps/desktop/src-tauri/gen/

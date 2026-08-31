@@ -1,0 +1,38 @@
+{
+  "mode": {
+    "value": "hybrid",
+    "source": "user"
+  },
+  "depth": {
+    "value": "raw",
+    "source": "user"
+  },
+  "layout": {
+    "value": "expanded",
+    "source": "user"
+  },
+  "permissions": {
+    "value": "cautious",
+    "source": "detected"
+  },
+  "harnessLayers": {
+    "value": [
+      0,
+      1
+    ],
+    "source": "default"
+  },
+  "automaticCheckpoints": {
+    "value": true,
+    "source": "default"
+  },
+  "idlePaidInference": {
+    "value": false,
+    "source": "default"
+  },
+  "localAag": {
+    "value": true,
+    "source": "detected"
+  },
+  "scopedPermissions": []
+}

@@ -1,0 +1,12 @@
+{
+  "name": "demo-auction",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Projeto de demonstração do IDE: leilão de lances selados.",
+  "scripts": {
+    "start": "node src/server.ts",
+    "demo": "node src/main.ts",
+    "test": "node --test --experimental-strip-types src/"
+  }
+}

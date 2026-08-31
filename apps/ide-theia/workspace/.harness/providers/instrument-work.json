@@ -1,0 +1,60 @@
+{
+  "id": "instrument-work",
+  "label": "Trabalho do Instrument (§9)",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "claims": [
+    "workflow",
+    "work-hierarchy",
+    "primary-status"
+  ],
+  "extensions": {
+    "checks": [],
+    "packs": [],
+    "importers": [],
+    "views": [
+      "instrument:trabalho"
+    ]
+  },
+  "artifacts": {
+    "itemsDir": ".harness/items",
+    "itemExtension": ".json"
+  },
+  "coverage": [
+    "Feature → Task → Subtask, com task direta e task servindo mais de uma feature",
+    "critérios e evidências versionados no próprio artefato",
+    "status calculado a partir de critério, implementação e frescor da prova"
+  ],
+  "limitations": [
+    "não roda verificação: a prova é produzida por quem verifica (§4/§15) e registrada aqui",
+    "critério proposto por agente aparece e NÃO conta até alguém adotá-lo no arquivo",
+    "não importa itens de Jira, Linear ou GitHub — importador é extensão, e não existe ainda"
+  ],
+  "workflow": {
+    "states": [
+      "declarado",
+      "implementado",
+      "verificado"
+    ],
+    "initial": "declarado"
+  },
+  "hierarchy": {
+    "levels": [
+      "feature",
+      "task",
+      "subtask"
+    ]
+  },
+  "primaryStatus": {
+    "label": "Status (calculado)",
+    "values": [
+      "not_started",
+      "in_progress",
+      "implemented_not_verified",
+      "partially_verified",
+      "verified",
+      "blocked",
+      "evidence_stale"
+    ]
+  }
+}

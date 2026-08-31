@@ -1,0 +1,1 @@
+-- Theia spike workspace (open this as the workspace folder) --

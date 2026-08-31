@@ -1,0 +1,743 @@
+// Backend service: spawns the Rust `engine-sidecar` binary as a child process
+// and proxies EngineService calls to it over line-delimited JSON on stdio.
+
+import { injectable } from '@theia/core/shared/inversify';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as readline from 'readline';
+import {
+    AgentEvent,
+    CaptureRequest,
+    Guidance,
+    GuidanceState,
+    LibrarySnapshot,
+    LifecycleSnapshot,
+    PolicyDecision,
+    ProjectSnapshot,
+    PublishAttempt,
+    GeneratedConfig,
+    PromotionSnapshot,
+    ProvidersSnapshot,
+    ReleaseAttempt,
+    ReleaseSnapshot,
+    Observation,
+    AgentDefinition,
+    AgentsSnapshot,
+    ClaimOutcome,
+    WorkClaim,
+    ShareSnapshot,
+    VerifyResult,
+    ReopenedExport,
+    ReferencesSnapshot,
+    WorkItem,
+    WorkSnapshot,
+    SettingsPatch,
+    SettingsSnapshot,
+    SyncProposal,
+    AdapterCard,
+    AgentProbe,
+    AgentSessionState,
+    SwapResult,
+    BrokerActivity,
+    EngineService,
+    HarnessRun,
+    ContextPackage,
+    Hunk,
+    IntentReview,
+    NoteLink,
+    NoteRequest,
+    NotesSnapshot,
+    PacksSnapshot,
+    PreviewSnapshot,
+    ReconciliationChoice,
+    ReconciliationSnapshot
+} from '../common/engine-protocol';
+
+interface PendingRequest {
+    resolve(value: unknown): void;
+    reject(error: Error): void;
+}
+
+/**
+ * Default location of the release binary produced by `cargo build --release` in
+ * `ide-theia-spike/engine-sidecar/`. Anchored on the backend process cwd, which
+ * is the app root when the IDE is launched with `theia start` / `yarn start`
+ * (robust regardless of how this module is bundled into `lib/backend`).
+ * Override with the ENGINE_SIDECAR_BIN env var to point anywhere else.
+ */
+const DEFAULT_BIN = path.resolve(
+    process.cwd(),
+    'engine-sidecar/target/release/engine-sidecar'
+);
+
+function resolveBinaryPath(): string {
+    return process.env.ENGINE_SIDECAR_BIN || DEFAULT_BIN;
+}
+
+@injectable()
+export class EngineSidecarService implements EngineService {
+    private child: ChildProcessWithoutNullStreams | undefined;
+    private reader: readline.Interface | undefined;
+    private nextId = 1;
+    private readonly pending = new Map<number, PendingRequest>();
+
+    /** Lazily spawns the sidecar, reusing a live process across calls. */
+    protected ensureProcess(): ChildProcessWithoutNullStreams {
+        if (this.child && this.child.exitCode === null && !this.child.killed) {
+            return this.child;
+        }
+        const bin = resolveBinaryPath();
+        if (!fs.existsSync(bin)) {
+            throw new Error(
+                `Rust engine sidecar binary not found at '${bin}'. Build it with ` +
+                `'cargo build --release' in ide-theia-spike/engine-sidecar/ ` +
+                `(see engine-sidecar/BUILD.md), or set ENGINE_SIDECAR_BIN.`
+            );
+        }
+        const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+        child.on('error', err => this.failAll(err));
+        child.on('exit', code => {
+            this.failAll(new Error(`engine sidecar exited (code ${code ?? 'unknown'})`));
+            this.reader?.close();
+            this.reader = undefined;
+            this.child = undefined;
+        });
+        child.stderr.on('data', chunk =>
+            console.error(`[engine-sidecar] ${String(chunk).trim()}`)
+        );
+        const reader = readline.createInterface({ input: child.stdout });
+        reader.on('line', line => this.onLine(line));
+        this.child = child;
+        this.reader = reader;
+        return child;
+    }
+
+    /** Correlates one response line back to its pending request by id. */
+    protected onLine(line: string): void {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return;
+        }
+        let message: { id?: number; result?: unknown; error?: string };
+        try {
+            message = JSON.parse(trimmed);
+        } catch {
+            console.error(`[engine-sidecar] unparseable line: ${trimmed}`);
+            return;
+        }
+        const id = typeof message.id === 'number' ? message.id : undefined;
+        if (id === undefined) {
+            return;
+        }
+        const request = this.pending.get(id);
+        if (!request) {
+            return;
+        }
+        this.pending.delete(id);
+        if (message.error) {
+            request.reject(new Error(message.error));
+        } else {
+            request.resolve(message.result);
+        }
+    }
+
+    protected failAll(error: Error): void {
+        for (const request of this.pending.values()) {
+            request.reject(error);
+        }
+        this.pending.clear();
+    }
+
+    /** Writes one request and resolves when its correlated reply arrives. */
+    protected call<T>(method: string, params: object): Promise<T> {
+        let child: ChildProcessWithoutNullStreams;
+        try {
+            child = this.ensureProcess();
+        } catch (err) {
+            return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+        const id = this.nextId++;
+        const payload = JSON.stringify({ id, method, params }) + '\n';
+        return new Promise<T>((resolve, reject) => {
+            this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+            child.stdin.write(payload, err => {
+                if (err) {
+                    this.pending.delete(id);
+                    reject(err);
+                }
+            });
+        });
+    }
+
+    ping(): Promise<{ pong: boolean; engine: string }> {
+        return this.call('ping', {});
+    }
+
+    async diff(original: string, proposed: string): Promise<Hunk[]> {
+        const result = await this.call<{ hunks: Hunk[] }>('diff', { original, proposed });
+        return result.hunks;
+    }
+
+    async mergeSelected(original: string, proposed: string, selected: number[]): Promise<string> {
+        const result = await this.call<{ merged: string }>('merge_selected', {
+            original,
+            proposed,
+            selected
+        });
+        return result.merged;
+    }
+
+    // ── Real governed-write broker (ide-domain WorkspaceEffectBroker) ──────────
+
+    brokerPropose(
+        root: string,
+        owner: string,
+        effectId: string,
+        relativePath: string,
+        content: string
+    ): Promise<{ awaiting_approval?: boolean; written?: boolean; path?: string }> {
+        return this.call('broker_propose', {
+            root,
+            owner,
+            effect_id: effectId,
+            relative_path: relativePath,
+            content
+        });
+    }
+
+    harnessRun(root: string, owner: string, runTools = false): Promise<HarnessRun> {
+        return this.call('harness_run', { root, owner, run_tools: runTools });
+    }
+
+    brokerApprove(root: string, owner: string, effectId: string): Promise<{ approved_id: number }> {
+        return this.call('broker_approve', { root, owner, effect_id: effectId });
+    }
+
+    brokerRollback(
+        root: string,
+        owner: string,
+        effectId: string
+    ): Promise<{ rolledback: boolean }> {
+        return this.call('broker_rollback', { root, owner, effect_id: effectId });
+    }
+
+    brokerActivity(root: string, owner: string): Promise<{ activity: BrokerActivity[] }> {
+        return this.call('broker_activity', { root, owner });
+    }
+
+    agentAdapters(): Promise<{ adapters: AdapterCard[] }> {
+        return this.call('agent_adapters', {});
+    }
+
+    agentSessionStatus(
+        agent: string,
+        sessionId: string
+    ): Promise<{ status: unknown; usage: { inputTokens: number; outputTokens: number } | null }> {
+        return this.call('agent_session_status', { agent, session_id: sessionId });
+    }
+
+    agentCaptureState(agent: string, sessionId: string): Promise<AgentSessionState> {
+        return this.call('agent_capture_state', { agent, session_id: sessionId });
+    }
+
+    agentResume(agent: string, state: AgentSessionState): Promise<SwapResult> {
+        return this.call('agent_resume', { agent, state });
+    }
+
+    agentSwap(agent: string, state: AgentSessionState): Promise<SwapResult> {
+        return this.call('agent_swap', { agent, state });
+    }
+
+    agentProbe(agent: string): Promise<AgentProbe> {
+        return this.call('agent_probe', { agent });
+    }
+
+    // ── Real ACP session ──────────────────────────────────────────────────────
+
+    agentStartSession(params: {
+        agent: string;
+        owner: string;
+        workspaceRoot: string;
+        homeDir?: string;
+        readOnly?: boolean;
+        deniedPaths?: string[];
+        sandbox?: 'isolated' | 'workspace-net' | 'trusted';
+    }): Promise<{ session_id: string }> {
+        return this.call('agent_start_session', {
+            agent: params.agent,
+            owner: params.owner,
+            workspace_root: params.workspaceRoot,
+            home_dir: params.homeDir,
+            read_only: params.readOnly,
+            denied_paths: params.deniedPaths,
+            sandbox: params.sandbox
+        });
+    }
+
+    agentSubmitTask(
+        agent: string,
+        sessionId: string,
+        prompt: string,
+        expectation?: 'conversation' | 'code-change'
+    ): Promise<{ task_id: number }> {
+        return this.call('agent_submit_task', {
+            agent,
+            session_id: sessionId,
+            prompt,
+            expectation
+        });
+    }
+
+    agentNextEvent(agent: string, sessionId: string): Promise<{ event: AgentEvent | null }> {
+        return this.call('agent_next_event', { agent, session_id: sessionId });
+    }
+
+    agentCancel(agent: string, sessionId: string, graceful = true): Promise<{ cancelled: boolean }> {
+        return this.call('agent_cancel', { agent, session_id: sessionId, graceful });
+    }
+
+    agentRespondPermission(
+        agent: string,
+        sessionId: string,
+        requestId: number,
+        allow: boolean,
+        denyEndsTurn = true
+    ): Promise<{ answered: boolean }> {
+        return this.call('agent_respond_permission', {
+            agent,
+            session_id: sessionId,
+            request_id: requestId,
+            allow,
+            deny_ends_turn: denyEndsTurn
+        });
+    }
+
+    // ── §4 preview ────────────────────────────────────────────────────────────
+
+    previewStart(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_start', { root });
+    }
+
+    previewStatus(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_status', { root });
+    }
+
+    previewStop(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_stop', { root });
+    }
+
+    previewRestart(root: string): Promise<PreviewSnapshot> {
+        return this.call('preview_restart', { root });
+    }
+
+    // ── §4 reconciliation ─────────────────────────────────────────────────────
+
+    reconcileScan(root: string): Promise<ReconciliationSnapshot> {
+        return this.call('reconcile_scan', { root });
+    }
+
+    reconcileDecide(
+        root: string,
+        divergenceId: string,
+        choice: ReconciliationChoice
+    ): Promise<ReconciliationSnapshot> {
+        return this.call('reconcile_decide', { root, divergence_id: divergenceId, choice });
+    }
+
+    // ── §4 local packs ────────────────────────────────────────────────────────
+
+    packsSnapshot(root: string, passed: string[] = [], failed: string[] = []): Promise<PacksSnapshot> {
+        return this.call('packs_snapshot', { root, passed, failed });
+    }
+
+    packsInstall(root: string, path: string): Promise<PacksSnapshot> {
+        return this.call('packs_install', { root, path });
+    }
+
+    packsApply(root: string, packId: string): Promise<PacksSnapshot> {
+        return this.call('packs_apply', { root, pack_id: packId });
+    }
+
+    packsRevert(root: string, packId: string): Promise<PacksSnapshot> {
+        return this.call('packs_revert', { root, pack_id: packId });
+    }
+
+    // ── §6 contexto do agente ─────────────────────────────────────────────────
+
+    contextCompile(root: string, budgetChars?: number): Promise<ContextPackage> {
+        return this.call('context_compile', { root, budget_chars: budgetChars });
+    }
+
+    // ── §13 Guidance Library + Truth Registry ─────────────────────────────────
+
+    librarySnapshot(root: string): Promise<LibrarySnapshot> {
+        return this.call('library_snapshot', { root });
+    }
+
+    libraryCapture(root: string, request: CaptureRequest): Promise<LibrarySnapshot> {
+        return this.call('library_capture', {
+            root,
+            name: request.name,
+            text: request.text,
+            guidanceType: request.guidanceType,
+            application: request.application,
+            strength: request.strength,
+            owner: request.owner,
+            provenance: request.provenance,
+            destination: request.destination
+        });
+    }
+
+    libraryImport(
+        root: string,
+        name: string,
+        text: string,
+        provenance?: string,
+        owner?: string
+    ): Promise<Guidance> {
+        return this.call('library_import', { root, name, text, provenance, owner });
+    }
+
+    libraryLifecycle(
+        root: string,
+        id: string,
+        to: GuidanceState,
+        by?: string
+    ): Promise<LibrarySnapshot> {
+        return this.call('library_lifecycle', { root, id, to, by });
+    }
+
+    truthDeclare(
+        root: string,
+        subject: string,
+        authorityPath: string,
+        precedence?: number,
+        provenance?: string
+    ): Promise<LibrarySnapshot> {
+        return this.call('library_truth_declare', {
+            root,
+            subject,
+            authority_path: authorityPath,
+            precedence,
+            provenance
+        });
+    }
+
+    truthConsumer(root: string, id: string, consumer: string): Promise<LibrarySnapshot> {
+        return this.call('library_truth_consumer', { root, id, consumer });
+    }
+
+    truthSync(root: string, id: string, upToDate: string[] = []): Promise<SyncProposal> {
+        return this.call('library_truth_sync', { root, id, up_to_date: upToDate });
+    }
+
+    // ── §13 config ────────────────────────────────────────────────────────────
+
+    referencesSnapshot(root: string): Promise<ReferencesSnapshot> {
+        return this.call('references_snapshot', { root });
+    }
+
+    referencesLink(
+        root: string,
+        id: string,
+        kind: 'service' | 'environment',
+        name: string,
+        endpoint: string
+    ): Promise<ReferencesSnapshot> {
+        return this.call('references_link', { root, id, kind, name, endpoint });
+    }
+
+    referencesUnlink(root: string, id: string): Promise<ReferencesSnapshot> {
+        return this.call('references_unlink', { root, id });
+    }
+
+    workSnapshot(root: string): Promise<WorkSnapshot> {
+        return this.call('work_snapshot', { root });
+    }
+
+    workWriteItem(root: string, item: WorkItem): Promise<WorkSnapshot> {
+        return this.call('work_write_item', { root, item });
+    }
+
+    lifecycleSnapshot(root: string): Promise<LifecycleSnapshot> {
+        return this.call('lifecycle_snapshot', { root });
+    }
+
+    lifecycleExport(root: string): Promise<PublishAttempt> {
+        return this.call('lifecycle_export', { root });
+    }
+
+    lifecycleDeleteExport(root: string, path: string): Promise<LifecycleSnapshot> {
+        return this.call('lifecycle_delete_export', { root, path });
+    }
+
+    lifecycleReopen(root: string, path: string): Promise<ReopenedExport> {
+        return this.call('lifecycle_reopen', { root, path });
+    }
+
+    lifecycleConsolidate(
+        root: string,
+        options: {
+            confirmed?: boolean;
+            problem?: string;
+            relatedResources?: string[];
+        } = {}
+    ): Promise<PublishAttempt> {
+        return this.call('lifecycle_consolidate', {
+            root,
+            // Never defaulted to true anywhere: consent is stated, not assumed.
+            confirmed: options.confirmed === true,
+            problem: options.problem,
+            related_resources: options.relatedResources ?? []
+        });
+    }
+
+    releaseSnapshot(root: string): Promise<ReleaseSnapshot> {
+        return this.call('release_snapshot', { root });
+    }
+
+    releaseTag(root: string, version: string): Promise<ReleaseAttempt> {
+        return this.call('release_tag', { root, version });
+    }
+
+    releaseDeleteTag(root: string, version: string): Promise<ReleaseSnapshot> {
+        return this.call('release_delete_tag', { root, version });
+    }
+
+    releasePush(root: string, version: string, confirmed = false): Promise<ReleaseAttempt> {
+        // Consentimento se declara: `false` é o único default possível aqui.
+        return this.call('release_push', { root, version, confirmed: confirmed === true });
+    }
+
+    releaseGithub(root: string, version: string, confirmed = false): Promise<ReleaseAttempt> {
+        return this.call('release_github', { root, version, confirmed: confirmed === true });
+    }
+
+    shareSnapshot(root: string): Promise<ShareSnapshot> {
+        return this.call('share_snapshot', { root });
+    }
+
+    shareStart(root: string, mode: 'lan' | 'tunnel', minutes = 0): Promise<ShareSnapshot> {
+        return this.call('share_start', { root, mode, minutes });
+    }
+
+    shareStop(root: string): Promise<ShareSnapshot> {
+        return this.call('share_stop', { root });
+    }
+
+    observationsRead(root: string): Promise<Observation[]> {
+        return this.call('observations_read', { root });
+    }
+
+    // ── §17 ─────────────────────────────────────────────────────────────────
+
+    agentsSnapshot(root: string): Promise<AgentsSnapshot> {
+        return this.call('agents_snapshot', { root });
+    }
+
+    agentsWrite(root: string, agent: AgentDefinition): Promise<AgentsSnapshot> {
+        return this.call('agents_write', { root, agent });
+    }
+
+    workAssign(root: string, itemId: string, agentId?: string): Promise<WorkSnapshot> {
+        return this.call('work_assign', { root, item_id: itemId, agent_id: agentId ?? null });
+    }
+
+    workPlanPropose(
+        root: string,
+        itemId: string,
+        by: string,
+        steps: string[]
+    ): Promise<WorkSnapshot> {
+        return this.call('work_plan_propose', { root, item_id: itemId, by, steps });
+    }
+
+    workPlanAccept(root: string, itemId: string): Promise<WorkSnapshot> {
+        return this.call('work_plan_accept', { root, item_id: itemId });
+    }
+
+    workClaim(root: string, itemId: string, agentId: string): Promise<ClaimOutcome> {
+        return this.call('work_claim', { root, item_id: itemId, agent_id: agentId });
+    }
+
+    workRelease(root: string, itemId: string, agentId: string): Promise<WorkClaim[]> {
+        return this.call('work_release', { root, item_id: itemId, agent_id: agentId });
+    }
+
+    workClaims(root: string): Promise<WorkClaim[]> {
+        return this.call('claims_snapshot', { root });
+    }
+
+    workMayExecute(root: string, itemId: string): Promise<{ mayExecute: boolean }> {
+        return this.call('work_may_execute', { root, item_id: itemId });
+    }
+
+    providersSnapshot(root: string): Promise<ProvidersSnapshot> {
+        return this.call('providers_snapshot', { root });
+    }
+
+    providersGenerate(
+        root: string,
+        provider: string,
+        publish: string
+    ): Promise<GeneratedConfig> {
+        return this.call('providers_generate', { root, provider, publish });
+    }
+
+    providersVerify(
+        root: string,
+        provider: string,
+        version: string,
+        url: string
+    ): Promise<VerifyResult> {
+        return this.call('providers_verify', { root, provider, version, url });
+    }
+
+    promotionSnapshot(root: string): Promise<PromotionSnapshot> {
+        return this.call('promotion_snapshot', { root });
+    }
+
+    promotionPromote(
+        root: string,
+        prototypeEffectId: string,
+        checkpointEffectId: string,
+        note: string
+    ): Promise<PromotionSnapshot> {
+        return this.call('promotion_promote', {
+            root,
+            prototype_effect_id: prototypeEffectId,
+            checkpoint_effect_id: checkpointEffectId,
+            note
+        });
+    }
+
+    promotionReconcile(
+        root: string,
+        prototypeEffectId: string,
+        how: string
+    ): Promise<PromotionSnapshot> {
+        return this.call('promotion_reconcile', {
+            root,
+            prototype_effect_id: prototypeEffectId,
+            how
+        });
+    }
+
+    policyDecide(
+        root: string,
+        effectClass: 'durable' | 'prototype',
+        scope: { project?: string; resource?: string; tool?: string } = {}
+    ): Promise<PolicyDecision> {
+        return this.call('policy_decide', { root, class: effectClass, ...scope });
+    }
+
+    settingsSnapshot(root: string): Promise<SettingsSnapshot> {
+        return this.call('settings_snapshot', { root });
+    }
+
+    settingsPatch(root: string, patch: SettingsPatch): Promise<SettingsSnapshot> {
+        return this.call('settings_patch', { root, ...patch });
+    }
+
+    settingsProfile(root: string, profile: string): Promise<SettingsSnapshot> {
+        return this.call('settings_profile', { root, profile });
+    }
+
+    settingsReset(root: string, field: string): Promise<SettingsSnapshot> {
+        return this.call('settings_reset', { root, field });
+    }
+
+    settingsDetected(
+        root: string,
+        git: boolean,
+        agent: boolean,
+        aag: boolean
+    ): Promise<SettingsSnapshot> {
+        return this.call('settings_detected', { root, git, agent, aag });
+    }
+
+    // ── §13 durable project ───────────────────────────────────────────────────
+
+    projectSnapshot(root: string): Promise<ProjectSnapshot> {
+        return this.call('project_snapshot', { root });
+    }
+
+    projectRegister(root: string, title: string, intent: string): Promise<ProjectSnapshot> {
+        return this.call('project_register', { root, title, intent });
+    }
+
+    projectAttach(
+        root: string,
+        path: string,
+        kind: 'directory' | 'repository' = 'directory'
+    ): Promise<ProjectSnapshot> {
+        return this.call('project_attach', { root, path, kind });
+    }
+
+    projectIntent(root: string, intent: string): Promise<ProjectSnapshot> {
+        return this.call('project_intent', { root, intent });
+    }
+
+    // ── §8 intenção guiada ────────────────────────────────────────────────────
+
+    intentReview(root: string, intent: string, maxFindings?: number): Promise<IntentReview> {
+        return this.call('intent_review', { root, intent, max_findings: maxFindings });
+    }
+
+    intentDecide(
+        root: string,
+        intent: string,
+        findingId: string,
+        state: 'accepted' | 'dismissed',
+        note: string,
+        artifact?: string
+    ): Promise<IntentReview> {
+        return this.call('intent_decide', {
+            root,
+            intent,
+            finding_id: findingId,
+            state,
+            note,
+            artifact
+        });
+    }
+
+    // ── §7 notas e reconciliação ──────────────────────────────────────────────
+
+    notesSnapshot(root: string): Promise<NotesSnapshot> {
+        return this.call('notes_snapshot', { root });
+    }
+
+    notesCreate(root: string, note: NoteRequest): Promise<NotesSnapshot> {
+        return this.call('notes_create', { root, ...note });
+    }
+
+    notesResolve(root: string, id: string, reason: string): Promise<NotesSnapshot> {
+        return this.call('notes_resolve', { root, id, reason });
+    }
+
+    notesSupersede(
+        root: string,
+        id: string,
+        by: string,
+        reason: string
+    ): Promise<NotesSnapshot> {
+        return this.call('notes_supersede', { root, id, by, reason });
+    }
+
+    notesLink(root: string, id: string, link: NoteLink): Promise<NotesSnapshot> {
+        return this.call('notes_link', { root, id, link });
+    }
+
+    notesMerge(
+        root: string,
+        ids: string[],
+        theme: string,
+        subject: string,
+        text: string,
+        reason: string
+    ): Promise<NotesSnapshot> {
+        return this.call('notes_merge', { root, ids, theme, subject, text, reason });
+    }
+}

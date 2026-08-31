@@ -1,0 +1,10 @@
+[package]
+name = "ide-semantic"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+ide-harness = { path = "../ide-harness" }
+serde = { version = "1.0.228", features = ["derive"] }

@@ -1,0 +1,17 @@
+{
+  "entries": [
+    {
+      "id": "truth-000000",
+      "subject": "desempate",
+      "scope": {
+        "kind": "project",
+        "project_id": "/home/mario/Área de trabalho/waifucorp/ai-native-ide/apps/ide-theia/workspace"
+      },
+      "authorityPath": "docs/product-intent.md",
+      "precedence": 100,
+      "consumers": [],
+      "provenance": "declarada no IDE"
+    }
+  ],
+  "next_seq": 1
+}

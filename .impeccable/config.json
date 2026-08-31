@@ -11,6 +11,24 @@
         ],
         "createdAt": "2026-08-22T19:36:28.809Z",
         "reason": "Claude: chrome de IDE e denso por natureza — passos de 10-13px no chrome sao intencionais; hierarquia vem de peso (600) e escala (27/19/16/13)"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "apps/desktop/src/styles.css"
+        ],
+        "createdAt": "2026-08-24T22:49:14.075Z",
+        "reason": "pré-existente, não autorado nesta sessão; usuário priorizou função sobre design"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          ".planning/sketches/003-extensions-marketplace/index.html"
+        ],
+        "createdAt": "2026-08-25T16:38:18.663Z",
+        "reason": "intentional: mockup reproduz o design system do 001 (chrome de IDE, escala tipográfica apertada de propósito, densidade Zed-like); sketch de exploração, não UI de produção"
       }
     ]
   }

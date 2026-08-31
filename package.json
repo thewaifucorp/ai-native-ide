@@ -1,0 +1,38 @@
+{
+  "name": "ai-native-ide",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev:web": "vite --host 127.0.0.1 --port 1420",
+    "dev": "tauri dev",
+    "build:web": "tsc --noEmit && vite build",
+    "build": "tauri build",
+    "lint": "eslint apps/desktop/src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:journey:contract": "node scripts/verify-golden-journey.mjs",
+    "clean:artifacts": "bash scripts/clean-local-artifacts.sh",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run test:journey:contract"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "4.7.0",
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/cli": "2.11.4",
+    "@tauri-apps/plugin-opener": "2.5.4",
+    "monaco-editor": "0.56.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.1.1",
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.2",
+    "vite": "7.2.2",
+    "vitest": "4.0.8"
+  }
+}

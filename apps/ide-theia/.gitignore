@@ -1,0 +1,10 @@
+node_modules/
+lib/
+src-gen/
+gen-webpack*.js
+/.theia/
+*/target/
+engine-sidecar/target/
+plugins/
+.browser_modules/
+*.tsbuildinfo

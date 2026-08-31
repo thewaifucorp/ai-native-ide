@@ -1,0 +1,9 @@
+{
+  "id": "leilao-lances",
+  "title": "Aceitar lances com desempate honesto",
+  "kind": "feature",
+  "parents": [],
+  "criteria": [],
+  "implementation": [],
+  "blocked": null
+}

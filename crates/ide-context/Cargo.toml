@@ -1,0 +1,10 @@
+[package]
+name = "ide-context"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+ide-guidance = { path = "../ide-guidance" }
+serde = { version = "1.0.228", features = ["derive"] }

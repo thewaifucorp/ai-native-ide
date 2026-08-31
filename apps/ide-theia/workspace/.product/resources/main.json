@@ -1,0 +1,6 @@
+{
+  "id": "main",
+  "label": "Entrada executavel",
+  "paths": ["src/main.ts"],
+  "consumers": []
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI-Native IDE Foundation Contract",
+  "required": ["project", "effect", "evidence"],
+  "project": "semantic project identity is independent from sessions",
+  "effect": "effect requires an exact capability and approval before dispatch",
+  "evidence": "observed effect is not automatically verified"
+}
+

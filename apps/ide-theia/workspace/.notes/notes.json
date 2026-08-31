@@ -1,0 +1,47 @@
+{
+  "notes": [
+    {
+      "id": "note-000000",
+      "theme": "desempate",
+      "kind": "decision",
+      "subject": "como resolver empate",
+      "text": "Vence o maior valor selado; empate exato é recusado.",
+      "links": [],
+      "state": "superseded",
+      "supersededBy": "note-000002",
+      "stateReason": "a segunda contraria a intenção declarada em docs/product-intent.md",
+      "createdAtMs": 1787861262030,
+      "updatedAtMs": 1787861297974
+    },
+    {
+      "id": "note-000001",
+      "theme": "desempate",
+      "kind": "decision",
+      "subject": "como resolver empate",
+      "text": "Vence o lance mais antigo, usando a.createdAt - b.createdAt.",
+      "links": [],
+      "state": "superseded",
+      "supersededBy": "note-000002",
+      "stateReason": "a segunda contraria a intenção declarada em docs/product-intent.md",
+      "createdAtMs": 1787861273260,
+      "updatedAtMs": 1787861297979
+    },
+    {
+      "id": "note-000002",
+      "theme": "desempate",
+      "kind": "decision",
+      "subject": "como resolver empate",
+      "text": "Vence o maior valor selado. Empate exato é recusado, e ordem de criação nunca decide.",
+      "links": [
+        {
+          "kind": "guidance",
+          "id": "guidance-000002"
+        }
+      ],
+      "state": "open",
+      "createdAtMs": 1787861297973,
+      "updatedAtMs": 1787861316401
+    }
+  ],
+  "next_seq": 3
+}

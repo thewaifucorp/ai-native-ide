@@ -1,0 +1,4 @@
+{
+  "build": { "command": "node --experimental-strip-types --check src/main.ts" },
+  "test": { "command": "node --test --experimental-strip-types src/" }
+}

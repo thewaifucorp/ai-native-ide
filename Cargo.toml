@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/ide-domain",
+  "crates/ide-agent",
+  "crates/ide-reconciliation",
+  "crates/ide-guidance",
+  "crates/ide-harness",
+  "crates/ide-config",
+  "crates/ide-modes",
+  "crates/ide-semantic",
+  "crates/ide-context",
+  "crates/ide-packs",
+  "crates/ide-lifecycle",
+  "crates/ide-diff",
+  "crates/ide-model-loop",
+  "crates/ide-references",
+  "crates/ide-notes",
+  "crates/ide-work",
+  "crates/benchmark-service",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/thewaifucorp/ai-native-ide"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

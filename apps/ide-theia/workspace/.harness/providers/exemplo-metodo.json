@@ -1,0 +1,32 @@
+{
+  "id": "exemplo-metodo",
+  "label": "Método de exemplo",
+  "version": "0.1.0",
+  "manifestVersion": 1,
+  "claims": ["workflow", "work-hierarchy"],
+  "extensions": {
+    "checks": ["exemplo:lint"],
+    "packs": [],
+    "importers": [],
+    "views": ["exemplo:board"]
+  },
+  "artifacts": {
+    "itemsDir": ".harness/items/exemplo-metodo",
+    "itemExtension": ".md"
+  },
+  "coverage": [
+    "workflow de tres estados",
+    "hierarquia epico/tarefa"
+  ],
+  "limitations": [
+    "nao executa os checks que declara — so declara os nomes",
+    "nao produz evidencia"
+  ],
+  "workflow": {
+    "states": ["aberto", "fazendo", "feito"],
+    "initial": "aberto"
+  },
+  "hierarchy": {
+    "levels": ["epico", "tarefa"]
+  }
+}
