@@ -1110,6 +1110,8 @@ export class AgentSessionServiceImpl implements AgentSessionService {
     protected view(state: SessionState): AgentSessionSnapshot {
         return {
             agent: state.agent,
+            taskId: state.taskId,
+            branch: state.taskId ? `instrument/task/${safeTaskId(state.taskId)}` : undefined,
             phase: state.phase,
             sessionId: state.sessionId,
             worktree: state.worktree,

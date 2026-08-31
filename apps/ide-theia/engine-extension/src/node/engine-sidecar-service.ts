@@ -22,6 +22,10 @@ import {
     ReleaseAttempt,
     ReleaseSnapshot,
     Observation,
+    AgentDefinition,
+    AgentsSnapshot,
+    ClaimOutcome,
+    WorkClaim,
     ShareSnapshot,
     VerifyResult,
     ReopenedExport,
@@ -524,6 +528,49 @@ export class EngineSidecarService implements EngineService {
 
     observationsRead(root: string): Promise<Observation[]> {
         return this.call('observations_read', { root });
+    }
+
+    // ── §17 ─────────────────────────────────────────────────────────────────
+
+    agentsSnapshot(root: string): Promise<AgentsSnapshot> {
+        return this.call('agents_snapshot', { root });
+    }
+
+    agentsWrite(root: string, agent: AgentDefinition): Promise<AgentsSnapshot> {
+        return this.call('agents_write', { root, agent });
+    }
+
+    workAssign(root: string, itemId: string, agentId?: string): Promise<WorkSnapshot> {
+        return this.call('work_assign', { root, item_id: itemId, agent_id: agentId ?? null });
+    }
+
+    workPlanPropose(
+        root: string,
+        itemId: string,
+        by: string,
+        steps: string[]
+    ): Promise<WorkSnapshot> {
+        return this.call('work_plan_propose', { root, item_id: itemId, by, steps });
+    }
+
+    workPlanAccept(root: string, itemId: string): Promise<WorkSnapshot> {
+        return this.call('work_plan_accept', { root, item_id: itemId });
+    }
+
+    workClaim(root: string, itemId: string, agentId: string): Promise<ClaimOutcome> {
+        return this.call('work_claim', { root, item_id: itemId, agent_id: agentId });
+    }
+
+    workRelease(root: string, itemId: string, agentId: string): Promise<WorkClaim[]> {
+        return this.call('work_release', { root, item_id: itemId, agent_id: agentId });
+    }
+
+    workClaims(root: string): Promise<WorkClaim[]> {
+        return this.call('claims_snapshot', { root });
+    }
+
+    workMayExecute(root: string, itemId: string): Promise<{ mayExecute: boolean }> {
+        return this.call('work_may_execute', { root, item_id: itemId });
     }
 
     providersSnapshot(root: string): Promise<ProvidersSnapshot> {

@@ -384,6 +384,38 @@ export interface EngineService {
      */
     workWriteItem(root: string, item: WorkItem): Promise<WorkSnapshot>;
 
+    // ── §17 Project Agents: definição, designação, plano e posse ─────────────
+
+    /** Definitions declared in `.product/agents/`, plus unreadable files. */
+    agentsSnapshot(root: string): Promise<AgentsSnapshot>;
+    /** Writes one definition. Same effect as writing the JSON by hand. */
+    agentsWrite(root: string, agent: AgentDefinition): Promise<AgentsSnapshot>;
+
+    /** Assigns (or clears) the agent responsible for an item. Durable. */
+    workAssign(root: string, itemId: string, agentId?: string): Promise<WorkSnapshot>;
+
+    /** Proposes a verification-plan revision. It is never born accepted. */
+    workPlanPropose(
+        root: string,
+        itemId: string,
+        by: string,
+        steps: string[]
+    ): Promise<WorkSnapshot>;
+    /** A PERSON adopts the standing revision. Refused when it went outdated. */
+    workPlanAccept(root: string, itemId: string): Promise<WorkSnapshot>;
+
+    /**
+     * Takes the task for an agent, or REFUSES with the reason: no acceptance
+     * criterion, blocked, or held by a live execution.
+     */
+    workClaim(root: string, itemId: string, agentId: string): Promise<ClaimOutcome>;
+    /** Releases it. Only the holder can. */
+    workRelease(root: string, itemId: string, agentId: string): Promise<WorkClaim[]>;
+    /** Who holds what right now. Orphan claims are swept, not shown. */
+    workClaims(root: string): Promise<WorkClaim[]>;
+    /** Whether the agent may WRITE yet — i.e. the plan was accepted. */
+    workMayExecute(root: string, itemId: string): Promise<{ mayExecute: boolean }>;
+
     // ── §16 versões: consolidar, exportar, reabrir ────────────────────────────
 
     lifecycleSnapshot(root: string): Promise<LifecycleSnapshot>;
@@ -1146,6 +1178,34 @@ export interface WorkItem {
     implementation?: string[];
     /** Reason, when someone declared it blocked. */
     blocked?: string;
+    /**
+     * The agent this item is assigned to (§17). Durable and versioned — not the
+     * same as who holds it right now, which is runtime state (see `WorkClaim`).
+     */
+    assignee?: string;
+    /** Verification plan revisions, oldest first. Append-only (FEAT-04). */
+    verificationPlan?: PlanRevision[];
+}
+
+/** The criteria one plan revision was written against. */
+export interface PlanCriterionRef {
+    id: string;
+    text: string;
+}
+
+/**
+ * One revision of the verification plan (§9/§17, FEAT-04).
+ *
+ * It answers "HOW will this be proved?" BEFORE the work runs. `accepted` only
+ * becomes true when a PERSON adopts it: an agent that adopts its own plan is an
+ * agent deciding what counts as proof of its own work.
+ */
+export interface PlanRevision {
+    atMs: number;
+    by: string;
+    steps: string[];
+    criteria: PlanCriterionRef[];
+    accepted?: boolean;
 }
 
 /** A computed status. There is no field anywhere that sets one. */
@@ -1160,7 +1220,46 @@ export interface WorkStatusReport {
     staleCriteria: string[];
     unobservedSubjects: string[];
     proposedCriteria: number;
+    /** `missing` | `proposed` | `accepted` | `outdated`. Never moves the status. */
+    plan: string;
     children: string[];
+}
+
+/** A Project Agent definition, as `.product/agents/<id>.json` declares it (§17). */
+export interface AgentDefinition {
+    id: string;
+    role: string;
+    instructions?: string;
+    /** Preferred adapter by NAME. Never a credential. */
+    adapter?: string;
+    requires?: string[];
+}
+
+export interface AgentsSnapshot {
+    agents: AgentDefinition[];
+    unreadable: { path: string; problem: string }[];
+    dir: string;
+}
+
+/**
+ * Who is holding a task right now (§17).
+ *
+ * Runtime state, not project content: it carries the PID of the execution that
+ * took it, so a claim left behind by an IDE that closed is adopted instead of
+ * locking the task forever.
+ */
+export interface WorkClaim {
+    itemId: string;
+    agentId: string;
+    pid: number;
+    atEpochSecs: number;
+}
+
+export interface ClaimOutcome {
+    claim: WorkClaim;
+    /** The previous holder's execution was dead and this claim adopted it. */
+    adoptedOrphan: boolean;
+    previousAgent?: string;
 }
 
 export interface WorkHierarchyProblem {

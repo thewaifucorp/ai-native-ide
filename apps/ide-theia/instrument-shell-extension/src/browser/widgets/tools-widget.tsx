@@ -58,6 +58,15 @@ import {
     CMD_WORK_ADD,
     CMD_WORK_PROVIDER,
     CMD_WORK_READ,
+    CMD_AGENTS_READ,
+    CMD_SESSION_START,
+    CMD_AGENTS_WRITE,
+    CMD_WORK_ASSIGN,
+    CMD_WORK_CLAIM,
+    CMD_WORK_OPEN,
+    CMD_WORK_PLAN_ACCEPT,
+    CMD_WORK_PLAN_PROPOSE,
+    CMD_WORK_RELEASE,
     CMD_SETTINGS_PROFILE,
     CMD_SETTINGS_PATCH,
     CMD_SETTINGS_READ,
@@ -83,7 +92,7 @@ import {
     CMD_HARNESS_SEED,
     CMD_HARNESS_SUSPEND
 } from '../instrument-capability-contribution';
-import { ReopenedExport } from 'engine-extension';
+import { ReopenedExport, WorkItem, WorkStatusReport } from 'engine-extension';
 import {
     CMD_EXTERNAL_SURFACE,
     CMD_SHOW_SURFACE,
@@ -129,6 +138,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 {this.renderLibrary()}
                 {this.renderSettings()}
                 {this.renderDurable()}
+                {this.renderAgentDefs()}
                 {this.renderWork()}
                 {this.renderLifecycle()}
                 {this.renderRelease()}
@@ -1375,6 +1385,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                                 serve {item.parents.join(', ')}
                                             </small>
                                         )}
+                                        {this.renderAgentLine(item, status)}
                                     </div>
                                 );
                             })}
@@ -1410,6 +1421,292 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                     Usar provider padrão
                 </button>
             </div>
+        );
+    }
+
+    /**
+     * PROJECT AGENTS (§17) — as definições, que são arquivo do projeto.
+     *
+     * Um agente aqui não é sessão, processo nem credencial: é papel + instruções
+     * + qual adapter ele fala, num JSON versionado em `.product/agents/`. Quem
+     * clonar o repositório amanhã lê os agentes deste projeto no diff.
+     *
+     * O adapter é citado pelo NOME. Nenhum segredo entra neste arquivo — o
+     * experimento com o Paperclip terminou com uma chave de API no histórico do
+     * git, e um artefato versionado é exatamente onde isso acontece.
+     */
+    protected renderAgentDefs(): React.ReactNode {
+        const agentes = this.store.agentDefs;
+        return this.section(
+            'agentdefs',
+            'Project Agents',
+            agentes.length === 0 ? 'nenhum definido' : `${agentes.length} definido(s)`,
+            () => (
+                <div className="cap-card">
+                    <small className="cap-hint">
+                        definição é arquivo versionado em `.product/agents/` — papel, instruções e
+                        adapter preferido. Sem credencial nenhuma: o adapter é citado pelo nome, e a
+                        chave dele continua fora do projeto
+                    </small>
+                    {agentes.map(agente => (
+                        <div className="cap-receipt" key={agente.id}>
+                            <span className="cap-receipt-action">{agente.id}</span>
+                            <span className="cap-receipt-detail">{agente.role}</span>
+                            {agente.instructions && <small>{agente.instructions}</small>}
+                            <small className="cap-evidence">
+                                adapter preferido: {agente.adapter || 'nenhum declarado'}
+                                {agente.requires && agente.requires.length > 0
+                                    ? ` · precisa de ${agente.requires.join(', ')}`
+                                    : ''}
+                            </small>
+                        </div>
+                    ))}
+                    <div className="cap-actions">
+                        {this.input('agent-id', 'id (sem / nem .)')}
+                        {this.input('agent-role', 'papel: implementa, revisa, testa…')}
+                    </div>
+                    <div className="cap-actions">
+                        {this.input('agent-adapter', 'adapter preferido (codex, claude, acp)')}
+                        <button
+                            className="cap-btn primary"
+                            disabled={
+                                this.draft('agent-id').trim().length === 0 ||
+                                this.draft('agent-role').trim().length === 0
+                            }
+                            onClick={() => {
+                                this.commands.executeCommand(CMD_AGENTS_WRITE, {
+                                    id: this.draft('agent-id').trim(),
+                                    role: this.draft('agent-role').trim(),
+                                    instructions: this.draft('agent-instructions').trim(),
+                                    adapter: this.draft('agent-adapter').trim() || undefined,
+                                    requires: []
+                                });
+                                this.setDraft('agent-id', '');
+                                this.setDraft('agent-role', '');
+                                this.setDraft('agent-instructions', '');
+                                this.setDraft('agent-adapter', '');
+                            }}
+                        >
+                            Definir agente
+                        </button>
+                    </div>
+                    <textarea
+                        className="cap-input"
+                        rows={2}
+                        placeholder="instruções: o que ele faz e o que NÃO deve tocar"
+                        value={this.draft('agent-instructions')}
+                        onChange={event => this.setDraft('agent-instructions', event.target.value)}
+                    />
+                </div>
+            ),
+            <div className="cap-actions" style={{ margin: '0 6px 6px' }}>
+                <button
+                    className="cap-btn"
+                    onClick={() => this.commands.executeCommand(CMD_AGENTS_READ)}
+                >
+                    Ler
+                </button>
+            </div>
+        );
+    }
+
+    /** Rótulo do estado do plano, com o que ele significa para quem executa. */
+    protected planLabel(plan: string | undefined): { texto: string; classe: string } {
+        switch (plan) {
+            case 'accepted':
+                return { texto: 'plano aceito', classe: 'ready' };
+            case 'proposed':
+                return { texto: 'plano proposto — ninguém aceitou', classe: 'degraded' };
+            case 'outdated':
+                return { texto: 'plano desatualizado — o critério mudou depois', classe: 'unavailable' };
+            default:
+                return { texto: 'sem plano de verificação', classe: 'unknown' };
+        }
+    }
+
+    /**
+     * §17 — a linha que transforma a lista de tasks numa camada de ciclo de vida.
+     *
+     * Ela mostra as três coisas que decidem se um agente pode trabalhar nesta
+     * task, e nenhuma delas é opinião:
+     *
+     *  • **critério de aceite** — sem ele o portão recusa, porque "pronto" seria
+     *    declaração de quem fez;
+     *  • **plano de verificação** — proposto por quem vai executar, aceito por
+     *    uma pessoa, e desatualizado sozinho quando o critério muda;
+     *  • **posse** — quem está com ela AGORA, que é execução viva, não designação.
+     *
+     * O botão de entregar a task existe mesmo quando vai ser recusado: a recusa
+     * do motor é onde a pessoa aprende a regra. Esconder o botão ensinaria que a
+     * task sumiu.
+     */
+    protected renderAgentLine(item: WorkItem, status: WorkStatusReport | undefined): React.ReactNode {
+        const aberto = this.store.openItem === item.id;
+        const claim = this.store.claimOf(item.id);
+        const plano = this.planLabel(status?.plan);
+        const agentes = this.store.agentDefs;
+        const escolhido = this.draft(`w17-agent-${item.id}`) || item.assignee || agentes[0]?.id || '';
+        const contaveis = (item.criteria ?? []).filter(c => !c.proposed).length;
+        const revisoes = item.verificationPlan ?? [];
+
+        return (
+            <>
+                <small className="cap-evidence">
+                    {item.assignee ? `designado a ${item.assignee}` : 'sem agente designado'}
+                    {' · '}
+                    <span className={`cap-pill ${plano.classe}`}>{plano.texto}</span>
+                    {claim && ` · com ${claim.agentId} agora (execução ${claim.pid})`}
+                </small>
+                <div className="cap-actions">
+                    <button
+                        className="cap-btn tiny"
+                        onClick={() => this.commands.executeCommand(CMD_WORK_OPEN, item.id)}
+                    >
+                        {aberto ? 'fechar' : 'agente e plano'}
+                    </button>
+                    {claim && (
+                        <>
+                            <button
+                                className="cap-btn tiny"
+                                title={
+                                    status?.plan === 'accepted'
+                                        ? 'Abre a sessão na worktree e no branch DESTA task'
+                                        : 'O agente pode abrir a sessão, mas o portão de execução '
+                                          + 'cobra plano aceito antes de escrever'
+                                }
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_SESSION_START, claim.agentId
+                                )}
+                            >
+                                abrir sessão da task
+                            </button>
+                            <button
+                                className="cap-btn tiny"
+                                title="Solta a posse. Só quem está com ela pode."
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_WORK_RELEASE, item.id, claim.agentId
+                                )}
+                            >
+                                soltar
+                            </button>
+                        </>
+                    )}
+                </div>
+                {aberto && (
+                    <div className="cap-card">
+                        {agentes.length === 0 && (
+                            <small className="cap-remediation">
+                                nenhum Project Agent definido — defina um em `.product/agents/`
+                                antes de entregar task a alguém
+                            </small>
+                        )}
+                        {contaveis === 0 && (
+                            <small className="cap-remediation">
+                                esta task não tem critério de aceite adotado. O portão vai recusar:
+                                sem critério não existe contra o que conferir a evidência, e
+                                “pronto” viraria opinião de quem fez.
+                            </small>
+                        )}
+                        {agentes.length > 0 && (
+                            <label className="cap-field">
+                                <span>agente</span>
+                                <select
+                                    value={escolhido}
+                                    onChange={event =>
+                                        this.setDraft(`w17-agent-${item.id}`, event.target.value)}
+                                >
+                                    {agentes.map(agente => (
+                                        <option value={agente.id} key={agente.id}>
+                                            {agente.id} — {agente.role}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={!escolhido}
+                                title="Designação é durável e entra no diff do projeto"
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_WORK_ASSIGN, item.id, escolhido
+                                )}
+                            >
+                                Designar
+                            </button>
+                            <button
+                                className="cap-btn primary"
+                                disabled={!escolhido}
+                                title="Entrega a task ao agente agora — o motor recusa se não puder"
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_WORK_CLAIM, item.id, escolhido
+                                )}
+                            >
+                                Entregar a task
+                            </button>
+                        </div>
+
+                        <span className="tag">Plano de verificação</span>
+                        {revisoes.length === 0 && (
+                            <small>
+                                nenhuma revisão: o agente propõe COMO vai provar, e alguém aceita,
+                                antes de escrever código
+                            </small>
+                        )}
+                        {revisoes.map((revisao, i) => (
+                            <div className="cap-receipt" key={`plan:${item.id}:${i}`}>
+                                <span className="cap-receipt-action">
+                                    rev {i + 1}
+                                    {i === revisoes.length - 1 ? '' : ' (histórico)'}
+                                </span>
+                                <span className="cap-receipt-detail">
+                                    {revisao.steps.join(' · ')}
+                                </span>
+                                <small>
+                                    por {revisao.by} · {revisao.accepted ? 'aceita' : 'não aceita'} ·
+                                    escrita sobre {revisao.criteria.map(c => c.id).join(', ') || '—'}
+                                </small>
+                            </div>
+                        ))}
+                        <textarea
+                            className="cap-input"
+                            rows={3}
+                            placeholder="um passo por linha: o que vai ser rodado e o que vai ser olhado"
+                            value={this.draft(`w17-plan-${item.id}`)}
+                            onChange={event => this.setDraft(`w17-plan-${item.id}`, event.target.value)}
+                        />
+                        <div className="cap-actions">
+                            <button
+                                className="cap-btn"
+                                disabled={this.draft(`w17-plan-${item.id}`).trim().length === 0}
+                                onClick={() => {
+                                    this.commands.executeCommand(
+                                        CMD_WORK_PLAN_PROPOSE,
+                                        item.id,
+                                        escolhido || 'pessoa',
+                                        this.draft(`w17-plan-${item.id}`)
+                                    );
+                                    this.setDraft(`w17-plan-${item.id}`, '');
+                                }}
+                            >
+                                Propor plano
+                            </button>
+                            <button
+                                className="cap-btn primary"
+                                disabled={status?.plan !== 'proposed'}
+                                title={status?.plan === 'outdated'
+                                    ? 'O critério mudou depois desta revisão: peça uma nova'
+                                    : 'Adotar o plano é ato de pessoa — quem executa não adota o próprio contrato'}
+                                onClick={() => this.commands.executeCommand(
+                                    CMD_WORK_PLAN_ACCEPT, item.id
+                                )}
+                            >
+                                Aceitar plano
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </>
         );
     }
 

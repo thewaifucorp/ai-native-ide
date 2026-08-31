@@ -47,7 +47,8 @@ import {
     PublishAttempt,
     PreviewSnapshot,
     ReconciliationChoice,
-    SettingsPatch
+    SettingsPatch,
+    AgentDefinition
 } from 'engine-extension';
 import { InstrumentStore } from './instrument-store';
 
@@ -85,6 +86,15 @@ export const CMD_REFS_READ = 'instrument.references.read';
 export const CMD_REFS_LINK = 'instrument.references.link';
 export const CMD_REFS_UNLINK = 'instrument.references.unlink';
 export const CMD_WORK_READ = 'instrument.work.read';
+// ── §17 Project Agents ──────────────────────────────────────────────────────
+export const CMD_AGENTS_READ = 'instrument.agents.read';
+export const CMD_AGENTS_WRITE = 'instrument.agents.write';
+export const CMD_WORK_ASSIGN = 'instrument.work.assign';
+export const CMD_WORK_PLAN_PROPOSE = 'instrument.work.plan.propose';
+export const CMD_WORK_PLAN_ACCEPT = 'instrument.work.plan.accept';
+export const CMD_WORK_CLAIM = 'instrument.work.claim';
+export const CMD_WORK_RELEASE = 'instrument.work.release';
+export const CMD_WORK_OPEN = 'instrument.work.open';
 export const CMD_WORK_ADD = 'instrument.work.add';
 export const CMD_WORK_PROVIDER = 'instrument.work.useDefaultProvider';
 export const CMD_LIFECYCLE_READ = 'instrument.lifecycle.read';
@@ -694,6 +704,53 @@ export class InstrumentCapabilityContribution
             { execute: () => this.analyzeProject() }
         );
         commands.registerCommand(
+            { id: CMD_AGENTS_READ, label: 'Instrument: ler Project Agents e posses (§17)' },
+            { execute: () => this.readAgents() }
+        );
+        commands.registerCommand(
+            { id: CMD_AGENTS_WRITE, label: 'Instrument: definir um Project Agent (§17)' },
+            {
+                execute: (agent?: AgentDefinition) =>
+                    agent && agent.id ? this.writeAgent(agent) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_ASSIGN, label: 'Instrument: designar agente para a task (§17)' },
+            {
+                execute: (itemId?: string, agentId?: string) =>
+                    itemId ? this.assignWork(itemId, agentId) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_PLAN_PROPOSE, label: 'Instrument: propor plano de verificação (FEAT-04)' },
+            {
+                execute: (itemId?: string, by?: string, steps?: string) =>
+                    itemId && by && steps ? this.proposePlan(itemId, by, steps) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_PLAN_ACCEPT, label: 'Instrument: aceitar o plano de verificação' },
+            { execute: (itemId?: string) => (itemId ? this.acceptPlan(itemId) : undefined) }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_CLAIM, label: 'Instrument: entregar a task a um agente (§17)' },
+            {
+                execute: (itemId?: string, agentId?: string) =>
+                    itemId && agentId ? this.claimWork(itemId, agentId) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_RELEASE, label: 'Instrument: soltar a task (§17)' },
+            {
+                execute: (itemId?: string, agentId?: string) =>
+                    itemId && agentId ? this.releaseWork(itemId, agentId) : undefined
+            }
+        );
+        commands.registerCommand(
+            { id: CMD_WORK_OPEN, label: 'Instrument: abrir a ficha da task (§17)' },
+            { execute: (itemId?: string) => this.store.setOpenItem(itemId) }
+        );
+        commands.registerCommand(
             { id: CMD_OBSERVATIONS_READ, label: 'Instrument: ler o que voltou do link (§16)' },
             { execute: () => this.readObservations() }
         );
@@ -967,10 +1024,34 @@ export class InstrumentCapabilityContribution
             this.messages.warn('Abra um projeto para hospedar uma sessão de agente.');
             return;
         }
+        // §17 — `agent` chega das duas portas, e elas NÃO são a mesma coisa:
+        // pode ser um Project Agent do projeto (`coder`), ou o nome cru de um
+        // adapter (`claude`). Confundir os dois foi o meu erro na primeira
+        // versão: eu procurava a posse comparando id de agente com nome de
+        // adapter, e nunca casava — a sessão da task caía sempre na worktree
+        // livre, calada.
+        //
+        // Sendo um Project Agent, o adapter sai da DEFINIÇÃO dele, e a task sai
+        // da posse que ele tem. Sem posse, é a sessão livre de antes.
+        const definicao = this.store.agentDefs.find(def => def.id === agent);
+        const adapter = definicao?.adapter || agent;
+        const posse = definicao
+            ? this.store.claims.find(claim => claim.agentId === definicao.id)
+            : undefined;
+        if (definicao && !definicao.adapter) {
+            this.messages.warn(
+                `O agente '${agent}' não declara adapter preferido; abrindo com '${adapter}'.`
+            );
+        }
         this.store.setSessionBusy(true);
         try {
-            const snapshot = await this.session.start(root, agent);
+            const snapshot = await this.session.start(root, adapter, posse?.itemId);
             this.store.setSession(snapshot);
+            if (posse) {
+                this.messages.info(
+                    `Sessão da task '${posse.itemId}', na worktree e no branch dela.`
+                );
+            }
             if (snapshot.lastError) {
                 this.messages.error(snapshot.lastError);
             }
@@ -2216,6 +2297,125 @@ export class InstrumentCapabilityContribution
             this.store.setWork(undefined);
         } finally {
             this.store.setWorkBusy(false);
+        }
+        // Definição e posse são lidas junto: uma task cuja posse não aparece na
+        // tela é uma task que a pessoa acha livre e o motor recusa.
+        await this.readAgents();
+    }
+
+    // ── §17 ─────────────────────────────────────────────────────────────────
+
+    protected async readAgents(): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            const [defs, claims] = await Promise.all([
+                this.engine.agentsSnapshot(root),
+                this.engine.workClaims(root)
+            ]);
+            this.store.setAgentDefs(defs.agents);
+            this.store.setClaims(claims);
+            for (const problema of defs.unreadable) {
+                this.messages.warn(`${problema.path}: ${problema.problem}`);
+            }
+        } catch (err) {
+            this.messages.error(`Falha ao ler os agentes do projeto: ${this.msg(err)}`);
+        }
+    }
+
+    protected async writeAgent(agent: AgentDefinition): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            const snapshot = await this.engine.agentsWrite(root, agent);
+            this.store.setAgentDefs(snapshot.agents);
+            this.messages.info(`Agente '${agent.id}' definido em .product/agents/${agent.id}.json`);
+        } catch (err) {
+            this.messages.error(`Agente não foi definido: ${this.msg(err)}`);
+        }
+    }
+
+    protected async assignWork(itemId: string, agentId?: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            this.store.setWork(await this.engine.workAssign(root, itemId, agentId));
+        } catch (err) {
+            this.messages.error(`Não foi designado: ${this.msg(err)}`);
+        }
+    }
+
+    protected async proposePlan(itemId: string, by: string, steps: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        const passos = steps.split('\n').map(s => s.trim()).filter(Boolean);
+        try {
+            this.store.setWork(await this.engine.workPlanPropose(root, itemId, by, passos));
+            this.messages.info(
+                'Plano proposto. Ele NÃO vale enquanto ninguém aceitar — quem executa não adota ' +
+                'o próprio contrato.'
+            );
+        } catch (err) {
+            this.messages.error(`Plano não foi proposto: ${this.msg(err)}`);
+        }
+    }
+
+    protected async acceptPlan(itemId: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            this.store.setWork(await this.engine.workPlanAccept(root, itemId));
+            this.messages.info('Plano aceito: o agente já pode executar sobre esta task.');
+        } catch (err) {
+            this.messages.error(`Plano não foi aceito: ${this.msg(err)}`);
+        }
+    }
+
+    /**
+     * Pegar a task é onde o §17 recusa. A recusa vem do motor com o motivo —
+     * sem critério de aceite, bloqueada, ou já com outra execução viva — e a
+     * tela mostra o texto dele, não uma versão amenizada.
+     */
+    protected async claimWork(itemId: string, agentId: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            const outcome = await this.engine.workClaim(root, itemId, agentId);
+            this.store.setClaims(await this.engine.workClaims(root));
+            if (outcome.adoptedOrphan) {
+                this.messages.warn(
+                    `'${itemId}' estava com '${outcome.previousAgent}' numa execução que não ` +
+                    'existe mais. A posse foi adotada — havia trabalho a meio nessa worktree.'
+                );
+            } else {
+                this.messages.info(`'${itemId}' agora está com '${agentId}'.`);
+            }
+        } catch (err) {
+            this.messages.error(this.msg(err));
+        }
+    }
+
+    protected async releaseWork(itemId: string, agentId: string): Promise<void> {
+        const root = this.rootPath;
+        if (!root) {
+            return;
+        }
+        try {
+            this.store.setClaims(await this.engine.workRelease(root, itemId, agentId));
+        } catch (err) {
+            this.messages.error(this.msg(err));
         }
     }
 

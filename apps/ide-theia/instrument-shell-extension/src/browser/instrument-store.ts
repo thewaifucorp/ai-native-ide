@@ -24,6 +24,8 @@ import {
     PublishAttempt,
     ReleaseSnapshot,
     Observation,
+    AgentDefinition,
+    WorkClaim,
     ShareSnapshot,
     VerifyResult,
     ReopenedExport,
@@ -179,6 +181,14 @@ export class InstrumentStore {
     //    dizem e do material medido agora.
     work: WorkSnapshot | undefined;
     workBusy = false;
+
+    // ── §17 Project Agents: as definições do projeto e quem está com o quê.
+    //    `agents` é artefato versionado; `claims` é runtime e some com a
+    //    execução que o criou — são duas coisas, e a tela não as mistura.
+    agentDefs: AgentDefinition[] = [];
+    claims: WorkClaim[] = [];
+    /** Item cuja ficha do §17 está aberta na tela. */
+    openItem: string | undefined;
 
     // ── REAL ciclo de publicação (§16): versões publicadas, exports em disco e
     //    o que cada efeito PODE desfazer. `lifecycleAttempt` guarda a última
@@ -539,6 +549,26 @@ export class InstrumentStore {
     setWork(snapshot: WorkSnapshot | undefined): void {
         this.work = snapshot;
         this.emit();
+    }
+
+    setAgentDefs(agents: AgentDefinition[]): void {
+        this.agentDefs = agents;
+        this.emit();
+    }
+
+    setClaims(claims: WorkClaim[]): void {
+        this.claims = claims;
+        this.emit();
+    }
+
+    setOpenItem(id: string | undefined): void {
+        this.openItem = this.openItem === id ? undefined : id;
+        this.emit();
+    }
+
+    /** Quem está com este item agora, quando alguém está. */
+    claimOf(itemId: string): WorkClaim | undefined {
+        return this.claims.find(claim => claim.itemId === itemId);
     }
 
     setWorkBusy(busy: boolean): void {

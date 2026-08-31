@@ -229,13 +229,23 @@ export interface AgentSessionSnapshot {
     usage?: SessionUsage;
     /** The last adapter swap, kept so the loss it declared stays on screen (§10). */
     lastSwap?: SwapOutcome;
+    /** A task desta sessão (§17), quando ela é a sessão de uma. */
+    taskId?: string;
+    /** O branch da worktree da task, quando há um. */
+    branch?: string;
 }
 
 export interface AgentSessionService {
     snapshot(rootUri: string): Promise<AgentSessionSnapshot>;
 
-    /** Prepare the worktree and open a real ACP session against it. */
-    start(rootUri: string, agent: string): Promise<AgentSessionSnapshot>;
+    /**
+     * Prepare the worktree and open a real ACP session against it.
+     *
+     * With `taskId` (§17) the session belongs to that task: it gets its own
+     * worktree and its own branch, which is what lets two tasks run at the same
+     * time without two agents editing the same file.
+     */
+    start(rootUri: string, agent: string, taskId?: string): Promise<AgentSessionSnapshot>;
 
     /** Send a prompt. `codeChange` tells the adapter to expect file edits. */
     submit(rootUri: string, prompt: string, codeChange: boolean): Promise<AgentSessionSnapshot>;
