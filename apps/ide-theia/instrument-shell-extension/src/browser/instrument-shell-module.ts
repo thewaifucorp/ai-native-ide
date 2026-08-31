@@ -31,6 +31,7 @@ import { NavModesWidget } from './widgets/nav-modes-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
 import { CapabilitySurfaceWidget } from './widgets/capability-surface-widget';
 import { ToolsWidget } from './widgets/tools-widget';
+import { ProjectWidget } from './widgets/project-widget';
 import { CAPABILITY_SERVICE_PATH, CapabilityService } from '../common/capability-protocol';
 import { HARNESS_SERVICE_PATH, HarnessService } from '../common/harness-protocol';
 import { OBSERVER_SERVICE_PATH, ObserverService } from '../common/observer-protocol';
@@ -70,6 +71,7 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(ProdutoWidget).toSelf().inSingletonScope();
     bind(CapabilitySurfaceWidget).toSelf().inSingletonScope();
     bind(ToolsWidget).toSelf().inSingletonScope();
+    bind(ProjectWidget).toSelf().inSingletonScope();
 
     // Widget factories so the two tracked area widgets (Overview in MAIN, dock in
     // RIGHT) are recreated when Theia restores a persisted layout on reload.
@@ -97,6 +99,10 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
         id: ToolsWidget.ID,
         createWidget: () => container.get(ToolsWidget)
+    })).inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: ProjectWidget.PROJECT_ID,
+        createWidget: () => container.get(ProjectWidget)
     })).inSingletonScope();
 
     // Reshape the workbench: the 001 four-column instrument is the actual shell.

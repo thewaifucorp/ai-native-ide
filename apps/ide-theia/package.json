@@ -53,6 +53,7 @@
         "defaultTheme": "instrument-dark",
         "preferences": {
           "files.enableTrash": false,
+          "sqltools.showStatusbar": false,
           "security.workspace.trust.enabled": false,
           "workbench.colorTheme": "instrument-dark",
           "window.menuBarVisibility": "hidden",

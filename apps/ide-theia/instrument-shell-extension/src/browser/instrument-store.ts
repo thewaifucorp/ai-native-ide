@@ -44,11 +44,22 @@ import { ProjectAnalysis } from '../common/analysis-protocol';
 import { AgentSessionSnapshot } from '../common/agent-session-protocol';
 import { ProductModel, ProjectResource, SourceOfTruth } from '../common/product-protocol';
 import { AgentProbe } from 'engine-extension';
+import {
+    deriveProjectSessions,
+    ProjectSessionId,
+    ProjectSessionState
+} from '../common/experience-model';
 
-export type WorkView = 'home' | 'build' | 'notas';
+export type WorkView = 'home' | 'build' | 'notas' | 'preview';
 
 /** Which real (or bespoke) view-container the navigator "modes" row is showing. */
-export type NavMode = 'produto' | 'arquivos' | 'busca' | 'git' | 'depuracao' | 'grafo' | 'ferramentas';
+export type NavMode =
+    | 'criar' | 'projeto' | 'notas' | 'grafo'
+    | 'arquivos' | 'busca' | 'git' | 'depuracao'
+    | 'preview' | 'compartilhar' | 'entregar' | 'sistema';
+
+export type ToolsSurface = 'system' | 'share' | 'ship';
+export type FloatingPanel = 'notes' | 'preview';
 
 /** A real top-level workspace resource (file or folder), from FileService. */
 export interface WorkspaceResource {
@@ -64,9 +75,11 @@ export class InstrumentStore {
     readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
 
     view: WorkView = 'home';
-    navMode: NavMode = 'arquivos';
+    navMode: NavMode = 'criar';
+    toolsSurface: ToolsSurface = 'system';
     gameMode = true;
     drawerOpen = false;
+    floatingPanels: Record<FloatingPanel, boolean> = { notes: false, preview: false };
     toastText = '';
 
     // ── REAL workspace model (M3): populated by InstrumentDataContribution from
@@ -293,11 +306,43 @@ export class InstrumentStore {
         }
     }
 
+    setFloatingPanel(panel: FloatingPanel, open: boolean): void {
+        if (this.floatingPanels[panel] !== open) {
+            this.floatingPanels = { ...this.floatingPanels, [panel]: open };
+            this.emit();
+        }
+    }
+
+    toggleFloatingPanel(panel: FloatingPanel): void {
+        this.setFloatingPanel(panel, !this.floatingPanels[panel]);
+    }
+
     setNavMode(mode: NavMode): void {
         if (this.navMode !== mode) {
             this.navMode = mode;
             this.emit();
         }
+    }
+
+    setToolsSurface(surface: ToolsSurface): void {
+        if (this.toolsSurface !== surface) {
+            this.toolsSurface = surface;
+            this.emit();
+        }
+    }
+
+    get projectSessions(): ProjectSessionState[] {
+        return deriveProjectSessions({
+            preview: this.preview,
+            lifecycle: this.lifecycle,
+            release: this.release,
+            share: this.share,
+            providers: this.providers
+        });
+    }
+
+    projectSession(id: ProjectSessionId): ProjectSessionState {
+        return this.projectSessions.find(session => session.id === id)!;
     }
 
     // ── REAL workspace model ────────────────────────────────────────────────

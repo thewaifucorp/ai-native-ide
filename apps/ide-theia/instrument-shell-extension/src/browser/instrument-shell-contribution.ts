@@ -31,6 +31,7 @@ import { DockWidget } from './widgets/dock-widget';
 import { ProdutoWidget } from './widgets/produto-widget';
 import { CapabilitySurfaceWidget, DEFAULT_SURFACE_CAPABILITY } from './widgets/capability-surface-widget';
 import { ToolsWidget } from './widgets/tools-widget';
+import { ProjectWidget } from './widgets/project-widget';
 
 const EXPLORER_CONTAINER_ID = 'explorer-view-container';
 
@@ -48,7 +49,7 @@ export type ExternalSurface = 'terminal' | 'output' | 'extensions' | 'sqltools';
 
 const EXTERNAL_COMMAND: Record<ExternalSurface, string> = {
     // Real PTY-backed terminal in the bottom area (@theia/terminal + node-pty).
-    terminal: 'terminal:new',
+    terminal: 'workbench.action.terminal.toggleTerminal',
     // Raw output channels (adapters, plugins, tasks) — the unfiltered stream.
     output: 'output:toggle',
     extensions: 'vsxExtensions.toggle',
@@ -81,6 +82,7 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
     @inject(ProdutoWidget) protected readonly produto!: ProdutoWidget;
     @inject(CapabilitySurfaceWidget) protected readonly surface!: CapabilitySurfaceWidget;
     @inject(ToolsWidget) protected readonly tools!: ToolsWidget;
+    @inject(ProjectWidget) protected readonly project!: ProjectWidget;
 
     onStart(_app: FrontendApplication): void {
         // The ported 001 CSS keys Game-Mode rules off a `game` class on <body>,
@@ -104,7 +106,9 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
 
     protected registerModeCommands(): void {
         const modes: NavMode[] = [
-            'produto', 'arquivos', 'busca', 'git', 'depuracao', 'grafo', 'ferramentas'
+            'criar', 'projeto', 'notas', 'grafo',
+            'preview', 'compartilhar', 'entregar',
+            'arquivos', 'busca', 'git', 'depuracao', 'sistema'
         ];
         for (const mode of modes) {
             this.commandRegistry.registerCommand(
@@ -117,15 +121,27 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
     /** Record the active mode and reveal its real (or bespoke) view-container. */
     protected async revealMode(mode: NavMode): Promise<void> {
         this.store.setNavMode(mode);
-        if (mode === 'produto') {
-            await this.shell.revealWidget(ProdutoWidget.ID);
+        if (mode === 'criar' || mode === 'notas' || mode === 'preview') {
+            if (mode === 'notas' || mode === 'preview') {
+                this.store.toggleFloatingPanel(mode === 'notas' ? 'notes' : 'preview');
+            }
+            this.store.setView('build');
+            await this.shell.activateWidget(WorkWidget.ID);
+            return;
+        }
+        if (mode === 'projeto') {
+            await this.shell.revealWidget(ProjectWidget.PROJECT_ID);
+            await this.shell.activateWidget(WorkWidget.ID);
             return;
         }
         if (mode === 'grafo') {
             await this.showSurface(DEFAULT_SURFACE_CAPABILITY);
             return;
         }
-        if (mode === 'ferramentas') {
+        if (mode === 'compartilhar' || mode === 'entregar' || mode === 'sistema') {
+            this.store.setToolsSurface(
+                mode === 'compartilhar' ? 'share' : mode === 'entregar' ? 'ship' : 'system'
+            );
             await this.shell.revealWidget(ToolsWidget.ID);
             return;
         }
@@ -188,16 +204,20 @@ export class InstrumentShellContribution implements FrontendApplicationContribut
         if (!this.shell.getWidgets('left').some(w => w.id === ToolsWidget.ID)) {
             await this.shell.addWidget(this.tools, { area: 'left', rank: 10 });
         }
+        if (!this.shell.getWidgets('left').some(w => w.id === ProjectWidget.PROJECT_ID)) {
+            await this.shell.addWidget(this.project, { area: 'left', rank: 5 });
+        }
 
         await this.shell.revealWidget(DockWidget.ID);
 
-        // Reveal the REAL file explorer ("Arquivos" mode) LAST so it is the visible
-        // left view on boot, and sync the modes row highlight to it.
+        // Keep the real file explorer beside the creation surface on boot.
         const explorer: Widget | undefined = this.shell.getWidgets('left')
             .find(w => w.id === EXPLORER_CONTAINER_ID || w.id === 'files');
         if (explorer) {
             await this.shell.revealWidget(explorer.id);
         }
-        this.store.setNavMode('arquivos');
+        this.store.setView('build');
+        this.store.setNavMode('criar');
+        await this.shell.activateWidget(WorkWidget.ID);
     }
 }

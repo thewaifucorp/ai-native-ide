@@ -76,7 +76,7 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
         return (
             <div className="nav-sec">
                 <span className="tag">
-                    Intenção × implementação
+                    Projeto × software atual
                     <button
                         className="cap-btn tiny"
                         disabled={this.store.productBusy}
@@ -116,7 +116,7 @@ export class ProdutoWidget extends AbstractInstrumentWidget {
 
                 {model && divergent.length === 0 && claims.length > 0 && (
                     <div className="cap-card">
-                        <small>nenhuma divergência aberta entre intenção e implementação</small>
+                        <small>o software atual corresponde ao que o projeto descreve</small>
                     </div>
                 )}
 

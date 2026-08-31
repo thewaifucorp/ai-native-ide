@@ -118,36 +118,90 @@ export class ToolsWidget extends AbstractInstrumentWidget {
     protected configure(): void {
         this.id = ToolsWidget.ID;
         this.addClass('iws-tools-host');
-        this.title.label = 'Ferramentas';
-        this.title.caption = 'Ferramentas — capabilities e harness do projeto';
+        this.title.label = 'Sistema';
+        this.title.caption = 'Skills, integrações e configuração';
         this.title.closable = false;
     }
 
     protected render(): React.ReactNode {
+        const surface = this.store.toolsSurface;
+        const title = surface === 'share' ? 'Compartilhar' : surface === 'ship' ? 'Entregar' : 'Sistema';
+        if (surface === 'share') {
+            return (
+                <div className="nav focused-surface">
+                    {this.renderSurfaceHeader(title, this.store.projectSession('share').reason)}
+                    {this.renderShare()}
+                </div>
+            );
+        }
+        if (surface === 'ship') {
+            return (
+                <div className="nav focused-surface">
+                    {this.renderSurfaceHeader(title, this.store.projectSession('ship').reason)}
+                    {this.renderLifecycle()}
+                    {this.renderRelease()}
+                    {this.renderDeployProviders()}
+                </div>
+            );
+        }
         return (
             <div className="nav">
-                <div className="proj-head">
-                    <div className="name">Ferramentas</div>
-                    <div className="meta">
-                        {this.store.workspaceName || 'sem projeto'} · registry real
-                    </div>
-                </div>
+                {this.renderSurfaceHeader(title, 'Skills, integrações e preferências do projeto')}
+                {this.renderAgentEfficiency()}
                 {this.renderCapabilities()}
                 {this.renderExternal()}
-                {this.renderWorkbench()}
                 {this.renderLibrary()}
                 {this.renderSettings()}
-                {this.renderDurable()}
-                {this.renderAgentDefs()}
-                {this.renderWork()}
-                {this.renderLifecycle()}
-                {this.renderRelease()}
-                {this.renderPromotion()}
-                {this.renderShare()}
-                {this.renderDeployProviders()}
                 {this.renderPacks()}
-                {this.renderBrokerTrail()}
-                {this.renderHarness()}
+                <details className="advanced-tools">
+                    <summary>Diagnóstico avançado</summary>
+                    {this.renderWorkbench()}
+                    {this.renderBrokerTrail()}
+                    {this.renderHarness()}
+                </details>
+            </div>
+        );
+    }
+
+    protected renderSurfaceHeader(title: string, detail: string): React.ReactNode {
+        return (
+            <div className="proj-head surface-head">
+                <div className="name">{title}</div>
+                <div className="meta">{this.store.workspaceName || 'sem projeto'} · {detail}</div>
+            </div>
+        );
+    }
+
+    /** The graph matters first as agent infrastructure; savings stay unknown
+     * until an adapter or skill reports a comparable measurement. */
+    protected renderAgentEfficiency(): React.ReactNode {
+        const graph = this.store.capability('grafo');
+        const usage = this.store.session?.usage;
+        const graphReady = graph?.status === 'ready';
+        return (
+            <div className="nav-sec">
+                <span className="tag">Skills dos agentes</span>
+                <div className="cap-card">
+                    <div className="cap-head">
+                        <b>Navegação estrutural</b>
+                        <span className={`cap-pill ${graphReady ? 'ready' : 'not-installed'}`}>
+                            {graphReady ? 'disponível' : 'sem grafo'}
+                        </span>
+                    </div>
+                    <p className="cap-detail">
+                        {graphReady
+                            ? 'Agentes podem localizar relações e impacto sem varrer o projeto inteiro.'
+                            : 'A navegação continua por arquivos e busca; skills estruturais degradam explicitamente.'}
+                    </p>
+                    <div className="skill-metrics">
+                        <span><b>{usage?.reported ? usage.inputTokens : '—'}</b><small>tokens de entrada medidos</small></span>
+                        <span><b>—</b><small>contexto poupado · não medido</small></span>
+                        <span><b>—</b><small>tempo poupado · não medido</small></span>
+                    </div>
+                    <small className="cap-hint">
+                        Disponibilidade não prova economia. Uma skill precisa registrar comparação para custo ou velocidade aparecerem aqui.
+                    </small>
+                </div>
             </div>
         );
     }
@@ -199,7 +253,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
         const capabilities = this.store.capabilities;
         return this.section(
             'capabilities',
-            'Capabilities',
+            'Skills e capacidades',
             this.capabilitySummary(),
             () => (
                 <>
@@ -1049,7 +1103,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             <p className="cap-detail">{durable.notRegisteredReason}</p>
                             <div className="cap-actions">{this.input('durable-title', 'título')}</div>
                             <div className="cap-actions">
-                                {this.input('durable-intent', 'intenção — para que este projeto existe')}
+                                {this.input('durable-intent', 'descrição — o que este projeto faz')}
                                 <button
                                     className="cap-btn primary"
                                     disabled={
@@ -1106,7 +1160,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                 </button>
                             </div>
                             <div className="cap-actions">
-                                {this.input('durable-new-intent', 'reescrever a intenção')}
+                                {this.input('durable-new-intent', 'atualizar a descrição do projeto')}
                                 <button
                                     className="cap-btn"
                                     disabled={
@@ -1120,7 +1174,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                         this.setDraft('durable-new-intent', '');
                                     }}
                                 >
-                                    Reescrever intenção
+                                    Atualizar descrição
                                 </button>
                             </div>
                         </>
@@ -1757,9 +1811,9 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                 <small className="cap-evidence">{reopened.summary}</small>
                 <small className="cap-evidence">{reopened.path} · {reopened.portabilityNote}</small>
 
-                <p className="cap-detail">intenção no export: {reopened.intent}</p>
+                <p className="cap-detail">descrição no export: {reopened.intent}</p>
                 {reopened.intentNow && (
-                    <p className="cap-remediation">intenção hoje: {reopened.intentNow}</p>
+                    <p className="cap-remediation">descrição hoje: {reopened.intentNow}</p>
                 )}
                 {reopened.titleNow && (
                     <p className="cap-remediation">título hoje: {reopened.titleNow}</p>
@@ -2045,7 +2099,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                         <>
                             <small className="cap-hint">
                                 promover diz “isto o projeto passa a sustentar” · a promoção nasce
-                                devendo a reconciliação que ela mesma cria: a intenção escrita ainda
+                                devendo a atualização que ela mesma cria: a descrição do projeto ainda
                                 descreve o mundo anterior · {promotion.path}
                             </small>
                             <div className="cap-actions">
@@ -2084,7 +2138,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                                         className={item.reconciled ? 'cap-pill ready' : 'cap-pill'}
                                         title={item.reconciled
                                             ? 'a divergência criada pela promoção foi explicada'
-                                            : 'promovido, e a intenção do projeto ainda descreve o mundo anterior'}
+                                            : 'promovido, e a descrição do projeto ainda mostra o estado anterior'}
                                     >
                                         {item.reconciled ? 'explicada' : 'devendo'}
                                     </span>
@@ -2117,7 +2171,7 @@ export class ToolsWidget extends AbstractInstrumentWidget {
                             ))}
                             {promotion.pending > 0 && (
                                 <div className="cap-actions">
-                                    {this.input('promotion-how', 'o que mudou na intenção para isto ser durável')}
+                                    {this.input('promotion-how', 'o que mudou no projeto para isto ser permanente')}
                                 </div>
                             )}
                         </>

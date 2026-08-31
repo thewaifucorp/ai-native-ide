@@ -28,8 +28,6 @@ import {
     CMD_REGISTER_REFERENCE,
     CMD_CHECKS_RUN,
     CMD_CONTEXT_COMPILE,
-    CMD_INTENT_DECIDE,
-    CMD_INTENT_REVIEW,
     CMD_NOTES_CREATE,
     CMD_NOTES_MERGE,
     CMD_NOTES_PROMOTE,
@@ -52,6 +50,7 @@ import {
     CMD_SESSION_SUBMIT
 } from '../instrument-capability-contribution';
 import { CapabilityState } from '../../common/capability-protocol';
+import { FloatingPanel } from '../instrument-store';
 import { AdapterCard, DivergenceView, PreviewHealth,
     CoverageRow
 } from 'engine-extension';
@@ -93,6 +92,65 @@ export class WorkWidget extends AbstractInstrumentWidget {
 
     @inject(CommandService) protected readonly commands!: CommandService;
 
+    protected panelPositions: Record<FloatingPanel, { x: number; y: number }> = {
+        notes: { x: 72, y: 58 },
+        preview: { x: 210, y: 42 }
+    };
+    protected panelZ: Record<FloatingPanel, number> = { notes: 20, preview: 21 };
+    protected nextPanelZ = 22;
+
+    protected focusPanel(panel: FloatingPanel): void {
+        this.panelZ[panel] = this.nextPanelZ++;
+        this.update();
+    }
+
+    protected startPanelDrag(panel: FloatingPanel, event: React.MouseEvent<HTMLDivElement>): void {
+        if ((event.target as HTMLElement).closest('button')) {
+            return;
+        }
+        event.preventDefault();
+        this.focusPanel(panel);
+        const pointer = { x: event.clientX, y: event.clientY };
+        const origin = this.panelPositions[panel];
+        const move = (moveEvent: MouseEvent) => {
+            this.panelPositions[panel] = {
+                x: Math.max(8, origin.x + moveEvent.clientX - pointer.x),
+                y: Math.max(8, origin.y + moveEvent.clientY - pointer.y)
+            };
+            this.update();
+        };
+        const stop = () => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', stop);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', stop);
+    }
+
+    protected renderFloatingPanel(panel: FloatingPanel, title: string, content: React.ReactNode): React.ReactNode {
+        if (!this.store.floatingPanels[panel]) {
+            return undefined;
+        }
+        const position = this.panelPositions[panel];
+        return (
+            <div
+                className={`floating-work-panel ${panel}`}
+                style={{ left: position.x, top: position.y, zIndex: this.panelZ[panel] }}
+                onMouseDown={() => this.focusPanel(panel)}
+            >
+                <div className="floating-panel-titlebar" onMouseDown={event => this.startPanelDrag(panel, event)}>
+                    <span>{title}</span>
+                    <button
+                        title={`Fechar ${title}`}
+                        aria-label={`Fechar ${title}`}
+                        onClick={() => this.store.setFloatingPanel(panel, false)}
+                    >×</button>
+                </div>
+                <div className="floating-panel-content">{content}</div>
+            </div>
+        );
+    }
+
     protected configure(): void {
         this.id = WorkWidget.ID;
         this.title.label = 'Overview';
@@ -103,24 +161,109 @@ export class WorkWidget extends AbstractInstrumentWidget {
 
     protected render(): React.ReactNode {
         const { view } = this.store;
+        const preview = this.store.projectSession('preview');
+        const share = this.store.projectSession('share');
+        const ship = this.store.projectSession('ship');
+        const tool = (mode: string, title: string, icon: React.ReactNode, active = false, disabled = false) => (
+            <button
+                className={`work-tool${active ? ' on' : ''}`}
+                title={title}
+                aria-label={title}
+                disabled={disabled}
+                onClick={() => this.commands.executeCommand(`instrument.mode.${mode}`)}
+            >
+                <svg className="i" viewBox="0 0 16 16">{icon}</svg>
+            </button>
+        );
         return (
             <main className="work">
-                <div className="tabs">
-                    <button className={`tab${view === 'home' ? ' on' : ''}`} onClick={() => this.store.setView('home')}>Overview</button>
-                    <button className={`tab${view === 'build' ? ' on' : ''}`} onClick={() => this.store.setView('build')}><span className="mod" />Build</button>
+                <div className="work-toolbar">
                     <button
-                        className={`tab${view === 'notas' ? ' on' : ''}`}
-                        onClick={() => this.store.setView('notas')}
-                        title="Notas por tema, e os conflitos entre elas, guidance e SoTs"
+                        className={`work-primary${view === 'build' ? ' on' : ''}`}
+                        onClick={() => this.commands.executeCommand('instrument.mode.criar')}
                     >
-                        Notas
-                        {this.store.noteConflictCount > 0 && ` (${this.store.noteConflictCount})`}
+                        <span className="mod" /> Criar
                     </button>
+                    <div className="work-tools" aria-label="Ferramentas do projeto">
+                        {tool('projeto', 'Projeto', <><rect x="2.5" y="3" width="11" height="10" rx="1" /><path d="M5 3V1.8M11 3V1.8M5 6h6" /></>, view === 'home')}
+                        {tool('arquivos', 'Arquivos', <path d="M2.5 3.5h4l1.2 1.5H13.5v7.5h-11Z" />, this.store.navMode === 'arquivos')}
+                        {tool('busca', 'Buscar', <><circle cx="7" cy="7" r="4.2" /><path d="M10.5 10.5 14 14" /></>, this.store.navMode === 'busca')}
+                        {tool('git', 'Git', <><circle cx="4" cy="4" r="1.6" /><circle cx="4" cy="12" r="1.6" /><circle cx="12" cy="7" r="1.6" /><path d="M4 5.6v4.8M4 9c0-2 8 0 8-2" /></>, this.store.navMode === 'git')}
+                        {tool('grafo', 'Grafo e contexto do agente', <><circle cx="8" cy="3" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><circle cx="12.5" cy="12" r="1.5" /><path d="M7.2 4.4 4.3 10.6M8.8 4.4l2.9 6.2M5 12h6" /></>, this.store.navMode === 'grafo')}
+                        {tool('sistema', 'Skills e integrações', <><path d="M8 2v2M8 12v2M2 8h2M12 8h2" /><circle cx="8" cy="8" r="3" /></>, this.store.navMode === 'sistema')}
+                    </div>
+                    <div className="work-toolbar-spacer" />
+                    <div className="work-utilities" aria-label="Painéis auxiliares">
+                        <button
+                            className={`work-tool utility${this.store.floatingPanels.notes ? ' on' : ''}`}
+                            title="Notas"
+                            aria-label="Notas"
+                            onClick={() => this.commands.executeCommand('instrument.mode.notas')}
+                        >
+                            <svg className="i" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3Z" /><path d="M5.5 5.2h5M5.5 8h5M5.5 10.8h3.5" /></svg>
+                            {this.store.noteConflictCount > 0 && <span className="tool-badge">{this.store.noteConflictCount}</span>}
+                        </button>
+                        <button
+                            className={`work-tool utility preview-tool ${preview.availability}${this.store.floatingPanels.preview ? ' on' : ''}`}
+                            title={preview.reason}
+                            aria-label="Preview"
+                            disabled={preview.availability === 'locked'}
+                            onClick={() => this.commands.executeCommand('instrument.mode.preview')}
+                        >
+                            <svg className="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="9.5" rx="1" /><path d="m6.5 6 4 2-4 2Z" /></svg>
+                            <span className="tool-state" />
+                        </button>
+                        <button className="work-tool utility" title="Terminal" aria-label="Terminal" onClick={() => this.commands.executeCommand('instrument.external', 'terminal')}>
+                            <svg className="i" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1" /><path d="m4.5 6 2 2-2 2M8.5 10h3" /></svg>
+                        </button>
+                        {share.availability !== 'locked' && tool('compartilhar', 'Compartilhar', <><circle cx="4" cy="8" r="1.5" /><circle cx="12" cy="4" r="1.5" /><circle cx="12" cy="12" r="1.5" /><path d="m5.4 7.3 5.2-2.6M5.4 8.7l5.2 2.6" /></>, this.store.navMode === 'compartilhar')}
+                        {ship.availability !== 'locked' && tool('entregar', 'Publicar', <><path d="M8 11V2M5 5l3-3 3 3" /><path d="M3 10v3h10v-3" /></>, this.store.navMode === 'entregar')}
+                    </div>
                 </div>
-                {this.renderHome(view === 'home')}
-                {this.renderBuild(view === 'build')}
-                {this.renderNotes(view === 'notas')}
+                {this.renderBuild(true)}
+                {this.renderFloatingPanel('notes', 'Notas', this.renderNotes(true))}
+                {this.renderFloatingPanel('preview', 'Preview', this.renderPreviewSession(true))}
             </main>
+        );
+    }
+
+    /** A project session: absent until the project declares something runnable. */
+    protected renderPreviewSession(on: boolean): React.ReactNode {
+        const snapshot = this.store.preview;
+        const session = this.store.projectSession('preview');
+        const url = snapshot?.declared?.url;
+        return (
+            <section className={`view preview-session${on ? ' on' : ''}`} id="view-preview-session">
+                <div className="session-toolbar">
+                    <div>
+                        <b>Preview</b>
+                        <small>{session.reason}</small>
+                    </div>
+                    <div className="cap-actions">
+                        <button className="cap-btn" disabled={this.store.previewBusy} onClick={() => this.commands.executeCommand(CMD_PREVIEW_STATUS)}>Atualizar</button>
+                        <button
+                            className="cap-btn primary"
+                            disabled={this.store.previewBusy || !snapshot?.declared}
+                            onClick={() => this.commands.executeCommand(snapshot?.running ? CMD_PREVIEW_RESTART : CMD_PREVIEW_START)}
+                        >
+                            {snapshot?.running ? 'Reiniciar' : 'Iniciar'}
+                        </button>
+                        <button className="cap-btn" disabled={this.store.previewBusy || !snapshot?.running} onClick={() => this.commands.executeCommand(CMD_PREVIEW_STOP)}>Parar</button>
+                    </div>
+                </div>
+                <div className="session-canvas">
+                    {snapshot?.running && url ? (
+                        <iframe className="project-preview-frame" src={url} title={`Preview de ${this.store.workspaceName}`} />
+                    ) : (
+                        <div className="session-empty">
+                            <span className={`session-status ${session.availability}`} />
+                            <h2>{session.availability === 'failed' ? 'O preview precisa de atenção' : 'Preview pronto para iniciar'}</h2>
+                            <p>{session.reason}</p>
+                            {snapshot?.logTail && <pre className="cap-raw">{snapshot.logTail}</pre>}
+                        </div>
+                    )}
+                </div>
+            </section>
         );
     }
 
@@ -132,6 +275,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                 <div className="home-main">
                     {this.renderProjectHeader()}
                     {this.renderNeedsYou()}
+                    {this.renderProjectWork()}
                     {this.renderCapabilitySummary()}
                     {this.renderQueuedSurfaces()}
                 </div>
@@ -153,6 +297,39 @@ export class WorkWidget extends AbstractInstrumentWidget {
                 <h1 className="goal">{this.store.workspaceName || 'nenhum projeto aberto'}</h1>
                 <div className="next">
                     <span title={path}>{path}</span>
+                </div>
+            </div>
+        );
+    }
+
+    /** Work belongs to the project, not to a generic tools drawer. */
+    protected renderProjectWork(): React.ReactNode {
+        const snapshot = this.store.work;
+        if (!snapshot || snapshot.items.length === 0) {
+            return null;
+        }
+        return (
+            <div className="h-sec">
+                <span className="tag">Trabalho do projeto</span>
+                <div className="project-work-list">
+                    {snapshot.items.map(item => {
+                        const status = snapshot.statuses.find(row => row.id === item.id);
+                        const claim = this.store.claimOf(item.id);
+                        return (
+                            <div className="project-work-row" key={item.id} title={status?.reason}>
+                                <span className={`st ${status?.status === 'verified' ? 'ok' : claim ? 'run' : 'idle'}`} />
+                                <div>
+                                    <b>{item.title}</b>
+                                    <small>
+                                        {item.kind} · {status?.status ?? 'estado desconhecido'}
+                                        {item.assignee ? ` · ${item.assignee}` : ''}
+                                        {claim ? ` · em execução por ${claim.agentId}` : ''}
+                                    </small>
+                                </div>
+                                {status && <span className="work-progress">{status.criteriaVerified}/{status.criteriaTotal}</span>}
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         );
@@ -1003,7 +1180,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                     })
                                 }
                             >
-                                Aceitar o observado como intenção
+                                Atualizar o que o projeto descreve
                             </button>
                         </div>
                         <div className="cap-actions">
@@ -1455,98 +1632,30 @@ export class WorkWidget extends AbstractInstrumentWidget {
         const agent = this.store.agent;
         const busy = this.store.sessionBusy;
         const phase = session?.phase ?? 'none';
+        const agentName = session?.agent ?? agent?.agent ?? 'codex';
+        const agentAvailable = agent?.available !== false;
         return (
             <section className={`view${on ? ' on' : ''}`} id="view-build">
                 <div className="conv">
                     <div className="conv-scroll">
-                        <h2 className="goal">Intenção e sessão de agente</h2>
-                        {this.renderComposer()}
-                        <div className="cap-card">
-                            <div className="cap-head">
-                                <b>{session?.agent ?? agent?.agent ?? 'claude'}</b>
+                        <div className="chat-head">
+                            <div>
+                                <b>{agentName}</b>
                                 <span className={`cap-pill ${phase === 'idle' || phase === 'working' ? 'ready' : phase === 'failed' ? 'unavailable' : 'not-installed'}`}>
-                                    {phase}
+                                    {phase === 'none' ? (agentAvailable ? 'desconectado' : 'indisponível') : phase}
                                 </span>
                             </div>
-                            {session?.worktree && (
-                                <small>worktree: {session.worktree.split('/').slice(-3).join('/')}</small>
-                            )}
-                            {session?.baseline && (
-                                <small className="cap-hint">
-                                    baseline: {session.baseline.files} arquivo(s) em{' '}
-                                    {session.baseline.at}
-                                    {session.baseline.commit
-                                        ? ` (commit ${session.baseline.commit.slice(0, 7)})`
-                                        : ' (projeto sem git — cópia isolada)'}
-                                    {session.baseline.reused &&
-                                        ' · worktree de sessão anterior: o agente vê o projeto daquele momento'}
-                                    {session.baseline.recovered &&
-                                        ' · baseline RECUPERADA: mudança anterior a ela não é distinguível da sua'}
-                                </small>
-                            )}
-                            {session?.usage && (
-                                <small className="cap-evidence">
-                                    {session.usage.reported
-                                        ? `custo: ${session.usage.inputTokens} tokens de entrada · ${session.usage.outputTokens} de saída`
-                                        : 'custo: este adaptador não reporta uso — zero aqui significa NÃO MEDIDO, não barato'}
-                                </small>
-                            )}
-                            {session?.lastSwap && (
-                                <small className={session.lastSwap.resumed ? 'cap-evidence' : 'cap-remediation'}>
-                                    {session.lastSwap.from} → {session.lastSwap.to} ·{' '}
-                                    {session.lastSwap.resumed
-                                        ? `reatada: ${session.lastSwap.preserved.join(', ')}`
-                                        : `recomeçada — perdido: ${session.lastSwap.dropped.join(', ')}`}
-                                </small>
-                            )}
-                            {session?.lastError && <p className="cap-detail">{session.lastError}</p>}
-                            <small className="cap-hint">
-                                o agente trabalha na worktree e só o broker traz mudança de ARQUIVO para o
-                                projeto · comando que o agente roda não deixa recibo no broker e não tem
-                                rollback: só o portão de permissão o cobre, e só nos bridges que perguntam ·
-                                exclusão é vista mas não é proposta (o broker não tem efeito de exclusão) ·
-                                não é jaula: o adapter não aplica sandbox · permissão do agente é
-                                decidida aqui, e o agente fica parado até a decisão — a menos que a
-                                permissão do projeto seja Yolo, e aí o IDE responde sozinho e
-                                registra o pedido e a regra que decidiu
-                            </small>
-                            <div className="cap-actions">
+                            <div className="chat-head-actions">
                                 {phase === 'none' || phase === 'failed' ? (
-                                    <>
-                                        <button
-                                            className="cap-btn primary"
-                                            disabled={busy}
-                                            onClick={() => this.commands.executeCommand(CMD_SESSION_START, 'claude')}
-                                        >
-                                            {busy ? 'abrindo…' : 'Abrir sessão'}
-                                        </button>
-                                        {session?.worktree && (
-                                            <button
-                                                className="cap-btn"
-                                                disabled={busy}
-                                                title="Apaga a worktree e a baseline; o que não foi colhido é perdido"
-                                                onClick={() => this.commands.executeCommand(CMD_SESSION_DISCARD)}
-                                            >
-                                                Descartar worktree
-                                            </button>
-                                        )}
-                                    </>
+                                    <button
+                                        className="cap-btn primary"
+                                        disabled={busy || !agentAvailable}
+                                        onClick={() => this.commands.executeCommand(CMD_SESSION_START, agentName)}
+                                    >
+                                        {busy ? 'conectando…' : `Conectar ${agentName}`}
+                                    </button>
                                 ) : (
                                     <>
-                                        <button
-                                            className="cap-btn primary"
-                                            disabled={busy}
-                                            onClick={() => this.submitPrompt(true)}
-                                        >
-                                            Pedir mudança
-                                        </button>
-                                        <button
-                                            className="cap-btn"
-                                            disabled={busy}
-                                            onClick={() => this.submitPrompt(false)}
-                                        >
-                                            Perguntar
-                                        </button>
                                         <button
                                             className="cap-btn"
                                             disabled={busy}
@@ -1561,20 +1670,11 @@ export class WorkWidget extends AbstractInstrumentWidget {
                                         >
                                             Encerrar
                                         </button>
-                                        <button
-                                            className="cap-btn"
-                                            disabled={busy}
-                                            title="Encerra a sessão e apaga a worktree; o que não foi colhido é perdido"
-                                            onClick={() => this.commands.executeCommand(CMD_SESSION_DISCARD)}
-                                        >
-                                            Descartar worktree
-                                        </button>
                                     </>
                                 )}
                             </div>
                         </div>
-
-                        {this.renderAdapters()}
+                        {session?.lastError && <p className="chat-error">{session.lastError}</p>}
 
                         {session && session.pending.length > 0 && (
                             <div className="cap-card">
@@ -1716,46 +1816,22 @@ export class WorkWidget extends AbstractInstrumentWidget {
                             </div>
                         )}
 
-                        {session && session.events.length > 0 && (
-                            <div className="cap-card">
-                                <div className="cap-head"><b>Sessão</b></div>
-                                {session.events.slice(-24).map((e, i) => (
-                                    <div className="cap-receipt" key={`${e.at}:${i}`}>
-                                        <span className="cap-receipt-action">{e.kind}</span>
-                                        <span className="cap-receipt-detail">{e.text}</span>
-                                    </div>
-                                ))}
+                        {session?.events.slice(-24).map((e, i) => (
+                            <div className={`msg ${e.kind === 'user' ? 'user' : 'agent'}`} key={`${e.at}:${i}`}>
+                                {e.kind !== 'user' && <div className="head">{agentName}</div>}
+                                <div className={e.kind === 'user' ? 'bubble' : 'body'}>{e.text}</div>
                             </div>
-                        )}
+                        ))}
 
                         {!session && (
                             <div className="placeholder">
-                                <b>Nenhuma sessão aberta</b>
-                                <p>
-                                    O IDE hospeda uma sessão ACP real e é o cliente ACP (ide-agent →
-                                    adapter direto → bridge do agente), então a permissão do agente
-                                    é decidida aqui. O
-                                    agente trabalha numa worktree git do projeto, e cada mudança dele
-                                    é proposta pelo broker antes de tocar o projeto.
-                                </p>
+                                <b>Conecte o agente para começar.</b>
                             </div>
                         )}
                     </div>
+                    {this.renderComposer()}
                 </div>
 
-                <div className="preview">
-                    <div className="pv-bar">
-                        <span className="pv-url">preview não configurado</span>
-                    </div>
-                    <div className="pv-body">
-                        <div className="placeholder">
-                            <b>Sem preview</b>
-                            <p>
-                                Nenhum servidor de preview foi detectado ou iniciado para este projeto.
-                            </p>
-                        </div>
-                    </div>
-                </div>
             </section>
         );
     }
@@ -1871,7 +1947,7 @@ export class WorkWidget extends AbstractInstrumentWidget {
     protected submitPrompt(codeChange: boolean): void {
         const intent = this.store.intentDraft.trim();
         if (intent.length === 0) {
-            this.store.toast('Escreva a intenção no composer antes de enviar.');
+            this.store.toast('Escreva o que você quer criar ou mudar antes de enviar.');
             return;
         }
         this.commands.executeCommand(CMD_SESSION_SUBMIT, intent, codeChange);
@@ -2189,168 +2265,26 @@ export class WorkWidget extends AbstractInstrumentWidget {
         );
     }
 
-    /**
-     * O COMPOSER (§8): a intenção da pessoa, e o que ela esconde.
-     *
-     * Três regras visíveis na tela, porque são elas que fazem "a intenção melhora
-     * sem rewrite oculto ou estado silencioso":
-     *  • o texto é da pessoa — nada aqui reescreve o campo, e o que é enviado ao
-     *    agente é exatamente o que está nele.
-     *  • cada hipótese é editável antes de virar artefato, e o que vira artefato é
-     *    a versão dela, não a remediação crua do avaliador.
-     *  • dispensar exige motivo, e decisão tomada sobre OUTRA versão do texto
-     *    aparece marcada em vez de valer em silêncio.
-     */
     protected renderComposer(): React.ReactNode {
-        const review = this.store.intentReview;
-        const busy = this.store.intentBusy;
-
+        const connected = this.store.session?.phase === 'idle' || this.store.session?.phase === 'working';
+        const busy = this.store.sessionBusy;
         return (
-            <div className="cap-card">
-                <div className="cap-head">
-                    <b>Intenção</b>
-                    <span className={`cap-pill ${review ? (this.store.openFindingCount > 0 ? 'not-installed' : 'ready') : 'not-installed'}`}>
-                        {!review
-                            ? 'não avaliada'
-                            : this.store.openFindingCount > 0
-                                ? `${this.store.openFindingCount} hipótese(s) aberta(s)`
-                                : 'sem hipótese aberta'}
-                    </span>
-                </div>
+            <div className="composer">
                 <textarea
-                    className="cap-textarea"
-                    placeholder="o que este projeto tem de fazer — com as suas palavras"
+                    placeholder={connected ? 'Pergunte ou descreva uma mudança…' : 'Conecte o agente para enviar mensagens'}
                     value={this.store.intentDraft}
                     onChange={event => this.store.setIntentDraft(event.target.value)}
                 />
-                <small className="cap-hint">
-                    este texto é seu · o que vai ao agente é exatamente ele, e avaliar não o
-                    reescreve
-                </small>
-                <div className="cap-actions">
+                <div className="composer-actions">
+                    <span className="tag">{this.store.session?.agent ?? this.store.agent?.agent ?? 'agente'}</span>
                     <button
-                        className="cap-btn"
-                        disabled={busy || this.store.intentDraft.trim().length === 0}
-                        onClick={() => this.commands.executeCommand(CMD_INTENT_REVIEW)}
+                        className="cap-btn primary"
+                        disabled={!connected || busy || this.store.intentDraft.trim().length === 0}
+                        onClick={() => this.submitPrompt(true)}
                     >
-                        {busy ? 'avaliando…' : 'Avaliar intenção'}
+                        {busy ? 'Enviando…' : 'Enviar'}
                     </button>
                 </div>
-
-                {review?.nothingFound && <p className="cap-detail">{review.nothingFound}</p>}
-
-                {review && review.reviewed.map(entry => {
-                    const finding = entry.finding;
-                    const decision = entry.decision;
-                    const draftKey = `finding:${finding.id}`;
-                    const noteKey = `note:${finding.id}`;
-                    return (
-                        <div className="cap-receipt" key={finding.id}>
-                            <span
-                                className={`cap-receipt-action ${
-                                    decision?.state === 'accepted'
-                                        ? ''
-                                        : decision?.state === 'dismissed'
-                                            ? 'check-not_run'
-                                            : finding.category === 'contradiction'
-                                                ? 'check-failed'
-                                                : 'check-unknown'
-                                }`}
-                            >
-                                {decision?.state ?? finding.category}
-                            </span>
-                            <span className="cap-receipt-detail">{finding.claim}</span>
-                            <small>
-                                {finding.evaluator} · severidade {finding.severity} · confiança{' '}
-                                {Math.round(finding.confidence * 100)}%
-                            </small>
-                            <small className="cap-evidence">{finding.evidence}</small>
-                            <small className="cap-remediation">{finding.remediation}</small>
-                            {decision && (
-                                <small>
-                                    decidida: {decision.note || 'sem nota'}
-                                    {decision.artifact && ` · virou ${decision.artifact}`}
-                                    {entry.decidedOnOtherIntent &&
-                                        ' · DECIDIDA SOBRE OUTRA VERSÃO DO TEXTO'}
-                                </small>
-                            )}
-                            {!decision && (
-                                <>
-                                    <div className="cap-actions">
-                                        <input
-                                            className="cap-input"
-                                            value={this.findingDraft(draftKey, finding.remediation)}
-                                            onChange={event => {
-                                                this.findingDrafts[draftKey] = event.target.value;
-                                                this.update();
-                                            }}
-                                        />
-                                        <button
-                                            className="cap-btn primary"
-                                            disabled={busy}
-                                            title="Vira guidance CANDIDATA na biblioteca — ainda precisa ser promovida para dirigir agente"
-                                            onClick={() =>
-                                                this.commands.executeCommand(
-                                                    CMD_INTENT_DECIDE,
-                                                    finding.id,
-                                                    'accepted',
-                                                    'aceita na revisão da intenção',
-                                                    this.findingDraft(draftKey, finding.remediation)
-                                                )
-                                            }
-                                        >
-                                            Aceitar como guidance
-                                        </button>
-                                    </div>
-                                    <div className="cap-actions">
-                                        <input
-                                            className="cap-input"
-                                            placeholder="motivo da dispensa (obrigatório)"
-                                            value={this.findingDraft(noteKey, '')}
-                                            onChange={event => {
-                                                this.findingDrafts[noteKey] = event.target.value;
-                                                this.update();
-                                            }}
-                                        />
-                                        <button
-                                            className="cap-btn"
-                                            disabled={
-                                                busy ||
-                                                this.findingDraft(noteKey, '').trim().length === 0
-                                            }
-                                            onClick={() =>
-                                                this.commands.executeCommand(
-                                                    CMD_INTENT_DECIDE,
-                                                    finding.id,
-                                                    'dismissed',
-                                                    this.findingDraft(noteKey, '')
-                                                )
-                                            }
-                                        >
-                                            Dispensar
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    );
-                })}
-
-                {review && (
-                    <>
-                        <small className="cap-hint">
-                            {review.report.evaluatorsRun.length} avaliador(es) ·{' '}
-                            {review.report.withheldForBudget} retido(s) pelo orçamento ·{' '}
-                            {review.declared.length} declaração(ões) usada(s) na checagem de
-                            contradição
-                        </small>
-                        {review.consequences.map((line, index) => (
-                            <small className="cap-hint" key={`cons:${index}`}>
-                                {line}
-                            </small>
-                        ))}
-                    </>
-                )}
             </div>
         );
     }

@@ -112,18 +112,27 @@ body.iws-shell .theia-app-sidebar-container { display: none !important; }
 /* (2) The navigator "modes" row — pinned strip at the top of the left column,
    replacing the activity bar. Ported from sketch 003. */
 .iws .nav-modes {
-  display: flex; flex-wrap: wrap; gap: 2px; margin: 7px 8px 3px; padding: 3px;
+  display: flex; flex-wrap: wrap; gap: 2px; margin: 7px 8px 5px; padding: 3px;
   border-radius: var(--r1); background: var(--panel-2);
 }
 .iws .nav-mode {
-  /* `flex-basis: 0` + `min-width: 0` lets seven buttons share a 168px column
-     instead of overflowing it; `flex-wrap` above catches anything narrower. */
-  flex: 1 1 0; min-width: 20px; height: 26px; border-radius: 3px;
+  flex: 1 1 0; min-width: 28px; height: 26px; border-radius: 3px;
   display: grid; place-items: center;
   color: var(--faint); position: relative; transition: background .12s, color .12s;
 }
+.iws .nav-mode-sep { flex: 0 0 100%; height: 1px; background: var(--line); margin: 2px 0; }
 .iws .nav-mode:hover { color: var(--text); background: var(--raise); }
 .iws .nav-mode.on { color: var(--text); background: var(--raise); }
+.iws .nav-mode.project { color: var(--mut); }
+.iws .nav-mode.locked { opacity: .32; cursor: help; }
+.iws .nav-mode.locked:hover { opacity: .65; }
+.iws .nav-mode .session-state {
+  position: absolute; right: 3px; bottom: 3px; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--mut);
+}
+.iws .nav-mode .session-state.active { background: var(--ok); box-shadow: 0 0 0 2px rgba(106, 189, 139, .1); }
+.iws .nav-mode .session-state.failed { background: var(--need); }
+.iws .nav-mode .session-lock { position: absolute; right: 3px; bottom: 1px; color: var(--faint); font: 700 12px var(--mono); }
 .iws .nav-mode .b {
   position: absolute; right: 2px; top: 2px; min-width: 12px; height: 12px;
   padding: 0 3px; border-radius: 6px; background: var(--need); color: #1a1200;
@@ -247,6 +256,11 @@ body.game .iws .gm-toggle .sw::after { transform: translateX(10px); background: 
 .iws .rail-btn:hover { background: var(--raise); color: var(--text); }
 .iws .rail-btn.on { background: var(--raise); color: var(--text); }
 .iws .rail-btn.on::before { content: ""; position: absolute; left: -11px; top: 8px; bottom: 8px; width: 2px; background: var(--text); }
+.iws .rail-btn.project-session.locked { opacity: .28; cursor: help; }
+.iws .rail-btn.project-session.locked:hover { opacity: .58; }
+.iws .rail-btn.project-session.ready { color: var(--mut); }
+.iws .rail-btn.project-session.active { color: var(--text); }
+.iws .rail-btn.project-session.failed { color: var(--need); }
 .iws .rail-btn .hb { position: absolute; right: 4px; top: 4px; width: 5px; height: 5px; border-radius: 50%; }
 .iws .rail-btn .hb.run { background: var(--text); }
 .iws .rail-btn .hb.need { background: var(--need); }
@@ -286,6 +300,14 @@ body.game .iws .lvl-badge { display: block; }
 .iws .proj-head .name { font: 600 16px/1.2 var(--ui); letter-spacing: -.01em; }
 .iws .proj-head .meta { margin-top: 5px; font: 400 10.5px var(--mono); color: var(--faint); }
 .iws .nav-sec { margin-top: 22px; }
+.iws .surface-head .meta { line-height: 1.45; }
+.iws .focused-surface .nav-sec { margin-top: 14px; }
+.iws .advanced-tools { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 10px; }
+.iws .advanced-tools > summary { cursor: pointer; padding: 6px; color: var(--faint); font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+.iws .skill-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 10px 0; background: var(--line); border: 1px solid var(--line); }
+.iws .skill-metrics > span { min-width: 0; padding: 8px; background: var(--panel-2); }
+.iws .skill-metrics b { display: block; font: 600 13px var(--mono); color: var(--text); }
+.iws .skill-metrics small { display: block; margin-top: 4px; font: 400 9px/1.35 var(--mono); color: var(--faint); }
 .iws .nav-sec > .tag { display: block; padding: 0 6px 8px; }
 .iws .nav-item {
   width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
@@ -309,8 +331,43 @@ body.game .iws .lvl-badge { display: block; }
 .iws .st.idle { background: var(--faint); }
 
 /* ============ WORK SURFACE ============ */
-.iws .work { min-width: 0; display: grid; grid-template-rows: 40px minmax(0, 1fr); background: var(--bg); }
-.iws .tabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--panel); }
+.iws .work { position: relative; min-width: 0; overflow: hidden; display: grid; grid-template-rows: 40px minmax(0, 1fr); background: var(--bg); }
+.iws .work-toolbar { display: flex; align-items: center; min-width: 0; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.iws .work-primary { height: 100%; padding: 0 12px 0 7px; display: flex; align-items: center; gap: 8px; color: var(--mut); font-size: 12px; }
+.iws .work-primary.on { color: var(--text); }
+.iws .work-primary .mod { width: 6px; height: 6px; border-radius: 50%; background: var(--mut); }
+.iws .work-tools, .iws .work-utilities { display: flex; align-items: center; gap: 2px; }
+.iws .work-tools { padding-left: 8px; border-left: 1px solid var(--line); }
+.iws .work-toolbar-spacer { flex: 1; min-width: 10px; }
+.iws .work-utilities { padding-left: 8px; border-left: 1px solid var(--line); }
+.iws .work-tool { position: relative; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--faint); }
+.iws .work-tool:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
+.iws .work-tool.on { color: var(--text); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-2); }
+.iws .work-tool:disabled { opacity: .28; cursor: default; }
+.iws .work-tool svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.25; }
+.iws .work-tool .tool-badge { position: absolute; top: 1px; right: 1px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 6px; background: var(--need); color: var(--bg); font: 700 8px/12px var(--mono); }
+.iws .work-tool .tool-state { position: absolute; right: 4px; bottom: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--mut); }
+.iws .work-tool.preview-tool.active .tool-state { background: var(--ok); }
+.iws .work-tool.preview-tool.failed .tool-state { background: var(--need); }
+
+/* Notes and preview are optional work windows, not destinations that replace chat. */
+.iws .floating-work-panel {
+  position: absolute; display: grid; grid-template-rows: 34px minmax(0, 1fr);
+  min-width: 360px; min-height: 260px; width: min(680px, calc(100% - 96px)); height: min(72%, 680px);
+  overflow: hidden; resize: both; border: 1px solid var(--line-2); border-radius: 9px;
+  background: var(--bg); box-shadow: 0 22px 70px rgba(0, 0, 0, .55), 0 3px 12px rgba(0, 0, 0, .35);
+}
+.iws .floating-work-panel.preview { width: min(900px, calc(100% - 120px)); height: min(78%, 760px); }
+.iws .floating-panel-titlebar {
+  display: flex; align-items: center; justify-content: space-between; padding: 0 7px 0 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel); cursor: move; user-select: none;
+  font: 500 11px var(--mono); color: var(--mut);
+}
+.iws .floating-panel-titlebar button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 5px; color: var(--faint); font: 400 17px/1 var(--ui); }
+.iws .floating-panel-titlebar button:hover { color: var(--text); background: var(--raise); }
+.iws .floating-panel-content { min-height: 0; overflow: hidden; }
+.iws .floating-panel-content > .view { width: 100%; height: 100%; }
+.iws .floating-panel-content #view-notas { overflow: auto; background: var(--bg); }
 .iws .tab {
   height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 8px;
   font-size: 12px; color: var(--faint); border-radius: 0;
@@ -321,6 +378,27 @@ body.game .iws .lvl-badge { display: block; }
 .iws .tab .mod { width: 6px; height: 6px; border-radius: 50%; background: var(--mut); }
 .iws .tab.file { font: 400 11px var(--mono); }
 .iws .tab.new { border-right: 0; color: var(--faint); padding: 0 11px; }
+.iws .tab.session-tab::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--mut); }
+.iws .tab.session-tab.active::after { background: var(--ok); }
+.iws .tab.session-tab.failed::after { background: var(--need); }
+
+/* A project session enters the work surface only after the project unlocks it. */
+.iws #view-preview-session { grid-template-rows: auto minmax(0, 1fr); background: var(--bg); }
+.iws .session-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.iws .session-toolbar > div:first-child { display: grid; gap: 3px; }
+.iws .session-toolbar b { font: 600 13px var(--ui); }
+.iws .session-toolbar small { font: 400 10px var(--mono); color: var(--faint); }
+.iws .session-canvas { min-height: 0; display: grid; }
+.iws .project-preview-frame { width: 100%; height: 100%; border: 0; background: white; }
+.iws .session-empty { place-self: center; max-width: 520px; padding: 36px; text-align: center; }
+.iws .session-empty h2 { margin: 12px 0 6px; font: 600 20px var(--ui); }
+.iws .session-empty p { color: var(--mut); font: 400 12px/1.6 var(--ui); }
+.iws .session-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mut); }
+.iws .session-status.failed { background: var(--need); }
+.iws .session-status.active { background: var(--ok); }
 
 /* -------- HOME view -------- */
 .iws .view { display: none; min-height: 0; }
@@ -341,6 +419,14 @@ body.game .iws .lvl-badge { display: block; }
 }
 .iws .h-sec { margin-bottom: 34px; }
 .iws .h-sec > .tag { display: block; margin-bottom: 14px; }
+.iws .project-work-list { border-top: 1px solid var(--line); }
+.iws .project-work-row { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.iws .project-work-row > .st { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.iws .project-work-row > .st.ok { background: var(--ok); }
+.iws .project-work-row > .st.run { background: var(--step); }
+.iws .project-work-row b { display: block; font: 500 12.5px var(--ui); }
+.iws .project-work-row small { display: block; margin-top: 3px; color: var(--faint); font: 400 10px var(--mono); }
+.iws .work-progress { color: var(--mut); font: 500 10px var(--mono); }
 .iws .continue .goal { font: 600 27px/1.3 var(--ui); letter-spacing: -.02em; max-width: 560px; text-wrap: balance; }
 .iws .continue .goal em { font-style: normal; color: var(--mut); }
 .iws .continue .next { margin-top: 16px; display: flex; align-items: center; gap: 14px; font-size: 12.5px; color: var(--mut); }
@@ -376,10 +462,14 @@ body.game .iws .lvl-badge { display: block; }
 .iws .recent .r em { font-style: normal; color: var(--text); }
 
 /* -------- BUILD view -------- */
-.iws #view-build { grid-template-columns: minmax(340px, .9fr) minmax(380px, 1.1fr); gap: 1px; background: var(--line); }
+.iws #view-build { grid-template-columns: minmax(340px, 760px); justify-content: center; background: var(--bg); }
 .iws #view-build > * { background: var(--bg); min-height: 0; }
 .iws .conv { display: flex; flex-direction: column; overflow: hidden; }
 .iws .conv-scroll { flex: 1; overflow-y: auto; padding: 26px 28px 10px; }
+.iws .chat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -8px 0 26px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.iws .chat-head > div:first-child { display: flex; align-items: center; gap: 9px; text-transform: capitalize; }
+.iws .chat-head-actions { display: flex; gap: 6px; }
+.iws .chat-error { padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line)); border-radius: var(--r1); color: var(--err); font-size: 11px; }
 .iws .conv .goal { margin: 0 0 24px; font: 600 19px/1.35 var(--ui); letter-spacing: -.015em; max-width: 420px; text-wrap: balance; }
 .iws .msg { margin-bottom: 18px; max-width: 92%; }
 .iws .msg.user { margin-left: auto; }
@@ -396,6 +486,8 @@ body.game .iws .lvl-badge { display: block; }
 .iws .step.run { color: var(--step); }
 .iws .step.run svg.i { animation: iws-breathe 1.6s infinite; }
 .iws .composer { margin: 10px 20px 18px; padding: 12px 13px; border: 1px solid var(--line-2); border-radius: var(--r2); background: var(--panel); transition: border-color .2s; }
+.iws .composer textarea { width: 100%; min-height: 46px; max-height: 180px; resize: vertical; border: 0; outline: 0; background: none; color: var(--text); font: 400 13px/1.5 var(--ui); }
+.iws .composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
 .iws .composer:focus-within { border-color: var(--faint); }
 .iws .composer input { width: 100%; border: 0; outline: 0; background: none; color: var(--text); font: 400 13px var(--ui); }
 .iws .composer input::placeholder { color: var(--faint); }

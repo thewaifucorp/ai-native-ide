@@ -17,12 +17,22 @@ Este documento é a fonte canônica de **como** o produto funciona. Decisões no
 ### Anatomia permanente
 
 - **Project Rail:** alternância entre projetos duráveis.
-- **Project Navigator:** Overview, Build, Resources, Evidence e histórico; não é apenas uma árvore de arquivos.
-- **Work Surface:** intenção, spec, editor, Markdown, terminal, diff e preview em superfícies reais e editáveis.
-- **Context Dock:** agente ativo, escopo, decisões, permissões e findings relacionados ao trabalho atual.
-- **Activity Strip:** sequência causal de intenção, ação, efeito, observação, verificação e reconciliação.
+- **Project Navigator:** Overview, Anotações, Status, Build, Resources, Evidence e histórico; não é apenas uma árvore de arquivos.
+- **Work Surface:** conversa, anotações, intenção, spec, editor, Markdown, terminal, diff, mapa e preview em superfícies reais e editáveis.
+- **Context Dock:** agente ativo, escopo, decisões, permissões e findings relacionados ao trabalho atual; permite inspecionar o contexto efetivamente enviado ao agente.
+- **Activity Strip:** sequência causal de intenção, ação, efeito, observação, verificação e reconciliação, em linguagem do projeto.
 
 O Home do projeto deve responder em segundos: o que estamos construindo, qual o estado atual, o que mudou, o que está bloqueado e qual decisão precisa de mim.
+
+O Activity Strip é uma projeção local, concisa e causal dos eventos pertinentes ao
+projeto: identifica ação/agente, recursos afetados, resultado, evidência e, quando
+for aplicável, consumo. Ele pode consumir eventos do Bastion Core, mas não replica
+telemetria organizacional, gestão de workforce, SLAs, governança ou a Control Tower.
+
+Durante exploração, Anotações ocupa a Work Surface quando preview ainda não é a
+superfície relevante. Construção usa preview/arquivos/diff; entendimento usa o mapa;
+conferência usa Status/Evidência. Isso muda a superfície visível, não fragmenta o
+projeto em produtos ou modos incompatíveis.
 
 ### Profundidade progressiva
 
@@ -31,6 +41,13 @@ O Home do projeto deve responder em segundos: o que estamos construindo, qual o 
 - **Raw:** arquivos, código, terminal, logs, payloads e evidência original.
 
 É uma única IDE. Profundidade muda apresentação, não capacidade nem formato do projeto. Usuários podem personalizar layout e salvar perfis.
+
+### Baseline técnico da mesma IDE
+
+Editor, arquivos, busca, terminal, Source Control, extensões, debugger e checks são
+superfícies reais do v1, não uma segunda “IDE para dev” nem profundidade opcional a
+ser construída depois. A pessoa não técnica não precisa abri-las para construir; a
+pessoa técnica chega nelas progressivamente, no mesmo projeto e com o mesmo estado.
 
 ### Modos de construção
 
@@ -74,6 +91,76 @@ Recursos têm identidade estável independente do caminho e podem participar de 
 - `unknown` / `not-run`: ausência explícita de conhecimento, nunca sucesso.
 
 O **Local Truth Registry** registra fonte, tipo de autoridade, escopo, precedência, consumidores e provenance. Fontes continuam arquivos humanos, editáveis e versionáveis. Conflito de autoridade vira finding, não merge silencioso.
+
+### Features, tasks e verificações
+
+Intenção e SoTs dão o contexto do produto; a estrutura de execução só aparece para
+trabalho de construção concreto:
+
+```text
+Feature (resultado de produto, quando houver)
+  └─ Task (mudança ou trabalho concreto)
+       └─ Subtask (somente se a decomposição ajudar)
+```
+
+Não há Epic/Story obrigatório. Uma mudança pequena pode ser uma Task direta; uma
+Feature pode ter uma só Task ou muitas; Task e Subtask não possuem quantidade mínima.
+Uma Task pode apoiar mais de uma Feature, mas cada evidência declara qual critério ela
+suporta.
+
+Todo item possui objetivo, revisão, relações e estado. Features sempre possuem
+critérios observáveis; Tasks possuem verificações adequadas ao seu impacto; Subtasks
+podem ter somente conclusão observável ou herdar a prova da Task. Critérios de Feature
+tratam resultado/fluxo/integridade; critérios de Task tratam a mudança focal; Subtasks
+tratam passos menores. Teste unitário é apenas uma evidência possível, não o sentido de
+Task.
+
+O agente pode propor um plano de verificação antes de executar, usando intenção,
+SoTs, Guidances, AAG, impacto, conexões e políticas. A pessoa pode aceitar, editar,
+recusar ou adiar os candidatos. O agente não pode reduzir, substituir ou reescrever
+silenciosamente critérios depois de falhar: alterar o contrato cria nova revisão e
+preserva a prova anterior como pertencente à revisão antiga.
+
+O estado de uma Feature é calculado, nunca declarado pelo agente: `não iniciado`,
+`em andamento`, `implementado, não verificado`, `parcialmente verificado`,
+`verificado`, `bloqueado` ou `evidência desatualizada`. Diff, texto do agente,
+screenshot ou preview aberto são evidências de escopo limitado; não tornam uma Feature
+verificada sem evidência atual ligada a todos os seus critérios. Mudança relevante em
+artefato, SoT, conexão ou critério invalida a prova afetada.
+
+**Status** é a superfície central desses resultados. Overview mantém apenas o resumo
+compacto e as pendências reais; Tasks mostram a fila de trabalho, mas concluir uma Task
+não promove automaticamente sua Feature. Evidência detalhada abre somente em resposta
+a “como sabemos disso?”.
+
+### Exploração, anotações e reconciliação
+
+Conversa serve para pensar e não vira automaticamente Guidance, SoT, Feature ou Task.
+Ideias, perguntas, alternativas e sínteses relevantes podem ser preservadas em
+**Anotações** editáveis, organizadas por tema e vinculadas às mensagens, referências,
+decisões, SoTs, Features e arquivos que lhes deram origem. Uma anotação automática é
+um rascunho com provenance, não uma verdade silenciosa.
+
+Uma anotação distingue proposta, decisão confirmada, pergunta aberta, alternativa e
+item substituído. A ação **Conciliar e reconciliar** compara anotações escolhidas — ou
+todas as do projeto — com Guidances, SoTs e Features: aponta convergências,
+duplicatas, conflitos e candidatos de promoção. A pessoa escolhe promover para SoT,
+criar/atualizar Guidance, criar Feature/Task, marcar como substituído, manter opções
+abertas ou corrigir a síntese. Nenhuma reconciliação mescla, descarta ou promove estado
+sem escolha explícita.
+
+### Intenção guiada e ajuda contextual
+
+O campo de intenção não é um chat vazio nem autocomplete de frases. O **composer de
+intenção** propõe, inline e de forma editável, ambiguidades, decisões ausentes,
+requisitos esquecidos, contradições com o projeto e consequências relevantes antes de
+virarem instrução para agente. Ele gera candidates de anotação/spec/critério, nunca
+uma decisão silenciosa.
+
+**Ajuda contextual** é distinta de Guidance: explica à pessoa, no momento em que um
+conceito, risco ou escolha aparece, o que está em jogo e quais opções existem. Ela
+não instrui agentes, não bloqueia por padrão e pode ter providers externos no futuro
+(incluindo Exia), mas o v1 possui experiência local e neutra.
 
 ## Guidance — steering organizado
 
@@ -140,6 +227,22 @@ Agentes não recebem todos os arquivos. O Context Compiler seleciona determinist
 
 O Context Dock mostra **Applied now**: texto exato, origem, escopo e motivo de inclusão de cada orientação. Retrieval probabilístico não é responsável por lembrar regras aplicáveis.
 
+### Inspeção do contexto do agente
+
+Antes ou depois de uma execução, a pessoa pode verificar o contexto efetivamente
+entregue ao agente: prompt compilado, SoTs, Guidances, referências, arquivos,
+decisões, policies e limites, sempre com versão, origem e escopo. A inspeção também
+explica itens candidatos que foram excluídos. Seu propósito é verificável: distinguir
+uma ação fundamentada no projeto de uma inferência inventada pelo agente; não é uma
+superfície de telemetria ou observabilidade organizacional.
+
+O Context Compiler constrói um pacote mínimo por execução, nunca despeja projeto,
+mapa, transcript, Features, Tasks, Anotações, evidência ou capabilities inteiros por
+default. Ele parte de objetivo atual, recursos no escopo, Guidances/SoTs aplicáveis,
+critérios, referências explicitamente vinculadas, vizinhança estrutural limitada e
+policies. Itens restantes ficam acessíveis por handles e capabilities de retrieval
+governadas, com `unknown` explícito quando não puderem ser obtidos.
+
 ### Hygiene
 
 A IDE detecta e propõe, sem reescrever silenciosamente:
@@ -158,11 +261,11 @@ Formatos como steering files do Kiro, `AGENTS.md`, `CLAUDE.md` e equivalentes po
 ### Forma geral
 
 ```text
-React/TypeScript UI
-       │ contratos tipados
-Desktop Host Tauri
+Theia application shell
+       │ contratos/RPC tipados
+Engine sidecar Rust/Bastion
        │ fronteira privilegiada mínima
-IDE Host/Core
+IDE Core
        ├─ domínios da IDE
        │    ├─ project/resources/truth
        │    ├─ Guidance + intent/specs
@@ -176,7 +279,12 @@ IDE Host/Core
             └─ Codex/ACP agent runtimes
 ```
 
-Tauri é o host oficial porque incorpora diretamente o runtime e os crates Rust do Bastion, preservando uma fronteira privilegiada única. A UI permanece shell-neutral. Um spike valida Monaco, PTY, preview, subprocessos, eventos, performance e empacotamento; Electron existe somente como fallback se surgir blocker estrutural documentado, não como segundo host implementado preventivamente.
+`apps/ide-theia/` é o shell oficial e ativo do produto. Ele fala com o engine sidecar
+Rust/Bastion por contratos tipados, preservando uma fronteira privilegiada única para
+filesystem, processos, effects e providers. `apps/desktop/` Tauri é protótipo histórico
+e fonte de evidência/crates; não recebe features nesta milestone. Empacotamento desktop
+do shell Theia é decisão futura separada: não cria um segundo produto nem autoriza
+portar a fila ativa para Tauri.
 
 ### Bastion Core como substrato
 
@@ -254,8 +362,22 @@ O egress do Core deve evoluir de exceções baseadas em nome de provider para de
 
 - Monaco é o candidato inicial para edição de código/Markdown.
 - PTY é real, supervisionado e suporta spawn, input, resize, output, cancel, exit e cleanup.
+- Source Control fornece stage, commit e branch reais; extensões podem ser buscadas,
+  instaladas e geridas pelo provider de extensões ativo.
+- Debugger usa sessão real/DAP, breakpoints e configurações de launch/attach; não é
+  um ícone decorativo nem um log apresentado como depuração.
+- Checks expõem resumo acessível e saída raw/commands para quem precisa investigar.
 - Preview roda isolado, possui lifecycle e health state e correlaciona erros com atividade/efeitos causais.
 - Mudanças externas entram no mesmo fluxo de observação e reconciliação.
+
+### Materiais do projeto
+
+**Referências** são materiais de entrada externos — anexos, imagens, links,
+documentos, áudio, texto ou repositórios — preservados com proveniência e vinculáveis
+a uma SoT, decisão, atividade ou recurso. **Assets** são materiais que pertencem ao
+produto e são editados/versionados no workspace, como imagens, ícones, fontes e
+documentos publicados. A distinção impede que inspiração externa se torne
+silenciosamente estado autoritativo do produto.
 
 ### Agentes
 
@@ -264,6 +386,20 @@ Adapters possuem capability negotiation: autenticação, sessão, resume, cancel
 O estado durável pertence à IDE. Trocar agente não perde projeto, intenção, decisões, findings ou evidências.
 
 `bastion-agent-runtime` é o contrato base para agentes externos. Sua `PolicyCoverage` é renderizada honestamente pela IDE: visibilidade de ferramentas, approvals, egress, budget e sandbox podem ser completos, parciais, desconhecidos ou controlados pelo harness externo.
+
+#### Project Agents
+
+A IDE possui um substrato próprio de **Project Agents**: agentes que constroem e evoluem o software do projeto aberto. O usuário pode defini-los livremente sobre os contratos do Bastion Core e ligá-los a Codex, Claude, ACP, um modelo direto ou outro runtime compatível. Uma definição declara papel, instruções, adapter preferido, capabilities requeridas e escopo de recursos; ela não é uma sessão nem uma credencial.
+
+Uma execução de time materializa roster, sessões, mailbox, tarefas, handoffs, blockers e escopos de escrita. Definições e manifestos do time são artefatos locais/versionáveis do projeto; sessões vivas, segredos, processos, snapshots e logs operacionais pertencem ao estado local da IDE. Todo contexto visível ao modelo, efeito e mensagem entre agentes deve poder ser reconstruído a partir do ledger do projeto.
+
+Times locais de subagentes são baseline v1: um agente pode criar subagentes e
+dividir trabalho dentro do projeto, inclusive em paralelo quando o runtime permitir,
+sempre com broker, escopos de escrita, orçamento e handoffs visíveis. Isso não inclui
+agentes persistentes de operação, filas/retries de produção, workforce cross-project
+ou Digital Workers organizacionais.
+
+Project Agents não são Digital Workers do Katsui Agent Dojo. O Dojo hospeda deployments Bastion persistentes conectados à Company Brain/Ontology, opera Solution Packs e workers prontos e executa trabalho/outcomes de negócio. A IDE pode conectar ou promover para o Dojo, mas não converte o seu project runtime em um clone dele.
 
 ### Memória do runtime
 
@@ -290,21 +426,69 @@ Guidance, Decisions, Truth e Evidence permanecem domínios separados da IDE. `me
 
 AAG é o primeiro provider estrutural externo e degradável. Ele observa o que existe; não decide intenção ou autoridade. Sem AAG, a IDE continua funcionando e marca relações indisponíveis como `unknown`.
 
+O mapa da aplicação é derivado da análise observável do projeto — AAG, workspace,
+serviços, conexões, execução e evidências — desde a importação e após mudanças. Task
+concluída somente liga intenção/trabalho aos artefatos observados; nunca preenche ou
+altera o mapa por declaração.
+
 Todo finding inclui identidade, versão do evaluator, camada, escopo, afirmação, evidência/provenance, confiança, severidade, remediação, enforcement e estado de revisão.
+
+### Harness providers
+
+O Harness nativo é o provider padrão de workflow, critérios e status verificável; ele
+não é o único fluxo possível. Um projeto pode ativar outro **Harness Provider**, como
+um adapter GSD, sem deixar de ser projeto da IDE.
+
+O Core não é substituível: broker de efeitos, confinamento, credenciais, snapshots,
+rollback, receipts/evidência bruta, artefatos do projeto e registro de providers
+continuam do host. O provider recebe capabilities governadas e não executa
+filesystem/rede/processos diretamente nem transforma sua própria declaração em prova.
+
+Cada provider declara versão/compatibilidade, artefatos lidos/escritos, modelo de
+trabalho/status, UI/comandos, verificadores, evidências emitidas, cobertura,
+limitações, degradação e migração. Os slots `workflow`, `hierarquia de trabalho` e
+`status principal` são exclusivos por projeto; checks, packs de domínio,
+visualizações e importadores são componíveis quando declaram origem e escopo.
+
+Ativar outro provider suspende o Harness padrão somente nos slots assumidos, preserva
+artefatos e histórico do provider anterior e mostra a troca explicitamente. O status
+de um provider externo permanece atribuído a ele; a IDE não o apresenta como prova
+universal sem evidência compatível. Marketplace e publicação de plugins são posteriores
+ao v1; o contrato, sandbox e ativação por projeto pertencem ao v1.
 
 ## Configuração
 
 Fluxo: detectar → aplicar default reversível → revelar no momento relevante → permitir aprofundar → salvar por projeto/perfil.
 
-Defaults: Hybrid, Essential adaptativo, balanced permissions, layers 0/1, checkpoints automáticos, AAG local quando disponível, respostas concisas e nenhuma inferência paga em idle.
+### Analisar projeto existente
 
-Primeiro uso deve pedir no máximo: intenção; aceitar/trocar agente; confirmar primeiro efeito externo irreversível.
+Ao abrir/importar um projeto existente, a IDE oferece **Analisar projeto**. A análise
+local/AAG detecta recursos, stack, linguagens, package manager, comandos de execução
+e checks, Git, configurações, serviços, arquivos de instrução, integrações e relações
+estruturais disponíveis. Ela gera apenas candidatos revisáveis: importação/classificação
+de `AGENTS.md`, `CLAUDE.md`, steering e equivalentes como Guidance com escopo/lifecycle;
+SoTs ou configurações de preview/checks inferidos; e lacunas marcadas como `unknown`.
+Nada é ativado como Guidance, SoT ou configuração autoritativa sem revisão da pessoa.
+
+Defaults: Hybrid, Essential adaptativo, balanced permissions, layers 0/1, checkpoints automáticos, AAG local quando disponível, respostas concisas e nenhuma inferência paga em idle. Toda capability da IDE recebe um provider/configuração padrão reversível: editor, arquivos, terminal, Git, preview, checks, grafo, SoTs, broker, economia local e extensões funcionam ou degradam honestamente sem uma tela inicial de setup.
+
+Agentes são a única exceção. A IDE detecta adapters instalados e oferece sugestões, mas não ativa, cria ou autentica um agente por conta própria: o usuário escolhe/conecta o primeiro runtime porque essa decisão determina identidade, credencial, custo, capabilities e fronteira de confiança.
+
+Primeiro uso deve pedir no máximo: intenção; escolher/conectar o primeiro agente; confirmar o primeiro efeito externo irreversível.
 
 ## IDE × Katsui
 
-A IDE gratuita possui tudo que uma pessoa precisa para possuir e evoluir um projeto local: projetos, arquivos, Local Truth Registry, AAG local, hooks, reconciliação, checks, adapters e effect broker básicos.
+A IDE é um host de capabilities e providers. Cada ferramenta declara o provider ativo, sua cobertura e degradações, aceita alternativas neutras quando existirem e mostra uma rota contextual para a solução Katsui correspondente. A conexão Katsui não é um plugin genérico de onboarding: ela aparece no lugar em que a capability é usada.
 
-Katsui ou outro provider organizacional possui ingestão de Slack/Teams/Notion/Drive/CRM/ERP, Company Brain, ontologia, retrieval/rerank, registries organizacionais, propagação cross-project, governança, tenancy e operação compartilhada. Integração é canal de distribuição opcional, não dependência.
+A IDE gratuita possui o necessário para construir e evoluir software localmente: projeto semântico, ferramentas de workspace, Project Agents, SoTs e grafo locais, efeitos governados, evidência e providers configuráveis. Katsui é o teto premium: Company Brain/Ontology, Agent Dojo/Digital Workers, Kekkai Shield, Iai Gate, Mugen, Judge e Control Tower oferecem produtos e profundidades que a IDE não deve replicar como substitutos locais.
+
+O compartilhamento de artefatos do projeto permanece portátil: Git cobre colaboração
+de código; compartilhar preview/revisão externa é uma capability da IDE a definir sem
+pressupor colaboração em tempo real ou uma Control Tower local.
+
+Cada estágio de segurança possui um único provider semântico autoritativo. O broker mantém invariantes locais não negociáveis — confinamento, execução privilegiada, snapshot e identidade — mas não empilha classificadores concorrentes sobre o mesmo input. Um framework externo, NeMo ou MCP só entra como Policy/Egress Provider se o host puder invocá-lo no chokepoint privilegiado, obter um veredito versionado e declarar cobertura, transformação, retenção e modo de falha. Um gateway composto que também imponha guardrails, memória ou decisões concorrentes não entra na rota governada.
+
+O perfil local de economia é deliberadamente pequeno e opt-in: RTK compacta output de tools/CLI e Caveman solicita saída concisa; ambos preservam o bruto recuperável e nunca alteram prompts de sistema, schemas de tools, policies, critérios de aceite ou evidências. Iai Gate permanece o provider para routing, cache, compressão contextual e economia de inferência.
 
 ## Segurança e honestidade
 

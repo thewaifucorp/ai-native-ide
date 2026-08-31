@@ -11,6 +11,7 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandService } from '@theia/core/lib/common/command';
 import { AbstractInstrumentWidget } from './abstract-instrument-widget';
 import { Icon, IconDefs } from './icons';
+import { NavMode } from '../instrument-store';
 
 @injectable()
 export class RailWidget extends AbstractInstrumentWidget {
@@ -28,6 +29,10 @@ export class RailWidget extends AbstractInstrumentWidget {
         this.commands.executeCommand('vsxExtensions.toggle');
     }
 
+    protected openMode(mode: NavMode): void {
+        this.commands.executeCommand(`instrument.mode.${mode}`);
+    }
+
     protected render(): React.ReactNode {
         return (
             <>
@@ -43,7 +48,15 @@ export class RailWidget extends AbstractInstrumentWidget {
                         project ("Loja Aurora") was removed: multi-project switching is
                         a queued item, and a fake sibling made the rail look like a
                         project switcher that switches nothing. */}
-                    <button className="rail-btn on" title={`${this.store.workspaceName || 'workspace'} — projeto aberto`}>{this.store.railInitials}<span className="hb run" /></button>
+                    <button className={`rail-btn${this.store.navMode === 'projeto' ? ' on' : ''}`} title={`${this.store.workspaceName || 'workspace'} — abrir projeto`} onClick={() => this.openMode('projeto')}>{this.store.railInitials}<span className="hb run" /></button>
+                    <div className="rail-div" />
+                    <button
+                        className={`rail-btn${this.store.navMode === 'criar' ? ' on' : ''}`}
+                        title="Criar ou modificar software"
+                        onClick={() => this.openMode('criar')}
+                    >
+                        <svg className="i" viewBox="0 0 16 16"><path d="M3 12.8 4 9l7.7-7.7 3 3L7 12l-4 1Z" /><path d="m10.5 2.5 3 3" /></svg>
+                    </button>
                     <div className="rail-div" />
                     <button className="rail-btn store" title="Extensões & Loja" onClick={() => this.openStore()}>
                         <svg className="i" viewBox="0 0 16 16"><path d="M6 2h4v2.2a1.6 1.6 0 0 0 3.2 0V2h1.3v3h-2.4a1.6 1.6 0 0 0 0 3.2H16v5.8h-3V13a1.6 1.6 0 0 0-3.2 0v1H6Z" transform="translate(-1,-1) scale(.9)" /></svg>

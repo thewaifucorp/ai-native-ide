@@ -221,6 +221,15 @@ export class InstrumentCapabilityContribution
             this.readNotes();
             this.readSettings();
             this.readDurable();
+            this.readWork();
+            // Session availability is part of navigation, so read its facts on
+            // project open. Every call is observational: none starts a server,
+            // shares an address, creates a version or publishes anything.
+            this.previewStatus();
+            this.readLifecycle();
+            this.readRelease();
+            this.readShare();
+            this.readProviders();
             // Agent proposals arrive out of band; ask periodically. A push channel
             // over the RPC connection would be better and is not built yet.
             window.setInterval(() => this.adoptPendingProposal(), 5000);
@@ -229,6 +238,11 @@ export class InstrumentCapabilityContribution
             this.refreshCapabilities();
             this.readRuntimeState();
             this.refreshHarness();
+            this.previewStatus();
+            this.readLifecycle();
+            this.readRelease();
+            this.readShare();
+            this.readProviders();
         });
     }
 
