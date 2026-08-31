@@ -74,6 +74,63 @@ pub struct Criterion {
     pub proposed: bool,
 }
 
+/// The criteria a verification plan was written against.
+///
+/// Id AND text: renaming a criterion is a change of contract, and comparing only
+/// ids would let the text be rewritten under a plan that still claimed to cover
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanCriterionRef {
+    pub id: String,
+    pub text: String,
+}
+
+/// One revision of the verification plan (§9, FEAT-04).
+///
+/// The plan answers "HOW will this be proved?" BEFORE the work runs. It is the
+/// difference between an agent that goes and does things and an agent whose
+/// contract someone reviewed.
+///
+/// Revisions are append-only. A later change to the criteria does not edit the
+/// plan in place and does not delete it: it makes the standing revision
+/// [`PlanState::Outdated`], which is visible, instead of silently narrowing the
+/// contract that was agreed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanRevision {
+    /// Host clock, ms. Display only.
+    pub at_ms: u64,
+    /// Who proposed it — an agent id, or a person.
+    pub by: String,
+    /// How each criterion will be proved. Free text, read by a person.
+    pub steps: Vec<String>,
+    /// The criteria this plan was written against, as they read at that moment.
+    pub criteria: Vec<PlanCriterionRef>,
+    /// True only after a PERSON adopted it.
+    ///
+    /// An agent proposing and accepting its own plan would be the same hole
+    /// [`Criterion::proposed`] already closes for criteria: it would let the
+    /// agent decide what counts as proof of its own work.
+    #[serde(default)]
+    pub accepted: bool,
+}
+
+/// Where the verification contract of an item stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanState {
+    /// No revision was ever written.
+    Missing,
+    /// The standing revision is waiting for a person to adopt it.
+    Proposed,
+    /// Adopted, and still written against the criteria as they read now.
+    Accepted,
+    /// The criteria changed after the standing revision was written. The old
+    /// contract is kept and shown; it just stopped covering what is asked now.
+    Outdated,
+}
+
 /// One work item, exactly as the artifact declares it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +152,16 @@ pub struct WorkItem {
     /// item is never reported as progressing.
     #[serde(default)]
     pub blocked: Option<String>,
+    /// The agent this item is assigned to, when one is.
+    ///
+    /// Assignment is DURABLE and versionable — it belongs in the artifact. It is
+    /// not the same thing as holding the item: who is executing it right now is
+    /// runtime state the host owns, and it is deliberately not a field here.
+    #[serde(default)]
+    pub assignee: Option<String>,
+    /// Verification plan revisions, oldest first. Append-only.
+    #[serde(default)]
+    pub verification_plan: Vec<PlanRevision>,
 }
 
 /// The seven states §9 asks for. None of them is writable.
@@ -129,6 +196,11 @@ pub struct StatusReport {
     pub unobserved_subjects: Vec<String>,
     /// Criteria an agent proposed and nobody adopted. Counted nowhere.
     pub proposed_criteria: usize,
+    /// Where the verification contract stands. Does NOT move the status: a plan
+    /// is about how proof will be produced, and only produced proof verifies
+    /// anything. It exists so the host can refuse to run work whose contract
+    /// nobody agreed.
+    pub plan: PlanState,
     /// Children that took part in this status, for a parent.
     pub children: Vec<String>,
 }
@@ -164,6 +236,37 @@ enum CriterionState {
     /// Verification ran and the host did not observe the subject, so freshness
     /// is unknown. Treated as stale: an unknown is not a pass.
     Unobserved,
+}
+
+/// Where the verification contract of an item stands, from the item alone.
+///
+/// Pure on purpose, like the rest of this crate: the comparison is between what
+/// the standing revision recorded and what the criteria say NOW, so no host has
+/// to measure anything for the answer to be honest.
+pub fn plan_state(item: &WorkItem) -> PlanState {
+    let Some(latest) = item.verification_plan.last() else {
+        return PlanState::Missing;
+    };
+    // Proposed criteria are excluded here for the same reason they are excluded
+    // from the count: an agent must not be able to make its own plan outdated —
+    // or current — by writing criteria nobody adopted.
+    let atuais: Vec<PlanCriterionRef> = item
+        .criteria
+        .iter()
+        .filter(|criterion| !criterion.proposed)
+        .map(|criterion| PlanCriterionRef {
+            id: criterion.id.clone(),
+            text: criterion.text.clone(),
+        })
+        .collect();
+    if latest.criteria != atuais {
+        return PlanState::Outdated;
+    }
+    if latest.accepted {
+        PlanState::Accepted
+    } else {
+        PlanState::Proposed
+    }
 }
 
 fn criterion_state(criterion: &Criterion, observed: &BTreeMap<String, String>) -> CriterionState {
@@ -220,6 +323,7 @@ pub fn report(items: &[WorkItem], observed: &BTreeMap<String, String>) -> WorkRe
                     stale_criteria: Vec::new(),
                     unobserved_subjects: Vec::new(),
                     proposed_criteria: 0,
+                    plan: PlanState::Missing,
                     children: Vec::new(),
                 });
             }
@@ -283,6 +387,7 @@ fn status_of<'a>(
         stale_criteria: stale_criteria.clone(),
         unobserved_subjects: unobserved_subjects.clone(),
         proposed_criteria,
+        plan: plan_state(item),
         children: child_ids,
     };
 
@@ -484,6 +589,8 @@ mod tests {
             criteria: Vec::new(),
             implementation: Vec::new(),
             blocked: None,
+            assignee: None,
+            verification_plan: Vec::new(),
         }
     }
 
@@ -700,5 +807,116 @@ mod tests {
 
         assert!(!report.problems.is_empty());
         assert!(report.problems.iter().any(|p| p.problem.contains("ciclo")));
+    }
+
+    // ── plano de verificação (FEAT-04) ──────────────────────────────────────
+
+    fn criterio(id: &str, text: &str) -> Criterion {
+        Criterion {
+            id: id.to_string(),
+            text: text.to_string(),
+            evidence: None,
+            proposed: false,
+        }
+    }
+
+    fn plan_over(criteria: &[&Criterion], accepted: bool) -> PlanRevision {
+        PlanRevision {
+            at_ms: 1,
+            by: "agente:coder".to_string(),
+            steps: vec!["rodar os checks e anexar a saída".to_string()],
+            criteria: criteria
+                .iter()
+                .map(|c| PlanCriterionRef {
+                    id: c.id.clone(),
+                    text: c.text.clone(),
+                })
+                .collect(),
+            accepted,
+        }
+    }
+
+    #[test]
+    fn sem_revisao_nenhuma_o_plano_esta_ausente() {
+        let mut task = item("t", WorkKind::Task);
+        task.criteria = vec![criterio("c1", "o botão salva")];
+
+        assert_eq!(plan_state(&task), PlanState::Missing);
+    }
+
+    /// Um plano que o próprio agente escreveu fica PROPOSTO até uma pessoa
+    /// adotar. É o mesmo buraco que `Criterion::proposed` já fecha: quem executa
+    /// não pode decidir o que conta como prova do próprio trabalho.
+    #[test]
+    fn plano_do_agente_fica_proposto_ate_alguem_adotar() {
+        let c1 = criterio("c1", "o botão salva");
+        let mut task = item("t", WorkKind::Task);
+        task.criteria = vec![c1.clone()];
+        task.verification_plan = vec![plan_over(&[&c1], false)];
+
+        assert_eq!(plan_state(&task), PlanState::Proposed);
+
+        task.verification_plan = vec![plan_over(&[&c1], true)];
+        assert_eq!(plan_state(&task), PlanState::Accepted);
+    }
+
+    /// O caso que o FEAT-04 existe para cobrir: mexer no critério DEPOIS de o
+    /// plano ter sido aceito não pode estreitar o contrato em silêncio. O plano
+    /// antigo continua lá, e passa a dizer que não cobre mais o que se pede.
+    #[test]
+    fn mudar_o_criterio_torna_o_plano_aceito_desatualizado_sem_apagar_nada() {
+        let c1 = criterio("c1", "o botão salva");
+        let mut task = item("t", WorkKind::Task);
+        task.criteria = vec![c1.clone()];
+        task.verification_plan = vec![plan_over(&[&c1], true)];
+        assert_eq!(plan_state(&task), PlanState::Accepted);
+
+        // Mesmo id, texto reescrito: é outro contrato.
+        task.criteria = vec![criterio("c1", "o botão salva e mostra recibo")];
+        assert_eq!(plan_state(&task), PlanState::Outdated);
+        assert_eq!(
+            task.verification_plan.len(),
+            1,
+            "a revisão anterior não pode sumir: o contrato antigo é histórico"
+        );
+
+        // Acrescentar critério também desatualiza — o plano cobria menos.
+        let c1b = criterio("c1", "o botão salva e mostra recibo");
+        let c2 = criterio("c2", "e funciona offline");
+        task.verification_plan.push(plan_over(&[&c1b], true));
+        task.criteria = vec![c1b.clone(), c2];
+        assert_eq!(plan_state(&task), PlanState::Outdated);
+    }
+
+    /// Critério PROPOSTO por agente não entra na conta do plano. Se entrasse, um
+    /// agente desatualizaria (ou revalidaria) o próprio contrato só escrevendo
+    /// critérios que ninguém adotou.
+    #[test]
+    fn criterio_proposto_nao_mexe_no_estado_do_plano() {
+        let c1 = criterio("c1", "o botão salva");
+        let mut task = item("t", WorkKind::Task);
+        task.verification_plan = vec![plan_over(&[&c1], true)];
+        let mut proposto = criterio("c9", "e mais isto aqui");
+        proposto.proposed = true;
+        task.criteria = vec![c1, proposto];
+
+        assert_eq!(plan_state(&task), PlanState::Accepted);
+    }
+
+    /// O plano é sobre COMO provar, não sobre estar provado. Um plano aceito não
+    /// pode mover o status de uma task sem evidência nenhuma.
+    #[test]
+    fn plano_aceito_nao_verifica_coisa_alguma() {
+        let c1 = criterio("c1", "o botão salva");
+        let mut task = item("t", WorkKind::Task);
+        task.criteria = vec![c1.clone()];
+        task.implementation = vec!["src/app.ts".to_string()];
+        task.verification_plan = vec![plan_over(&[&c1], true)];
+
+        let report = report(&[task], &observed(&[]));
+
+        assert_eq!(status(&report, "t"), WorkStatus::ImplementedNotVerified);
+        assert_eq!(report.statuses[0].plan, PlanState::Accepted);
+        assert_eq!(report.statuses[0].criteria_verified, 0);
     }
 }

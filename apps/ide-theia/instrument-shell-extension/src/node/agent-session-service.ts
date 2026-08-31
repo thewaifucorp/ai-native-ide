@@ -26,11 +26,26 @@ import {
     WorktreeBaseline
 } from '../common/agent-session-protocol';
 
-/** Where the agent's worktree lives (IDE runtime state, git-ignored). */
+/**
+ * Where the agent's worktree lives (IDE runtime state, git-ignored).
+ *
+ * `.instrument/agent-worktree` is the session with no task attached — the shape
+ * that existed before §17 and still works. A session bound to a TASK gets its own
+ * directory and its own branch under `.instrument/agent-worktrees/<taskId>`,
+ * which is what lets two tasks run at the same time without two agents editing
+ * the same file. The two roots are deliberately different names: nesting the
+ * per-task ones inside the free one would make the free worktree contain them.
+ */
 const WORKTREE_DIR = path.join('.instrument', 'agent-worktree');
+const TASK_WORKTREES_DIR = path.join('.instrument', 'agent-worktrees');
 
 /** Where the baseline that makes the comparison three-way is recorded. */
 const BASELINE_FILE = path.join('.instrument', 'agent-worktree.baseline.json');
+
+/** A task id that is safe as a directory and as a git branch segment. */
+function safeTaskId(taskId: string): string {
+    return taskId.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+}
 
 /** Owner identity for effects harvested out of an agent session. */
 const EVENT_CAP = 200;
@@ -52,6 +67,8 @@ interface BaselineFile {
 
 interface SessionState {
     agent: string;
+    /** A task desta sessão, quando ela é a sessão de uma. */
+    taskId?: string;
     phase: SessionPhase;
     sessionId?: string;
     worktree?: string;
@@ -98,7 +115,13 @@ export class AgentSessionServiceImpl implements AgentSessionService {
     @inject(EngineService) protected readonly engine!: EngineService;
     @inject(GovernedWriteService) protected readonly governed!: GovernedWriteService;
 
+    // Keyed by `${root}\u0000${taskId}`; the empty task id is the free session.
+    // Two tasks in the same project are two entries, which is exactly what makes
+    // "parallel is across tasks" true instead of a claim on screen.
     protected readonly states = new Map<string, SessionState>();
+
+    /** The task each project is currently looking at. '' = the free session. */
+    protected readonly activeTask = new Map<string, string>();
 
     async snapshot(rootUri: string): Promise<AgentSessionSnapshot> {
         const root = this.rootPath(rootUri);
@@ -107,10 +130,11 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         // project, not about this process: report it before any session starts,
         // so the panel never looks clean over leftovers.
         if (!state.worktree) {
-            const target = path.join(root, WORKTREE_DIR);
+            const paths = this.worktreePaths(root, state.taskId);
+            const target = paths.worktree;
             if (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
                 state.worktree = target;
-                const stored = this.readBaseline(root);
+                const stored = this.readBaseline(paths.baseline);
                 state.baseline = stored
                     ? {
                         at: stored.at,
@@ -125,9 +149,16 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         return this.view(state);
     }
 
-    async start(rootUri: string, agent: string): Promise<AgentSessionSnapshot> {
+    /**
+     * Abre a sessão. Com `taskId`, ela é a sessão DAQUELA task: worktree e branch
+     * próprios, e o portão do §17 já foi cobrado pelo motor antes de chegar aqui
+     * (task sem critério de aceite não é entregue a agente nenhum).
+     */
+    async start(rootUri: string, agent: string, taskId?: string): Promise<AgentSessionSnapshot> {
         const root = this.rootPath(rootUri);
+        this.activeTask.set(root, taskId ?? '');
         const state = this.state(root);
+        state.taskId = taskId || undefined;
         state.agent = agent;
         state.phase = 'starting';
         state.lastError = undefined;
@@ -372,7 +403,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         if (!state.worktree) {
             throw new Error('nenhuma worktree de agente para colher');
         }
-        const stored = this.readBaseline(root);
+        const stored = this.readBaseline(this.worktreePaths(root, state.taskId).baseline);
         if (!stored) {
             // No baseline means no way to tell the agent's change from the
             // person's. Refusing beats proposing a revert of their work.
@@ -500,7 +531,8 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             // writing into a deleted tree. End it first, and say that happened.
             await this.cancel(rootUri);
         }
-        const target = path.join(root, WORKTREE_DIR);
+        const paths = this.worktreePaths(root, state.taskId);
+        const target = paths.worktree;
         const unharvested = state.changes.filter(c => !c.proposed).length;
         if (fs.existsSync(path.join(root, '.git'))) {
             // `git worktree remove` also drops the administrative entry; without it
@@ -509,7 +541,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         }
         try {
             fs.rmSync(target, { recursive: true, force: true });
-            fs.rmSync(path.join(root, BASELINE_FILE), { force: true });
+            fs.rmSync(paths.baseline, { force: true });
         } catch (err) {
             state.lastError = `não foi possível apagar a worktree: ${this.msg(err)}`;
             this.push(state, 'erro', state.lastError);
@@ -544,12 +576,13 @@ export class AgentSessionServiceImpl implements AgentSessionService {
         root: string,
         state: SessionState
     ): Promise<string | { error: string }> {
-        const target = path.join(root, WORKTREE_DIR);
+        const paths = this.worktreePaths(root, state.taskId);
+        const target = paths.worktree;
         if (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
             // A leftover worktree is REUSED, not silently trusted: it was made
             // from an older commit, so the agent is looking at the project as of
             // then. Say when, and say from what.
-            const existing = this.readBaseline(root);
+            const existing = this.readBaseline(paths.baseline);
             if (existing) {
                 state.baseline = {
                     at: existing.at,
@@ -570,7 +603,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
                 // Worktree without a baseline: rebuild one from the project NOW and
                 // declare the cost — whatever the agent did before this moment is
                 // indistinguishable from what the person did.
-                const recovered = await this.recordBaseline(root, target, true);
+                const recovered = await this.recordBaseline(root, target, true, paths.baseline);
                 state.baseline = {
                     at: recovered.at,
                     commit: recovered.commit,
@@ -591,7 +624,13 @@ export class AgentSessionServiceImpl implements AgentSessionService {
 
         let isolated = false;
         if (fs.existsSync(path.join(root, '.git'))) {
-            const added = await run('git', ['worktree', 'add', '--detach', target, 'HEAD'], root);
+            // Uma task ganha BRANCH, não HEAD destacado: o trabalho dela tem nome,
+            // sobrevive ao fim da sessão e dá para comparar com a base depois.
+            // Sem task, o destacado de sempre.
+            const args = paths.branch
+                ? ['worktree', 'add', '-B', paths.branch, target, 'HEAD']
+                : ['worktree', 'add', '--detach', target, 'HEAD'];
+            const added = await run('git', args, root);
             isolated = added.code === 0;
             // A failed worktree is not a reason to give the agent the project
             // itself: fall through to the copy.
@@ -603,7 +642,7 @@ export class AgentSessionServiceImpl implements AgentSessionService {
                 return { error: `não foi possível isolar o projeto para o agente: ${this.msg(err)}` };
             }
         }
-        const fresh = await this.recordBaseline(root, target, false);
+        const fresh = await this.recordBaseline(root, target, false, paths.baseline);
         state.baseline = {
             at: fresh.at,
             commit: fresh.commit,
@@ -676,7 +715,8 @@ export class AgentSessionServiceImpl implements AgentSessionService {
     protected async recordBaseline(
         root: string,
         worktree: string,
-        recovered: boolean
+        recovered: boolean,
+        baselineFile: string
     ): Promise<BaselineFile> {
         const head = await run('git', ['rev-parse', 'HEAD'], root);
         const baseline: BaselineFile = {
@@ -686,16 +726,16 @@ export class AgentSessionServiceImpl implements AgentSessionService {
             hashes: this.hashTree(recovered ? root : worktree)
         };
         try {
-            const file = path.join(root, BASELINE_FILE);
+            const file = baselineFile;
             fs.mkdirSync(path.dirname(file), { recursive: true });
             fs.writeFileSync(file, JSON.stringify(baseline, undefined, 2), 'utf8');
         } catch { /* unwritable state dir — the in-memory baseline still holds */ }
         return baseline;
     }
 
-    protected readBaseline(root: string): BaselineFile | undefined {
+    protected readBaseline(baselineFile: string): BaselineFile | undefined {
         try {
-            const raw = JSON.parse(fs.readFileSync(path.join(root, BASELINE_FILE), 'utf8'));
+            const raw = JSON.parse(fs.readFileSync(baselineFile, 'utf8'));
             if (raw && typeof raw === 'object' && raw.hashes && typeof raw.hashes === 'object') {
                 return raw as BaselineFile;
             }
@@ -1027,12 +1067,44 @@ export class AgentSessionServiceImpl implements AgentSessionService {
     }
 
     protected state(root: string): SessionState {
-        let state = this.states.get(root);
+        const taskId = this.activeTask.get(root) ?? '';
+        const key = `${root}\u0000${taskId}`;
+        let state = this.states.get(key);
         if (!state) {
-            state = { agent: 'claude', phase: 'none', events: [], changes: [], skipped: [], pending: [] };
-            this.states.set(root, state);
+            state = {
+                agent: 'claude', phase: 'none', events: [], changes: [], skipped: [], pending: [],
+                taskId: taskId || undefined
+            };
+            this.states.set(key, state);
         }
         return state;
+    }
+
+    /**
+     * Where this session's worktree and baseline live.
+     *
+     * Derived from the task, not stored: a path kept in state would survive a
+     * task change and the session would compare against the wrong tree — the
+     * kind of bug that shows a clean diff over the wrong project.
+     */
+    protected worktreePaths(root: string, taskId: string | undefined): {
+        worktree: string;
+        baseline: string;
+        branch: string | undefined;
+    } {
+        const safe = taskId ? safeTaskId(taskId) : '';
+        if (!safe) {
+            return {
+                worktree: path.join(root, WORKTREE_DIR),
+                baseline: path.join(root, BASELINE_FILE),
+                branch: undefined
+            };
+        }
+        return {
+            worktree: path.join(root, TASK_WORKTREES_DIR, safe),
+            baseline: path.join(root, TASK_WORKTREES_DIR, `${safe}.baseline.json`),
+            branch: `instrument/task/${safe}`
+        };
     }
 
     protected view(state: SessionState): AgentSessionSnapshot {

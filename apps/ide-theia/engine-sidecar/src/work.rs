@@ -21,7 +21,9 @@
 //! nunca conta como aprovado.
 
 use ide_semantic::content_hash;
-use ide_work::{report, WorkItem, WorkReport};
+use ide_work::{
+    plan_state, report, PlanCriterionRef, PlanRevision, PlanState, WorkItem, WorkReport,
+};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -164,6 +166,94 @@ pub fn write_item(root: &Path, item: WorkItem) -> Result<WorkSnapshot, String> {
     snapshot(root)
 }
 
+/// Um item pelo id, lido do disco.
+pub fn find(root: &Path, id: &str) -> Result<Option<WorkItem>, String> {
+    Ok(snapshot(root)?.items.into_iter().find(|item| item.id == id))
+}
+
+fn load(root: &Path, id: &str) -> Result<WorkItem, String> {
+    find(root, id)?.ok_or_else(|| format!("não existe item de trabalho '{id}'"))
+}
+
+/// Designa (ou desdesigna) o agente responsável pelo item.
+///
+/// Designação é DURÁVEL: vai no artefato, entra no diff. Não é a mesma coisa que
+/// estar com a task agora — isso é posse, e vive em `claims`.
+pub fn assign(root: &Path, id: &str, agent_id: Option<String>) -> Result<WorkSnapshot, String> {
+    let mut item = load(root, id)?;
+    item.assignee = agent_id.filter(|a| !a.trim().is_empty());
+    write_item(root, item)
+}
+
+/// Propõe uma revisão do plano de verificação (FEAT-04).
+///
+/// A revisão nasce grudada nos critérios QUE CONTAM agora — critério proposto por
+/// agente fica de fora, senão quem executa escreveria o critério e o plano que o
+/// cumpre. E ela nasce NÃO aceita: adotar é ato de pessoa.
+pub fn propose_plan(
+    root: &Path,
+    id: &str,
+    by: &str,
+    steps: Vec<String>,
+) -> Result<WorkSnapshot, String> {
+    if steps.iter().all(|step| step.trim().is_empty()) {
+        return Err("um plano de verificação sem passo nenhum não é plano".to_string());
+    }
+    let mut item = load(root, id)?;
+    let criteria: Vec<PlanCriterionRef> = item
+        .criteria
+        .iter()
+        .filter(|criterion| !criterion.proposed)
+        .map(|criterion| PlanCriterionRef {
+            id: criterion.id.clone(),
+            text: criterion.text.clone(),
+        })
+        .collect();
+    if criteria.is_empty() {
+        return Err(format!(
+            "a task '{id}' não tem critério adotado: um plano sobre nada não prova nada"
+        ));
+    }
+    item.verification_plan.push(PlanRevision {
+        at_ms: now_ms(),
+        by: by.to_string(),
+        steps,
+        criteria,
+        accepted: false,
+    });
+    write_item(root, item)
+}
+
+/// Adota a revisão em pé. É o ato de PESSOA que abre o portão de execução.
+///
+/// Recusa quando a revisão já não cobre os critérios de agora: aceitar um plano
+/// desatualizado seria assinar um contrato sobre outra coisa.
+pub fn accept_plan(root: &Path, id: &str) -> Result<WorkSnapshot, String> {
+    let mut item = load(root, id)?;
+    if item.verification_plan.is_empty() {
+        return Err(format!(
+            "a task '{id}' não tem plano de verificação para aceitar"
+        ));
+    }
+    if plan_state(&item) == PlanState::Outdated {
+        return Err(format!(
+            "o plano em pé da task '{id}' foi escrito sobre critérios que mudaram: \
+             peça uma revisão nova em vez de aceitar um contrato sobre outra coisa"
+        ));
+    }
+    if let Some(latest) = item.verification_plan.last_mut() {
+        latest.accepted = true;
+    }
+    write_item(root, item)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +283,8 @@ mod tests {
             }],
             implementation: vec![subject.to_string()],
             blocked: None,
+            assignee: None,
+            verification_plan: Vec::new(),
         }
     }
 
@@ -280,5 +372,103 @@ mod tests {
         let raw = fs::read_to_string(dir.path().join(ITEMS_DIR_REL).join("t1.json")).unwrap();
 
         assert!(!raw.contains("\"status\""));
+    }
+
+    // ── §17: designação e plano de verificação ──────────────────────────────
+
+    fn task_sem_prova(id: &str) -> WorkItem {
+        WorkItem {
+            id: id.to_string(),
+            title: "encurtar link".to_string(),
+            kind: WorkKind::Task,
+            parents: Vec::new(),
+            criteria: vec![Criterion {
+                id: "c1".to_string(),
+                text: "o link encurtado abre o original".to_string(),
+                evidence: None,
+                proposed: false,
+            }],
+            implementation: Vec::new(),
+            blocked: None,
+            assignee: None,
+            verification_plan: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn designar_agente_fica_no_artefato_e_entra_no_diff() {
+        let dir = project();
+        write_item(dir.path(), task_sem_prova("t1")).expect("gravar");
+
+        let snap = assign(dir.path(), "t1", Some("coder".to_string())).expect("designar");
+
+        assert_eq!(snap.items[0].assignee.as_deref(), Some("coder"));
+        let raw = fs::read_to_string(dir.path().join(ITEMS_DIR_REL).join("t1.json")).unwrap();
+        assert!(raw.contains("\"assignee\": \"coder\""));
+
+        let snap = assign(dir.path(), "t1", None).expect("desdesignar");
+        assert_eq!(snap.items[0].assignee, None);
+    }
+
+    /// O plano nasce NÃO aceito, mesmo proposto por quem vai executar.
+    #[test]
+    fn o_plano_proposto_pelo_agente_nao_nasce_aceito() {
+        let dir = project();
+        write_item(dir.path(), task_sem_prova("t1")).expect("gravar");
+
+        let snap = propose_plan(
+            dir.path(),
+            "t1",
+            "coder",
+            vec!["rodar `yarn test` e anexar a saída".to_string()],
+        )
+        .expect("propor");
+
+        let item = &snap.items[0];
+        assert_eq!(item.verification_plan.len(), 1);
+        assert!(!item.verification_plan[0].accepted);
+        assert_eq!(plan_state(item), PlanState::Proposed);
+
+        let snap = accept_plan(dir.path(), "t1").expect("pessoa aceita");
+        assert_eq!(plan_state(&snap.items[0]), PlanState::Accepted);
+    }
+
+    /// Aceitar um plano escrito sobre critérios que já mudaram seria assinar um
+    /// contrato sobre outra coisa. A revisão antiga fica; o aceite é recusado.
+    #[test]
+    fn aceitar_plano_desatualizado_e_recusado_sem_apagar_a_revisao() {
+        let dir = project();
+        write_item(dir.path(), task_sem_prova("t1")).expect("gravar");
+        propose_plan(
+            dir.path(),
+            "t1",
+            "coder",
+            vec!["rodar os checks".to_string()],
+        )
+        .expect("propor");
+
+        let mut item = find(dir.path(), "t1").expect("ler").expect("existe");
+        item.criteria[0].text = "o link encurtado abre o original em 200ms".to_string();
+        write_item(dir.path(), item).expect("mudar critério");
+
+        let erro = accept_plan(dir.path(), "t1").expect_err("tem de recusar");
+        assert!(erro.contains("critérios que mudaram"), "{erro}");
+
+        let item = find(dir.path(), "t1").expect("ler").expect("existe");
+        assert_eq!(item.verification_plan.len(), 1, "a revisão antiga não some");
+        assert_eq!(plan_state(&item), PlanState::Outdated);
+    }
+
+    #[test]
+    fn plano_sem_criterio_adotado_e_recusado() {
+        let dir = project();
+        let mut item = task_sem_prova("t1");
+        item.criteria[0].proposed = true;
+        write_item(dir.path(), item).expect("gravar");
+
+        let erro =
+            propose_plan(dir.path(), "t1", "coder", vec!["algo".to_string()]).expect_err("recusa");
+
+        assert!(erro.contains("critério adotado"), "{erro}");
     }
 }

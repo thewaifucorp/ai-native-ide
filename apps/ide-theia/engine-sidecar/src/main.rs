@@ -47,6 +47,8 @@
 //! per (owner, workspace-root), kept in a process-wide registry so the
 //! propose → approve → propose-executes → rollback lifecycle spans requests.
 
+mod agents_def;
+mod claims;
 mod context;
 mod feedback;
 mod harness;
@@ -945,6 +947,128 @@ async fn handle(method: &str, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())??;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        // ── §17: Project Agents, designação, plano e posse ──────────────────
+        "agents_snapshot" | "claims_snapshot" => {
+            #[derive(Deserialize)]
+            struct RootOnly {
+                root: String,
+            }
+            let p: RootOnly = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            tokio::task::spawn_blocking(move || match method.as_str() {
+                "claims_snapshot" => claims::snapshot(&root)
+                    .and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string())),
+                _ => agents_def::snapshot(&root)
+                    .and_then(|a| serde_json::to_value(a).map_err(|e| e.to_string())),
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        "agents_write" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                agent: agents_def::AgentDefinition,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || agents_def::write(&root, p.agent))
+                .await
+                .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "work_assign" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                item_id: String,
+                #[serde(default)]
+                agent_id: Option<String>,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || work::assign(&root, &p.item_id, p.agent_id))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "work_plan_propose" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                item_id: String,
+                by: String,
+                steps: Vec<String>,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot = tokio::task::spawn_blocking(move || {
+                work::propose_plan(&root, &p.item_id, &p.by, p.steps)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "work_plan_accept" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                item_id: String,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let snapshot =
+                tokio::task::spawn_blocking(move || work::accept_plan(&root, &p.item_id))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
+        "work_claim" | "work_release" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                item_id: String,
+                agent_id: String,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            let method = method.to_string();
+            tokio::task::spawn_blocking(move || {
+                if method == "work_release" {
+                    claims::release(&root, &p.item_id, &p.agent_id)
+                        .and_then(|()| claims::snapshot(&root))
+                        .and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string()))
+                } else {
+                    // O item é lido do disco AQUI: o portão decide sobre o que
+                    // está gravado, não sobre o que a tela mandou.
+                    let item = work::find(&root, &p.item_id)?
+                        .ok_or_else(|| format!("não existe item de trabalho '{}'", p.item_id))?;
+                    claims::claim(&root, &item, &p.agent_id).and_then(|outcome| {
+                        serde_json::to_value(outcome).map_err(|e| e.to_string())
+                    })
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        "work_may_execute" => {
+            #[derive(Deserialize)]
+            struct Params {
+                root: String,
+                item_id: String,
+            }
+            let p: Params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(&p.root);
+            tokio::task::spawn_blocking(move || {
+                let item = work::find(&root, &p.item_id)?
+                    .ok_or_else(|| format!("não existe item de trabalho '{}'", p.item_id))?;
+                claims::may_execute(&item).map(|()| serde_json::json!({ "mayExecute": true }))
+            })
+            .await
+            .map_err(|e| e.to_string())?
         }
         "observations_read" => {
             #[derive(Deserialize)]
