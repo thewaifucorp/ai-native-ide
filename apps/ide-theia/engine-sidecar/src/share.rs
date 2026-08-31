@@ -462,9 +462,38 @@ pub fn start(root: &Path, mode: ShareMode, minutes: u64) -> Result<ShareSnapshot
     // segurando a porta. Medido com um GET de fora depois de clicar em "parar
     // de mostrar": a tela dizia fechado e o endereço respondia 401. Ver `proc`.
     crate::proc::own_group(&mut nginx);
-    let proxy = nginx
+    let mut proxy = nginx
         .spawn()
         .map_err(|error| format!("nginx não subiu: {error}"))?;
+
+    // Spawn confirma apenas que o processo foi criado. O endereço só pode ser
+    // entregue depois que o worker abriu a porta; em máquinas de CI mais lentas
+    // havia uma janela em que a UI dizia "aberto" e a primeira conexão falhava.
+    let mut ready = false;
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(("127.0.0.1", listen)).is_ok() {
+            ready = true;
+            break;
+        }
+        if matches!(proxy.try_wait(), Ok(Some(_))) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !ready {
+        crate::proc::kill_tree(proxy.id(), Duration::from_secs(1));
+        let _ = proxy.kill();
+        crate::feedback::stop();
+        let log = fs::read_to_string(dir.join("nginx-error.log")).unwrap_or_default();
+        return Err(if log.trim().is_empty() {
+            "nginx foi iniciado, mas não abriu a porta do compartilhamento".to_string()
+        } else {
+            format!(
+                "nginx não abriu a porta do compartilhamento: {}",
+                log.trim()
+            )
+        });
+    }
 
     let minutos = if minutes == 0 {
         DEFAULT_TTL_MINUTES
