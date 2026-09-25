@@ -362,24 +362,8 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bastion-agent-runtime"
-version = "0.1.1"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
-dependencies = [
- "anyhow",
- "async-trait",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "bastion-agent-runtime"
-version = "0.1.1"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=f8b701e5b317af3c1e21e7251edf499bf2d28aae#f8b701e5b317af3c1e21e7251edf499bf2d28aae"
+version = "0.2.0"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=ea2ece131dab8b67ca1cae422668ba3a6b8618db#ea2ece131dab8b67ca1cae422668ba3a6b8618db"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -396,7 +380,7 @@ dependencies = [
 [[package]]
 name = "bastion-memory"
 version = "0.1.1"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=ea2ece131dab8b67ca1cae422668ba3a6b8618db#ea2ece131dab8b67ca1cae422668ba3a6b8618db"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -409,12 +393,12 @@ dependencies = [
 
 [[package]]
 name = "bastion-runtime"
-version = "0.2.5"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
+version = "0.2.6"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=ea2ece131dab8b67ca1cae422668ba3a6b8618db#ea2ece131dab8b67ca1cae422668ba3a6b8618db"
 dependencies = [
  "anyhow",
  "async-trait",
- "bastion-agent-runtime 0.1.1 (git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503)",
+ "bastion-agent-runtime",
  "bastion-types",
  "futures-util",
  "opentelemetry",
@@ -430,8 +414,8 @@ dependencies = [
 
 [[package]]
 name = "bastion-types"
-version = "0.2.2"
-source = "git+https://github.com/thewaifucorp/bastion-core?rev=aece48b55981a1c64b04eaf1f8c9eae3404f9503#aece48b55981a1c64b04eaf1f8c9eae3404f9503"
+version = "0.3.0"
+source = "git+https://github.com/thewaifucorp/bastion-core?rev=ea2ece131dab8b67ca1cae422668ba3a6b8618db#ea2ece131dab8b67ca1cae422668ba3a6b8618db"
 dependencies = [
  "anyhow",
  "schemars 0.8.22",
@@ -2026,7 +2010,7 @@ name = "ide-agent"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bastion-agent-runtime 0.1.1 (git+https://github.com/thewaifucorp/bastion-core?rev=f8b701e5b317af3c1e21e7251edf499bf2d28aae)",
+ "bastion-agent-runtime",
  "serde",
  "thiserror 2.0.20",
  "tokio",
