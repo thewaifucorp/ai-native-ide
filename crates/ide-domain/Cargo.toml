@@ -8,8 +8,8 @@ publish = false
 [dependencies]
 anyhow = "1.0.100"
 async-trait = "0.1.89"
-bastion-memory = { git = "https://github.com/thewaifucorp/bastion-core", rev = "aece48b55981a1c64b04eaf1f8c9eae3404f9503" }
-bastion-runtime = { git = "https://github.com/thewaifucorp/bastion-core", rev = "aece48b55981a1c64b04eaf1f8c9eae3404f9503" }
+bastion-memory = { git = "https://github.com/thewaifucorp/bastion-core", rev = "ea2ece131dab8b67ca1cae422668ba3a6b8618db" }
+bastion-runtime = { git = "https://github.com/thewaifucorp/bastion-core", rev = "ea2ece131dab8b67ca1cae422668ba3a6b8618db" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 rusqlite = { version = "0.39", features = ["bundled"] }
